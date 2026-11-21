@@ -723,9 +723,10 @@ taskblock_write() {
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE='' TASKF='' DONE='' SCOPES=()
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE='' RTOPT='' TASKF='' DONE='' SCOPES=()
     while [ $# -gt 0 ]; do
       case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
+        --runtime) need_val "$1" $#; RTOPT=$2; shift 2;;
         --task-file) need_val "$1" $#; TASKF=$2; shift 2;; --done) need_val "$1" $#; DONE=$2; shift 2;; --scope) need_val "$1" $#; SCOPES+=("$2"); shift 2;; *) usage_die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
@@ -740,13 +741,14 @@ case $verb in
       REPO=$(readlink -f -- "$REPO")   # recorded as a real path: the registry and RUN/repo.path say the same text
     fi
     [ "$ROLE" != lead ] && valid_role "$ROLE" || usage_die "--role: one of $DA_ROLES (qargi role list)"
+    [ -z "$RTOPT" ] || [[ $RTOPT =~ ^[a-z][a-z0-9-]{0,40}$ ]] || usage_die "--runtime: a runtime name (lower-case letters, digits and '-')"
     actor_label || exit $?   # a coordinator label (QARGI_ACTOR): the registry line records it and its feature; bin/qargi has narrowed the base to that feature already
     CLASS=$(role_class "$ROLE")
-    # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
+    # a read-only role needs a read-only barrier of the runtime it runs on (the project's own, or the extra one the run is prepared for: asked below, once that
+    # runtime is known), or the project's recorded acceptance that its own has none; a repository in no project is refused here
     if [ "$CLASS" = read-only ]; then
       BPJ=$(project_of "$REPO" "$URL")
       [ -n "$BPJ" ] || { echo "qargi: no stored project has this repository, so no provider is known and a read-only role cannot start: store it (qargi project attach) and give it a provider (qargi project set PROJECT models.provider NAME)" >&2; exit 2; }
-      barrier_guard local "$BPJ"
     fi
     valid_slug "$SLUG" || usage_die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
@@ -779,32 +781,84 @@ case $verb in
     if [ -n "$CPJ" ]; then
       # a provider that is set but does not resolve is refused here, not left out of the contract
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
-      [ -z "$CPROV" ] || ADDENDA=$(pymod provider addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+    fi
+    # The runtime R the run is prepared for: the task's --runtime, else the runtime the profile names (profiles.NAME.runtime), else the project's own (CPROV). R is
+    # asked first, before the read-only barrier, the addenda, the mode, the request and the hidden paths, which are all R's and not the project's own. A project
+    # with extra runtimes (models.extra_runtimes.local) says which runtime in what prepare prints and registers; a project without them says nothing new and takes
+    # no runtime but its own. qargi agent for resolves the profile in R and refuses a runtime the project did not enable or cannot use.
+    R=$CPROV HASX='' OVERRIDE='' PN='' PRTN=''
+    if [ -n "$CPJ" ] && [ -n "$CPROV" ]; then
+      # shellcheck disable=SC2034  # refuse (lib.sh) names the verb and the project of its contract line from these
+      PROJECT=$CPJ QARGI_VERB="local prepare"
+      if jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' "$DA_CONF/projects/$CPJ.json" >/dev/null 2>&1 \
+         && pymod provider runtimes "$CPJ" </dev/null 2>/dev/null | grep -q '^extra '; then HASX=1; fi
+      # the profile the run asks for (--profile, else the profile named like the role, else build or review by class), and the runtime it names ("?" when it is not a name)
+      PRTN=$(jq -r --arg prof "$SELECTOR" --arg role "$ROLE" --arg cls "$CLASS" '(.profiles // {}) as $pf
+        | (if $prof != "" then $prof elif ($pf | type) == "object" and ($pf | has($role)) then $role elif $cls == "read-only" then "review" else "build" end) as $pn
+        | $pn, (($pf | objects | .[$pn]? | objects | .runtime?) // empty | if type == "string" and test("^[a-z][a-z0-9-]{0,40}$") then . else "?" end)' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) || PRTN=''
+      PN=$(sed -n 1p <<<"$PRTN"); PRTN=$(sed -n 2p <<<"$PRTN")
+      # a project without extras takes no runtime but its own
+      [ -n "$HASX" ] || [ -z "$RTOPT" ] || [ "$RTOPT" = "$CPROV" ] || refuse runtime-not-enabled name="$RTOPT"
+      want=$RTOPT; [ -n "$want" ] || want=$PRTN
+      if [ -n "$want" ] && [ "$want" != "$CPROV" ]; then
+        # a runtime other than the project's own: agent for refuses one that is not enabled (runtime-not-enabled) or usable (runtime-unusable) and resolves the profile in it
+        rargs=(for "$ROLE" --json --project "$CPJ")
+        [ -z "$SELECTOR" ] || rargs+=(--profile "$SELECTOR")
+        [ -z "$RTOPT" ] || rargs+=(--runtime "$RTOPT")
+        RRES=$("$(dirname "$0")/agent.sh" "${rargs[@]}" </dev/null) || exit $?
+        R=$(jq -r '.runtime // empty' <<<"$RRES")
+        [ -n "$R" ] || R=$CPROV
+      fi
+      # --runtime is printed back against the runtime the profile names (the project's own when it names none) when it differs from it
+      if [ -n "$HASX" ] && [ -n "$RTOPT" ] && [ "$RTOPT" != "${PRTN:-$CPROV}" ]; then OVERRIDE=1; fi
+    elif [ -n "$RTOPT" ]; then
+      refuse runtime-not-enabled name="$RTOPT"
+    fi
+    if [ "$CLASS" = read-only ]; then
+      if [ -n "$HASX" ]; then barrier_guard local "$BPJ" "$R"; else barrier_guard local "$BPJ"; fi
+    fi
+    if [ -n "$R" ]; then
+      ADDENDA=$(pymod provider addenda "$R" local </dev/null) || die "could not read the contract addenda of the local runtime $R (qargi provider check $R)"
     fi
     # Command profiles apply to implicit role selections too. Resolve before RUN,
     # TMP or a clone exists, then commit the request in the lifecycle authority.
-    REQUEST=null CMODE=''
-    if [ -n "$CPROV" ]; then
+    REQUEST=null CMODE='' OVMODEL='' OVEFFORT=''
+    if [ -n "$R" ]; then
       # Mode comes from the runtime alone; an in-session selection must retain
       # its existing extension handling. Command resolution composes below.
-      CMODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$CPROV" </dev/null) || exit 2
-      if [ "$CMODE" != command ]; then
+      CMODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$R" </dev/null) || exit 2
+      # the opt-in of managed member skills is the project's own runtime's: a run on an extra runtime is checked against the mode of that one as today
+      R0MODE=$CMODE
+      [ "$R" = "$CPROV" ] || R0MODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$CPROV" </dev/null) || exit 2
+      if [ "$R0MODE" != command ]; then
         member_status=$(pymod member_skills plan "$CPJ" status) || die "member skill status could not be read; correct the diagnostic above before preparing"
         jq -e '.old == false' <<<"$member_status" >/dev/null || die "member skills opt-in requires command dispatch; in-session delivery is unsupported"
       fi
       if [ "$CMODE" = command ]; then
-        reqargs=("$CPJ" "$CPROV" "$ROLE" "$CLASS")
+        reqargs=("$CPJ" "$R" "$ROLE" "$CLASS")
         [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")
         REQUEST=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit 2
         PROFILE=$(jq -r .profile <<<"$REQUEST"); MEMBER=$(jq -r .base <<<"$REQUEST")
         MODEL=$(jq -r .model <<<"$REQUEST"); EFFORT=$(jq -r .effort <<<"$REQUEST")
+        OVMODEL=$MODEL OVEFFORT=$EFFORT
       fi
     fi
-    if [ "$CMODE" != command ] && [ -n "$SELECTOR" ]; then
-      pargs0=(for "$ROLE" --profile "$SELECTOR" --json)
+    if [ "$CMODE" != command ] && { [ -n "$SELECTOR" ] || [ -n "$OVERRIDE" ]; }; then
+      pargs0=(for "$ROLE" --json)
+      [ -z "$SELECTOR" ] || pargs0+=(--profile "$SELECTOR")
       [ -z "$CPJ" ] || pargs0+=(--project "$CPJ")
+      [ -z "$HASX" ] || pargs0+=(--runtime "$R")
       PRES=$("$(dirname "$0")/agent.sh" "${pargs0[@]}" 2>&1 </dev/null) || die "${PRES#qargi: }"
-      MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$(jq -r '.model // "-"' <<<"$PRES"); EFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
+      OVMODEL=$(jq -r '.model // "-"' <<<"$PRES"); OVEFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
+      if [ -n "$SELECTOR" ]; then MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$OVMODEL; EFFORT=$OVEFFORT; fi
+    fi
+    # what a project with extra runtimes records of the run's runtime, for the views (local list, review check): the runtime, the model asked for and whether the runtime's
+    # model override is verified (a display field: no verb decides by it, and no runtime reports the model that answered)
+    RTREC='' MCONF=false
+    if [ -n "$HASX" ]; then
+      RTREC=$R
+      ov=$(pymod provider effective "$R" local per_dispatch_model_override --project "$CPJ" </dev/null 2>/dev/null) || ov=no
+      case $ov in yes|partial) MCONF=true;; esac
     fi
     # the run's TMP: a private directory on tmpfs when there is one (QARGI_RUN_TMP moves it, as the tests do, so a test never leaves anything in
     # /dev/shm), else RUN/tmp; made below, once RUN is
@@ -813,7 +867,7 @@ case $verb in
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPW=$SHM/qargi-run.XXXXXX; else TMPW=$SCR/qargi.XXXXXX/tmp; fi
     # a runtime whose sandbox hides part of the filesystem from its member (dispatch.hidden_paths: a sandbox with a /dev of its own hides /dev/shm)
     # refuses a run whose member would not see a path it works with, before anything is made; local run asks again (lib/provider.py hidden_run_paths)
-    if [ -n "$CPROV" ]; then pymod provider hidden-paths "$CPROV" local "$CLASS" "$SCR/qargi.XXXXXX" "$TMPW" --project "$CPJ" </dev/null || exit $?; fi
+    if [ -n "$R" ]; then pymod provider hidden-paths "$R" local "$CLASS" "$SCR/qargi.XXXXXX" "$TMPW" --project "$CPJ" </dev/null || exit $?; fi
     # Resolve the parent before creating RUN or TMP. Every persisted and displayed
     # TMP path then has the same canonical spelling; cleanup does not reuse an alias.
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then
@@ -891,10 +945,11 @@ WRAP
     lc_lock "$RUN" || die "cannot lock prepared run"
     jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" --arg tmpdir "$TMPD" --argjson request "$REQUEST" \
       '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha,tmpdir:$tmpdir,request:$request}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" --argjson request "$REQUEST" --arg actor "$ACTOR" --arg afeat "$ACTOR_FEATURE" \
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" --argjson request "$REQUEST" --arg actor "$ACTOR" --arg afeat "$ACTOR_FEATURE" --arg rt "$RTREC" --arg mc "$MCONF" --arg md "$MODEL" \
       '{lifecycle:1, run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, class:$cl, project:$pj, answers:$ans}
        + (if $actor == "" then {} else {actor:$actor, feature:$afeat} end)
        + (if $request == null then {} else {command_request:1} end)
+       + (if $rt == "" then {} else {runtime:$rt, model_confirmed:($mc == "true")} + (if $md == "" or $md == "-" then {} else {model:$md} end) end)
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
@@ -906,6 +961,7 @@ WRAP
     echo "CLASS=$CLASS"
     echo "PROFILE=$PROFILE"
     [ -z "$MEMBER" ] || { echo "MEMBER=$MEMBER"; echo "MODEL=$MODEL"; echo "EFFORT=$EFFORT"; }
+    [ -z "$HASX" ] || echo "RUNTIME=$R"   # a project with extra runtimes names the runtime of every run, its own too
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
@@ -915,6 +971,14 @@ WRAP
     [ -z "$SUBS" ] || echo "$SUBS"
     [ -z "$TASKF" ] || echo "TASK_FILE=$RUN/task.md"
     echo
+    # what prepare says of the runtime in words, after the lines a caller reads as variables, in a block of their own (a project with extra runtimes only)
+    words=''
+    if [ -n "$OVERRIDE" ]; then
+      if [ -n "$PRTN" ]; then words+="RUNTIME_OVERRIDE=profile ${PN:-$PROFILE} names $PRTN, resolved in $R: ${OVMODEL:--} ${OVEFFORT:--}"$'\n'
+      else words+="RUNTIME_OVERRIDE=profile ${PN:-$PROFILE} names no runtime ($CPROV), resolved in $R: ${OVMODEL:--} ${OVEFFORT:--}"$'\n'; fi
+    fi
+    if [ -n "$HASX" ] && [ "$R" != "$CPROV" ]; then words+="MEMBER_SKILLS=none (not delivered to an extra runtime)"$'\n'; fi
+    [ -z "$words" ] || printf '%s\n' "$words"
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
     echo "CLONE=$RUN/clone"

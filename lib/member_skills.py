@@ -276,8 +276,9 @@ def qualify(root, facts):
 
 
 def freeze(store, request):
-    """Init owns store.path exclusively and removes that tree on any failure."""
-    if not enabled(request['project']):
+    """Init owns store.path exclusively and removes that tree on any failure. A run on an extra runtime of the project (models.extra_runtimes.local)
+    is given no managed skills: they are delivered to the project's own runtime only."""
+    if not enabled(request['project']) or P.is_extra(request['runtime'], request['project']):
         return None
     facts, files, dirs = selection(request['project'], request['role'], request['runtime'])
     root = store.path + '/skills'
@@ -339,7 +340,7 @@ def manifest(store, ref, full=False):
 
 def current(store, prepared, project, runtime):
     ref = prepared.get('skills')
-    on = enabled(project)
+    on = enabled(project) and not P.is_extra(runtime, project)    # none are delivered to an extra runtime, so a run prepared for one froze none
     need(on == (ref is not None), 'opt-in changed; re-prepare')
     if ref is None:
         return None
