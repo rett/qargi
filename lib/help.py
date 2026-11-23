@@ -802,7 +802,8 @@ def resolve(argv):
                   ((" Projects: " + ", ".join(have)) if have else " No project is stored yet: qargi help project."), file=sys.stderr)
             return None
         return argv
-    if pk is not None and len(pos) < len(required):
+    optional_after = pk is not None and any(len(a) > 2 and a[2] for a in args[pk + 1:])
+    if pk is not None and (len(pos) < len(required) or (optional_after and len(pos) < len(args))):    # an optional word after the project (provider enable PROJECT [EXTENSION]): one word that is no stored project is the word, the project is implied
         given = pk < len(pos) and os.path.exists(os.path.join(conf(), "projects", out[pos[pk]] + ".json"))
         if not given:
             out.insert(pos[pk] if pk < len(pos) else (pos[-1] + 1 if pos else 0), P)
