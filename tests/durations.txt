@@ -134,7 +134,7 @@
 17 bash tests/test_json_plans.sh
 26 bash tests/test_resume_push.sh
 53 bash tests/test_release_master_merge.sh
-61 bash tests/test_release_cut.sh
+180 bash tests/test_release_cut.sh
 57 bash tests/test_release_fix_record.sh
 105 bash tests/test_dry_run.sh
 5 python3 tests/test_marshal_batch.py
