@@ -540,12 +540,12 @@ plan_token() {
 }
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
   [ "${PLAN_ARG:-}" = "$1" ] && return 0
-  local tok=() moved # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
-  [[ $1 =~ ^[0-9a-f]{12}$ ]] && tok=("token=$1")
-  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing ${tok[@]+"${tok[@]}"}
+  local tokarg=() moved # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
+  [[ $1 =~ ^[0-9a-f]{12}$ ]] && tokarg=("token=$1")
+  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing ${tokarg[@]+"${tokarg[@]}"}
   # the labels whose lines differ between the plan that was shown and this one, when both were planned with plan_token --basis
   moved=$(QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis moved "$PLAN_ARG" "$1" 2>/dev/null) && [ -n "$moved" ] || moved=unrecorded
-  refuse plan-stale "moved=$moved" ${tok[@]+"${tok[@]}"}
+  refuse plan-stale "moved=$moved" ${tokarg[@]+"${tokarg[@]}"}
 }
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
