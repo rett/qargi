@@ -11,7 +11,7 @@
 #
 #   agent.sh add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P
 #   agent.sh list [--project P]            also stores, per project listed, the time and each member's STALE or DRIFT in STATE/agent-states.json
-#                                          (what the lead card's line "members STALE or DRIFT as of TIME" reads; a failed write is ignored)
+#                                          (what the lead card's line "members STALE or DRIFT as of TIME" reads; a failed write is ignored, and a caller with DA_NOSETUP set, qargi doctor, writes nothing)
 #   agent.sh rename OLD NEW [--project P]
 #   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort;
 #                                          writes the copy in config and the runtime's file again (a missing file comes back)
@@ -530,6 +530,7 @@ member_states() { # role-classes-json -> {"PROJECT/NAME": [MISSING | STALE | DRI
 
 states_note() { # STATES-JSON PROJECT-OR-EMPTY: keep what `list` read, for the lead card (STATE/agent-states.json: per project the time and each member's STALE or DRIFT)
   local f=$DA_STATE/agent-states.json upd
+  [ -z "${DA_NOSETUP:-}" ] || return 0   # a read-only caller (qargi doctor reads the members through list) creates and changes nothing
   upd=$(jq -c --arg proj "$2" --arg at "$(now)" --argjson st "$1" '
     (if $proj != "" then {($proj): {at: $at, members: {}}} else {} end)   # a project with no member is stored with none
     + ([(.projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p
