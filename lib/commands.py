@@ -1339,7 +1339,7 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("[EXTENSION]", "none")], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
+            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
                            desc=("An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified. "
                                  "With --runtime NAME (and no extension) it allows an extra runtime: the project may then start members on NAME beside its own local runtime (models.extra_runtimes.local), "
                                  "chosen by a profile (profiles.NAME.runtime) or by one task (qargi local prepare --runtime NAME). NAME is a command runtime of the local surface (a shipped one, or a library pack that is sealed and unchanged) that is not the project's own; "
@@ -1351,7 +1351,7 @@ COMMANDS = {
                                  "Applied with --plan TOKEN --approved WORDS it writes models.extra_runtimes.local and one audit line (provider:enable). For a runtime that does not confine reads the owner's words must contain reads are not confined "
                                  "(letter case and runs of blanks ignored, matched as words), else the refusal runtime-reads-unacknowledged and the token stays good: the lead passes the owner's words on and never writes the phrase itself. "
                                  "A lead's verb: the guard refuses it to a member. The project's own runtime, one already enabled and a name that is not a runtime are refused; nothing is changed.")),
-            "disable": verb("Stop a project using a library extension pack, or one extra local runtime (--runtime)", [("PROJECT", "project"), ("[EXTENSION]", "none")], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED],
+            "disable": verb("Stop a project using a library extension pack, or one extra local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED],
                             desc=("With --runtime NAME it takes NAME out of models.extra_runtimes.local, with a plan and a token as for enable and no phrase to say. It is refused, with no token, while a profile names the runtime "
                                   "(unset profiles.NAME.runtime first: qargi project unset PROJECT profiles.NAME.runtime). Runs prepared for it are refused when they start (runtime-drift: prepare again); "
                                   "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime.")),
