@@ -1,0 +1,26 @@
+new project acme with the gitflow methodology at TMP/acme
+  git repository with the branches: master develop (the first is the initial one; work starts on the last)
+  files:
+    README.md
+    VERSION
+    CHANGELOG.md
+    CONTRIBUTING.md
+    AGENTS.md
+    Makefile
+    CLAUDE.md
+    .gitignore
+    .github/workflows/test.yml
+  no --url: the answers are stored later, when the remote exists: qargi project attach TMP/acme --url URL
+  deployment: not chosen (see below)
+  provider: not chosen (none is stored; set one with qargi project set acme models.provider NAME, or models.provider.local / models.provider.cloud)
+
+Deployment differs a lot between projects, so nothing is set up unless you choose it. Each option can be done for you or by hand.
+
+none             Nothing yet
+github-release   A GitHub release with the built files  (can be done for you)
+container-image  A container image built by CI on a tag  (can be done for you)
+package-registry A package published to a registry on a tag  (can be done for you)
+
+choose one with --deployment ID (qargi methodology deployment gitflow ID shows how); you can do it by hand or ask for it to be done for you
+
+plan token: TOKEN   (create with: qargi project new acme --plan TOKEN --approved "..." plus the same options)

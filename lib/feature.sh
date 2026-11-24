@@ -76,7 +76,7 @@ feat_exit() {   # the one EXIT handler: what gitflow.sh cleans up, the temporary
 }
 trap feat_exit EXIT
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
-project_load
+project_load "feature $verb"
 # the declared gates (the answer gates; lib/gates.py) replace test_command in the verbs that read or make the whole-suite record: the feature tier
 case $verb in status|verify|finish) gates_load feature;; esac
 # verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding

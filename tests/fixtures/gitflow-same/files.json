@@ -1,0 +1,38 @@
+[
+  {
+    "dest": "README.md",
+    "content": "# acme\n\nDescribe what acme is and how to run it.\n\n## Tests\n\n`make test`\n\n## Releases\n\nWork happens on short-lived branches; a release branch collects them and is merged into `develop` through a pull request, then into `master` and tagged. See `CONTRIBUTING.md`.\n"
+  },
+  {
+    "dest": "VERSION",
+    "content": "0.1.0\n"
+  },
+  {
+    "dest": "CHANGELOG.md",
+    "content": "# Changelog\n\nAll notable changes are recorded here. The format follows\n[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project\nfollows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n## [Unreleased]\n"
+  },
+  {
+    "dest": "CONTRIBUTING.md",
+    "content": "# Contributing to acme\n\n## Branches\n\nThe branching model is git-flow, as its author described it.\n\n- `master` holds production releases: every commit on it is a release and is tagged with its version. `develop` is the integration branch, holding the latest delivered changes for the next release.\n- Work happens on a feature branch cut from `develop`. A feature can be as broad as a theme and live as long as the work takes; related tasks are merged into it with `--no-ff`. When the feature is complete it is merged back into `develop` with `--no-ff` (a merge commit, so the feature's commits stay grouped) and deleted. `develop` therefore sees one merge per feature.\n- When `develop` reflects what the next release should contain, cut `release/<version>` from `develop`. Its first commit bumps the version and dates the changelog; only minor fixes follow, never new features.\n- A pull request from the release branch into `master` runs CI on the commit that will be released. When it passes, merge the release branch into `master` with `--no-ff`, tag it (`git tag -a <version>`), merge it into `develop` with `--no-ff`, and delete the release branch.\n- A critical bug in production gets a `hotfix/<version>` branch cut from `master` and finished the same way; if a release branch is open, the hotfix merges into it instead of `develop`.\n- A `master` created as a snapshot of the code (one commit with no parent) has no merge base with `develop`, and git refuses to merge a release into it (\"refusing to merge unrelated histories\"). Join the histories once, on the release branch before it is pushed: merge `master` into it with `git merge -s ours --allow-unrelated-histories master`, which keeps the release's tree and only records the history, and check that the tree is the same before and after. The pull request then runs CI on the joined head and merging into `master` is an ordinary `--no-ff` merge.\n\n## Tests\n\n- While working on a task, run the targeted check that covers your change.\n- When a feature is complete, run the whole suite once on it before it is merged into `develop`: `make test`.\n\n## Changes\n\n- Every user-visible change gets a changelog entry under `[Unreleased]`, in the same commit as the change.\n- One logical change per commit; no private names (hosts, users, home paths) in files or commit messages.\n"
+  },
+  {
+    "dest": "AGENTS.md",
+    "content": "# acme\n\nInstructions for coding agents and contributors. `README.md` describes the project and `CONTRIBUTING.md` its workflow.\n\n## Development environment\n\nThis project has no tool-specific setup file. The targets below are the specification; any agent or person sets a checkout up with them.\n\n- Prerequisites: git, make, and the toolchain versions this project pins in its own files (a language's version file, `.tool-versions` or `mise.toml`). Do not copy those versions anywhere else.\n- Install or update everything: `make bootstrap`. It is idempotent. A line that needs root starts with `sudo` and says what it changes. Preview without changes: `make -n bootstrap`.\n- Verify a checkout: `make doctor`. It prints one line per item and exits non-zero when something is missing: a line starting `missing`, `fail` or `error` is a problem, a line starting `expected` is a known failure that is accepted. Run it before the tests and after pulling.\n- Tests: `make test`.\n- Never run the bootstrap on a checkout you have not reviewed; read the preview first.\n- When the project needs a new tool, add it to the bootstrap, to the doctor and to this list in the same change.\n"
+  },
+  {
+    "dest": "Makefile",
+    "content": "# Set up and check a checkout. Fill in both targets, then describe them in the\n# \"Development environment\" section of AGENTS.md.\n.PHONY: bootstrap doctor\n\nbootstrap:\n\t@echo \"bootstrap: nothing is installed yet.\"\n\t@echo \"Edit this target so it installs what the project needs, idempotently (sudo only on the lines that need root).\"\n\ndoctor:\n\t@echo \"missing: the doctor target checks nothing yet.\"\n\t@echo \"Edit it to print one line per item (the tool and its version), starting a line with missing when an item is absent.\"\n\t@false\n"
+  },
+  {
+    "dest": "CLAUDE.md",
+    "content": "@AGENTS.md\n\n# acme\n\n## Commands\n\n- Whole test suite: `make test`. Run it once after a set of related changes is merged, not after every edit.\n- While working on a task, run only the check that covers what you changed.\n\n## Rules\n\n- Branches follow git-flow: `master` (releases, tagged), `develop` (integration), feature branches merged into `develop` with `--no-ff`, `release/<version>` from `develop`, `hotfix/<version>` from `master`. Never commit to `master` or `develop` directly except by merging a branch.\n- Every user-visible change gets a changelog entry under `[Unreleased]`, in the same commit.\n- No private names (hosts, users, home paths, secrets) in files or commit messages.\n"
+  },
+  {
+    "dest": ".gitignore",
+    "content": "# editors and operating systems\n*.swp\n*~\n.DS_Store\n.idea/\n.vscode/\n\n# local environment and secrets\n.env\n.env.*\n*.pem\n*.key\n\n# build output\ndist/\nbuild/\n\n# Claude Code\n.claude/worktrees/\n.claude/settings.local.json\n"
+  },
+  {
+    "dest": ".github/workflows/test.yml",
+    "content": "# Runs the project's whole test suite on pull requests and on pushes to develop.\nname: test\n\non:\n  pull_request:\n  push:\n    branches: [develop]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: test-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n          fetch-tags: true\n      - name: Tests\n        run: make test\n"
+  }
+]

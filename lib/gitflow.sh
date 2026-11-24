@@ -1167,13 +1167,23 @@ backlog_note() {
   ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" ${bs:+--section "$bs"} 2>/dev/null) || return 0
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
-project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
+# project_load [FLOW_VERB]: PROJ (or inferred) -> af, REPO, TESTCMD, METH. A flow verb (a verb that needs develop and master: feature, release, hotfix, the branch
+# housekeeping, the upstream line, the changelog numbers) passes its own name, as the refusal says it ("release start"): on a project whose methodology has no such
+# flow (methodology.json flow plain) it is refused here, once for all of them, before it reads or changes anything (methodology-no-flow, exit 2). A gitflow project,
+# and the project of a methodology that cannot be read, is never refused, and no other process starts for it. The verbs of the other kinds pass no name.
+project_load() {
   [ -n "$PROJ" ] || PROJ=$(pymod help infer)
   af=$DA_CONF/projects/$PROJ.json
   [ -f "$af" ] || die "no stored answers for '$PROJ': qargi project attach DIR, or --project"
   REPO=$(jq -r '.repo.path // ""' "$af"); REPO=${REPO/#\~/$HOME}
   [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "the answers for $PROJ name no local repository (repo.path)"
   METH=$(jq -r '.methodology // "gitflow"' "$af")
+  if [ -n "${1:-}" ] && [ "$METH" != gitflow ] \
+     && [ "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import methodology as M; print(M.flow(sys.argv[2]))' "$QARGI_TOOL/lib" "$METH" 2>/dev/null)" = plain ]; then
+    local fv=$1 PROJECT=$PROJ   # PROJECT: the project of the contract line of the refusal
+    case $fv in *[!a-z0-9\ :-]*|[!a-z]*) fv=${fv%% *};; esac   # a verb the user mistyped is named by its area only: the refusal takes a verb of lower-case words
+    refuse methodology-no-flow verb="$fv" methodology="$METH"
+  fi
   TESTCMD=$(jq -r '.test_command // ""' "$af")
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch

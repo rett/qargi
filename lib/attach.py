@@ -401,9 +401,11 @@ def detect(d, name=None, methodology="gitflow", provider=None, release=None, ans
     answers = {
         "schema": 1, "project": pname, "methodology": methodology,
         "repo": {"url": https_url(remote) if remote else "https://github.com/OWNER/REPO", "path": dpath, "credential_file": "",
-                 "long_lived": long_lived or ["master", "develop"]},
+                 "long_lived": long_lived or list((m.get("branches") or {}).get("long_lived") or ["master", "develop"])},
         "roles": roles, "memory": {"memory_store": "", "reference_store": ""}, "budget_cents": 500,
     }
+    if isinstance(m.get("backlog"), dict) and m["backlog"].get("file"):   # a methodology that ships a backlog file names it as the answer
+        answers["backlog"] = {"file": m["backlog"]["file"]}
     if provider:
         answers["models"] = {"provider": provider}
     if cmd:
@@ -429,7 +431,7 @@ def detect(d, name=None, methodology="gitflow", provider=None, release=None, ans
             gaps.append({"kind": "format", "what": cl["file"], "why": why})
     if tags and not found["tags"]["pattern"]:
         gaps.append({"kind": "tags", "what": "tags", "why": "the existing tags are not semantic versions"})
-    if not ci:
+    if not ci and m.get("ci"):   # a methodology with no CI (the plain one) does not miss it
         gaps.append({"kind": "ci", "what": ".github/workflows", "why": "no CI workflow was found"})
     acc = accepted_entries(ans_in)
     open_gaps = [g for g in gaps if gap_id(g) not in {e["gap"] for e in acc}]

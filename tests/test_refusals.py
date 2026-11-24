@@ -58,7 +58,7 @@ class TheCatalogue(unittest.TestCase):
         codes = real()["codes"]
         self.assertTrue(any(e["class"] == "verify-environment" for e in codes.values()))
         for c in ("plan-missing", "plan-stale", "approval-missing", "approval-inside-run", "cut-not-covering", "cut-lead-changed", "cut-branch-moved",
-                  "cut-fix-outside", "release-notes-empty", "release-fragments-unfolded", "feature-runs-open", "ro-write-outside", "ro-second-tree",
+                  "cut-fix-outside", "release-notes-empty", "release-fragments-unfolded", "feature-runs-open", "methodology-no-flow", "ro-write-outside", "ro-second-tree",
                   "ro-env-restricted", "member-push", "member-lead-verb", "member-run-record"):
             self.assertIn(c, codes)
         self.assertTrue(any(e["class"] in R.SEAT_CLASSES for e in codes.values()))
@@ -74,11 +74,13 @@ class TheCatalogue(unittest.TestCase):
 
     def test_the_lint_rejects_what_breaks_a_rule(self):
         self.assertEqual(R.check_catalogue(demo()), [])
+        self.assertEqual(R.check_catalogue(demo(**{"class": "methodology", "exit": 2})), [], "a methodology code exits 2")
         cases = {
             "an unknown placeholder": demo(message="{nowhere}"),
             "a why with a placeholder": demo(why="because {verb}"),
             "an exit that no class uses": demo(exit=3),
             "a seat-gate code that exits 1": demo(**{"class": "seat-gate"}),
+            "a methodology code that exits 1": demo(**{"class": "methodology"}),
             "an unknown status": demo(status="maybe"),
             "an unknown field type": demo(fields={"x": "string"}, message="m", next={"lead": "a", "host": "a"}),
             "a next with no host": demo(next={"lead": "x"}),
