@@ -221,9 +221,10 @@ marshal_main() {
   [ "$verb" != status ] || [ -z "$all" ] || [ -z "$name" ] || { echo "qargi: marshal status takes NAME or --all, not both" >&2; exit 2; }
   if [ "$verb" = key ]; then
     # the key belongs to this machine, not to a project
-    local keyf=$DA_CONF/credentials/marshal_ed25519 ktok kline
+    local keyf=$DA_CONF/credentials/marshal_ed25519 ktok kline kobj
     if [ -e "$keyf" ] || [ -L "$keyf" ]; then die "a signing key exists already ($keyf): it is never overwritten; to rotate, remove it yourself (and the .pub beside it), then run key init again"; fi
-    ktok=$(printf 'marshal key init %s' "${principal:-default}" | plan_token --basis "words:name" --verb "marshal key" --target "machine:${principal:-default}")
+    kobj=${principal//[[:cntrl:]]/}; kobj=${kobj:-default}   # the object of the record is one clean line of at most 200 characters; the hashed text keeps the principal as given
+    ktok=$(printf 'marshal key init %s' "${principal:-default}" | plan_token --basis "words:name" --verb "marshal key" --target "machine:${kobj:0:200}")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       echo "would make this machine's signing key $keyf (ed25519, mode 600, no passphrase; it never leaves this machine) for the signer ${principal:-user@host}, and print the line the other machines trust for it"
       echo "plan token: $ktok   (apply with: qargi marshal key init${principal:+ --principal $principal} --plan $ktok --approved \"...\")"

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # The stored plan record (qargi.plan/0) of the plans that keep one since slice 2: every plan whose hashed input is plain lines or one printf of words. For each verb the
-# plan is made for real on a scratch repository, home and state (no network: gh, ant, curl and systemd-run are stand-ins), and three things are checked:
+# plan is made for real on a scratch repository, home and state (no network: gh, ant, curl and systemd-run are stand-ins), and these are checked:
 #   - the token the verb printed is the one the verb always made: the same sha256 of the hashed bytes, which the test writes out by hand (the printf the verb used before it
 #     kept a record) from values it knows, so a record that changed a byte of the input would fail here;
 #   - `qargi plan show TOKEN --json` gives the verb as lib/commands.py names it, the target PROJECT:OBJECT, the labels in order, one entry for each hashed line, and lines that
 #     rebuild exactly those bytes;
-#   - where the verb's own tests apply the plan with its token (the ones listed in the changelog entry), the apply still works: those tests are run beside this one.
+#   - the verbs this test applies with the token it printed (a line "the token still applies": feature merge into a detached branch, upstream sync, release finish and the finish
+#     cut off, release publish, release site, project new, project set, the waiver of feature verify, marshal key init, enable, signers add and forget, provider accept, skill
+#     accept and unaccept) still apply. The other plans (release finish --keep, publish with assets, release verify's waiver, project unset, marshal resign and disable,
+#     instances init, normalize and refresh-prompt, credential setup) are not applied here: their apply is covered by the tests of the verbs, which run beside this one;
+#   - the record never decides a token (the last section): with a clock that is no time, or no temporary directory, or a target the record refuses, the plan still prints its
+#     token and an apply that has no --plan is refused.
 # A plan of one printf of words (marshal, the `|` plans of registry, credential and skills) is ONE line, because the record's lines are the hashed text split on a newline: it has
 # one label. The units of the record are tests/test_plan_record.py; the first five verbs of slice 1 are tests/test_plan_record.sh.
 # Run: tests/test_plan_record_sites.sh
@@ -158,11 +163,13 @@ git -C "$R" checkout -q -f -b scratch develop
 jq -n --arg p "$R" '{schema:1, project:"sitepub", methodology:"gitflow", test_command:"true", site:{enabled:true}, repo:{url:"https://github.com/acme/sitepub", path:$p, long_lived:["master","develop","gh-pages"], detached:["gh-pages"]}}' > "$T/c/projects/sitepub.json"
 export QARGI_PROJECT=sitepub
 tc=$(rev "$R" "refs/tags/0.5.0^{commit}"); s0=$(rev "$R" gh-pages)
-t=$($REL site 0.5.0 | tok); tree=$(line "$t" 5)
-git -C "$R" cat-file -e "$tree^{tree}" 2>/dev/null || no "(setup) the last line of the site plan is no tree: $tree"
-want "$T/w" '%s\n%s\n%s\n%s\n%s\n%s\n' sitepub 0.5.0 "$tc" gh-pages "$s0" "$tree"
-site "$t" "release site" "sitepub:0.5.0" "project:name version:name tag:sha site-branch:ref site-head:sha tree:sha" "$T/w" "release site"
+t=$($REL site 0.5.0 | tok)
+# the tree the plan hashes is the tree the apply commits, so the expected value is the tree of the commit the apply makes (read from git, not from the record) and the plan is checked after it
 $REL site 0.5.0 --plan "$t" --approved go >/dev/null 2>&1 && [ "$(rev "$R" gh-pages)" != "$s0" ] && ok "release site: the token still applies" || no "site apply: $($REL site 0.5.0 --plan "$t" --approved go 2>&1 | tail -3)"
+tree=$(git -C "$R" rev-parse "gh-pages^{tree}")
+[ "$(line "$t" 5)" = "$tree" ] || no "release site: the tree in the plan, $(line "$t" 5), is not the tree of the commit the apply made, $tree"
+want "$T/w" '%s\n%s\n%s\n%s\n%s\n%s\n' sitepub 0.5.0 "$tc" gh-pages "$s0" "$tree"
+site "$t" "release site" "sitepub:0.5.0" "project:name version:name tag:sha site-branch:ref site-head:sha tree:sha" "$T/w" "release site (the tree is the one of the commit the apply made)"
 
 # ---------------------------------------------------------------------------------------------------------------------------- project new
 mkdir -p "$T/pn"
@@ -204,9 +211,9 @@ python3 -I "$SE" approved set swv '{"cpu_quota":"max","fds":"ci-like"}' --by tes
 sid2=$(python3 -I "$SE" id '{"cpu_quota":"max","fds":"ci-like"}')
 out=$($REL verify 0.2.0 2>&1); t=$(tok <<<"$out")
 [ -n "$t" ] && [ "$(plan_show "$t" --json | jq -r .verb)" = "release verify" ] && ok "release verify: the refusal's token is a plan with a record" || no "release verify waiver: $out"
-br=$(line "$t" 1)
+br=develop   # release/0.2.0 is not started here, so the release verify runs on the base branch of the project: named here, not read from the record
 want "$T/w" '%s\n%s\n%s\n%s\n%s\n%s\n' swv "$br" "$(rev "$R" "$br")" "$sid2" cpu "waiver 0"
-site "$t" "release verify" "swv:0.2.0" "project:name branch:ref head:sha environment:sha part:label waiver:label" "$T/w" "release verify (the waiver of cpu)"
+site "$t" "release verify" "swv:0.2.0" "project:name branch:ref head:sha environment:sha part:label waiver:label" "$T/w" "release verify (the waiver of cpu; the branch is the base, develop)"
 PATH=$PATH_PLAIN
 
 # ---------------------------------------------------------------------------------------------------------------------------- marshal: one line of words each
@@ -281,8 +288,10 @@ out=$($DA instances normalize beta-build --asked "t" 2>&1); t=$(tok <<<"$out")
 want "$T/w" '%s|%s' beta-build "$(sed -n 's/^  \([a-z]*\): \(.*\) -> \(.*\)$/\1:\2>\3;/p' <<<"$out" | tr -d '\n')"
 [ -n "$(line "$t" 0 | sed -n 's/^beta-build|agent:old-agent>.*;$/x/p')" ] || no "(setup) the normalize plan text: $(line "$t" 0)"
 site "$t" "instances normalize" "beta:beta-build" "renames:name" "$T/w" "instances normalize"
-t=$($DA instances refresh-prompt beta-build --asked "t" | tok)
-prompt=$(jq -j '[.lines[].value] | join("\n")' "$PLANS/$t.json"); prompt=${prompt#1|}; prompt=${prompt%|}
+out=$($DA instances refresh-prompt beta-build --asked "t"); t=$(tok <<<"$out")
+# the expected prompt is rendered here, by the function the verb calls (agent_prompt, for the role build of the project beta), not read from the record of the plan; the plan shows a
+# line of it at most 150 characters wide, so the printed plan cannot stand for it
+prompt=$(DA_STATE=$T/s QARGI_TOOL=$ROOT bash -c '. "$1/lib/lib.sh"; agent_prompt build beta' _ "$ROOT") || no "(setup) the prompt could not be rendered"
 want "$T/w" '%s|%s|%s' 1 "$prompt" ""
 site "$t" "instances refresh-prompt" "beta:beta-build" "prompt:name" "$T/w" "instances refresh-prompt (the rendered prompt, a line each, the version before and the pinned members after)"
 [ "$(jq '.lines | length' "$PLANS/$t.json")" -gt 20 ] && ok "(the record holds the whole prompt: $(jq '.lines | length' "$PLANS/$t.json") lines)" || no "refresh-prompt lines"
@@ -322,12 +331,88 @@ mkdir -p "$R2/.claude/skills/risky"; printf -- '---\nname: risky\ndescription: U
 sh=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1] + "/lib"); import packs_audit as A; print(A.strict_hash(sys.argv[2]))' "$ROOT" "$R2/.claude/skills/risky")
 t=$($DA skill accept skp risky | tok); bind=$(line "$t" 0 | cut -d'|' -f7-)
 want "$T/w" 'skill-accept|%s|%s|%s|%s|%s|%s' skp claude-code project:skp risky "$sh" "$bind"
-site "$t" "skill accept" "skp:risky" "accept:name" "$T/w" "skill accept"
-[ -n "$bind" ] && jq -e . <<<"$bind" >/dev/null && ok "(the last field of the line is the render binding, one line of JSON)" || no "binding: $bind"
+site "$t" "skill accept" "skp:risky" "accept:name" "$T/w" "skill accept (the binding is read from the record: this checks the rebuild of the line, and the hash, runtime and project in front of it)"
+[ -n "$bind" ] && [ "$bind" = "$(jq -cS . <<<"$bind")" ] && jq -e '(keys == ["composition","project","runtime","target"]) and .project == "skp" and .runtime == "claude-code" and (.composition | test("^[0-9a-f]{64}$"))' <<<"$bind" >/dev/null \
+  && ok "(the last field of the line is the render binding, one canonical line of JSON for the project skp and the runtime claude-code, with a 64-digit composition: checked with jq, not against the record)" || no "binding: $bind"
 $DA skill accept skp risky --plan "$t" --approved "read it" >/dev/null 2>&1 && jq -e '.projects.skp.risky' "$T/c/packs/accepted.json" >/dev/null && ok "skill accept: the token still applies" || no "skill accept apply"
-t=$($DA skill unaccept skp risky | tok); bind=$(line "$t" 0 | cut -d'|' -f7-)
+t=$($DA skill unaccept skp risky | tok)
+# the binding of an unaccept is the sha256 of the stored acceptance with its slot, project, scope, runtime and target: made here from the acceptance file, not from the plan's record
+bind=$(python3 -I -c 'import hashlib, json, sys; r = json.load(open(sys.argv[1]))["projects"]["skp"]["risky"]; print(hashlib.sha256(json.dumps({"project": "skp", "scope": "project", "runtime": "claude-code", "target": None, "slot": "risky", "record": r}, sort_keys=True).encode()).hexdigest())' "$T/c/packs/accepted.json")
 want "$T/w" 'skill-unaccept|%s|%s|%s|%s|%s|%s' skp claude-code project:skp risky "$sh" "$bind"
-site "$t" "skill unaccept" "skp:risky" "unaccept:name" "$T/w" "skill unaccept"
+site "$t" "skill unaccept" "skp:risky" "unaccept:name" "$T/w" "skill unaccept (the binding made from the acceptance file)"
 $DA skill unaccept skp risky --plan "$t" --approved "no longer" >/dev/null 2>&1 && jq -e '.projects.skp | has("risky") | not' "$T/c/packs/accepted.json" >/dev/null && ok "skill unaccept: the token still applies" || no "skill unaccept apply"
+
+# ---------------------------------------------------------------------------------------------------------------------------- the token never depends on the record
+# The record is a reading aid. When it cannot be kept (no temporary file: TMPDIR is gone; the store refuses: QARGI_PLAN_NOW is no time, or the target holds a control character)
+# the plan still prints the one token it always printed, and an apply that was given no --plan is still refused: the empty token of a plan whose record failed must never equal
+# the empty --plan of an apply.
+nogo() { # WHAT: the output of the last command is a refusal for the plan, not an apply
+  grep -q 'plan-missing\|plan-stale\|verify-env-change-unapproved' <<<"$out" || no "$1: the apply was not refused for its plan: $out"
+}
+# upstream sync: advance the upstream again; the plan is the plan of the upstream scenario above
+UR=$T/ups; export QARGI_PROJECT=ups
+rm -f "$T/bin/git"; hash -r   # the stand-in of the credential section refuses a push that is not to its repository
+mkdir -p "$T/gone"; rmdir "$T/gone"
+for cond in QARGI_PLAN_NOW=junk TMPDIR=$T/gone; do
+  what="$cond"; [ "${cond%%=*}" != TMPDIR ] || what="TMPDIR gone"
+  echo more2 >> "$U/shared.txt"; git -C "$U" commit -q -am "more $what"; git -C "$U" push -q "$T/up.git" main:main
+  $DA upstream status >/dev/null 2>&1
+  before=$(rev "$UR" upstream); h=$(git -C "$U" rev-parse main)
+  want "$T/w" '%s\n%s\n%s\n%s\n' ups upstream "$before" "$h"
+  out=$(env "$cond" "$DA" upstream sync 2>&1); t=$(tok <<<"$out")
+  [ "$t" = "$(sha12 < "$T/w")" ] && ok "upstream sync ($what): the plan still prints the old token, $t, though its record could not be kept" || no "upstream sync ($what): the token is '$t', the input hashes to $(sha12 < "$T/w"): $out"
+  [ ! -e "$PLANS/$t.json" ] && ok "(the record of that plan was not kept)" || no "($what) the record exists"
+  out=$(env "$cond" "$DA" upstream sync --approved go 2>&1); rc=$?
+  [ "$rc" != 0 ] && [ "$(rev "$UR" upstream)" = "$before" ] && ok "upstream sync --approved without --plan ($what): refused, upstream did not move" || no "upstream sync --approved ($what): rc=$rc, upstream moved to $(rev "$UR" upstream): $out"
+  nogo "upstream sync ($what)"
+  out=$(env "$cond" "$DA" upstream sync --plan 000000000000 --approved go 2>&1); rc=$?
+  [ "$rc" != 0 ] && [ "$(rev "$UR" upstream)" = "$before" ] && ok "upstream sync with a token that is not the plan's ($what): refused, upstream did not move" || no "upstream sync wrong token ($what): $out"
+  $DA upstream sync --plan "$t" --approved go >/dev/null 2>&1 && [ "$(rev "$UR" upstream)" = "$h" ] && ok "(and the token of the plan applies: the record is not what is checked)" || no "($what) apply with the token"
+done
+# project set of a loosening
+mkproj vloose
+$DA project set vloose verify.environment '{"fds":"ci-like"}' >/dev/null 2>&1 || no "(setup) first declaration"
+oid=$(python3 -I "$ROOT/lib/suite_env.py" id '{"fds":"ci-like"}'); nid=$(python3 -I "$ROOT/lib/suite_env.py" id '{"fds":"close"}')
+for cond in QARGI_PLAN_NOW=junk TMPDIR=$T/gone; do
+  what="$cond"; [ "${cond%%=*}" != TMPDIR ] || what="TMPDIR gone"
+  want "$T/w" '%s\n%s\n%s\n' vloose "$oid" "$nid"
+  out=$(env "$cond" "$DA" project set vloose verify.environment '{"fds":"close"}' 2>&1); t=$(tok <<<"$out")
+  [ "$t" = "$(sha12 < "$T/w")" ] && ok "project set verify.environment ($what): the plan of the loosening still prints the old token, $t" || no "project set ($what): the token is '$t', not $(sha12 < "$T/w"): $out"
+  out=$(env "$cond" "$DA" project set vloose verify.environment '{"fds":"close"}' --approved w 2>&1); rc=$?
+  [ "$rc" != 0 ] && [ "$(jq -c .verify.environment "$T/c/projects/vloose.json")" = '{"fds":"ci-like"}' ] && ok "project set (a loosening) --approved without --plan ($what): refused, the declaration is as it was" || no "project set --approved ($what): rc=$rc, now $(jq -c .verify.environment "$T/c/projects/vloose.json"): $out"
+  nogo "project set ($what)"
+done
+# project new with a directory whose name holds a tab (the record refuses the target of such a plan; the plan still has its token)
+TABDIR=$T/pn/x$'\t'y
+want "$T/w" '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$TABDIR" gitflow "" "" "" "" "" "$(jq -S -c . <<<"$(python3 -I "$ROOT/lib/methodology.py" files gitflow --param project=ptab)")"
+for cond in QARGI_PLAN_NOW=junk TMPDIR=$T/gone; do
+  what="$cond"; [ "${cond%%=*}" != TMPDIR ] || what="TMPDIR gone"
+  out=$(env "$cond" "$DA" project new ptab --dir "$TABDIR" 2>&1); t=$(tok <<<"$out")
+  [ "$t" = "$(sha12 < "$T/w")" ] && ok "project new ($what, a directory with a tab): the plan prints the old token, $t" || no "project new ($what): the token is '$t', not $(sha12 < "$T/w"): $out"
+  out=$(env "$cond" "$DA" project new ptab --dir "$TABDIR" --approved go 2>&1); rc=$?
+  [ "$rc" != 0 ] && [ ! -e "$TABDIR" ] && [ ! -e "$T/c/projects/ptab.json" ] && ok "project new --approved without --plan ($what, a directory with a tab): refused, nothing was created" || no "project new --approved ($what): rc=$rc: $out"
+  nogo "project new ($what)"
+done
+# the directory with a tab, with nothing wrong with the environment: the plan prints a token and its record, with the tab shown as ? in the target
+out=$($DA project new ptab --dir "$TABDIR" 2>&1); rc=$?; t=$(tok <<<"$out")
+[ "$rc" = 0 ] && [ "$t" = "$(sha12 < "$T/w")" ] && [ "$(jq -r '.target.object' "$PLANS/$t.json")" = "$T/pn/x?y" ] && ok "project new with a tab in the directory: rc 0, the old token, and the target of the record has the tab as ?" || no "project new with a tab: rc=$rc $out"
+# a principal of marshal key init that holds a tab, or is over 200 characters: the plan prints its token as before the record (rc 0), and the apply refuses it as before
+LONGP=$(printf 'p%.0s' $(seq 201)); TABP=$'al\tice@ms'
+for pr in "$TABP" "$LONGP"; do
+  what="a principal with a tab"; [ "$pr" != "$LONGP" ] || what="a principal of 201 characters"
+  rm -f "$T/c/credentials/marshal_ed25519" "$T/c/credentials/marshal_ed25519.pub"   # the key the section above made
+  out=$($DA marshal key init --principal "$pr" 2>&1); rc=$?; t=$(tok <<<"$out")
+  want "$T/w" 'marshal key init %s' "$pr"
+  [ "$rc" = 0 ] && [ "$t" = "$(sha12 < "$T/w")" ] && ok "marshal key init, $what: the plan prints its token (rc 0), the old one" || no "marshal key init, $what: rc=$rc token '$t': $out"
+  if [ "$pr" = "$TABP" ]; then [ "$(jq -r '.target.object' "$PLANS/$t.json")" = "alice@ms" ] && ok "(the target of the record is the principal without the tab)" || no "target: $(jq -c .target "$PLANS/$t.json")"
+  else [ "$(jq -r '.target.object | length' "$PLANS/$t.json")" = 200 ] && ok "(the target of the record is cut to 200 characters)" || no "target: $(jq -c .target "$PLANS/$t.json" | cut -c1-80)"; fi
+  out=$($DA marshal key init --principal "$pr" --plan "$t" --approved go 2>&1); rc=$?
+  [ "$rc" != 0 ] && [ ! -e "$T/c/credentials/marshal_ed25519" ] && ok "(and the apply refuses it, as before: no key was made)" || no "marshal key init apply, $what: rc=$rc: $out"
+done
+# need_plan itself: no gate accepts an empty expected token, whatever --plan holds
+for pa in "" x; do
+  out=$(PLAN_ARG=$pa DA_STATE=$T/s QARGI_TOOL=$ROOT bash -c '. "$1/lib/lib.sh"; need_plan ""; echo APPLIED' _ "$ROOT" 2>&1); rc=$?
+  [ "$rc" != 0 ] && ! grep -q APPLIED <<<"$out" && grep -q 'internal error: no plan token to check; nothing was changed' <<<"$out" && ok "need_plan with an empty expected token and --plan '$pa': an internal error, nothing applied" || no "need_plan empty ($pa): rc=$rc $out"
+done
 
 exit $fail

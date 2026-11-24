@@ -433,12 +433,14 @@ class ThePlanBasis(unittest.TestCase):
 
     def test_labels_that_are_not_words_are_a_defect_and_a_missing_label_list_a_usage_error(self):
         rc, out, err = self.token("x\n", "Bad,Label")
-        self.assertEqual(rc, 70)
+        self.assertEqual((rc, out), (0, hashlib.sha256(b"x\n").hexdigest()[:12]), "the record is refused, the token is not")
+        self.assertIn("qargi: defect:", err)
         rc, out, err = sh('echo x | plan_token --basis')
         self.assertEqual(rc, 2)
         self.assertIn("needs the labels", err)
-        rc, _, err = sh('echo x | plan_token --basis ""' + self.WHO)
-        self.assertEqual(rc, 70, err)
+        rc, out, err = sh('echo x | plan_token --basis ""' + self.WHO)
+        self.assertEqual((rc, out.strip()), (0, hashlib.sha256(b"x\n").hexdigest()[:12]), err)
+        self.assertIn("qargi: defect:", err)
         rc, _, err = sh('echo x | plan_token --basis "line"')
         self.assertEqual((rc, "needs --verb VERB and --target PROJECT:OBJECT" in err), (2, True), err)
 
