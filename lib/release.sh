@@ -148,7 +148,7 @@ printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || usage_die "'$VER' is
 . "$(dirname "$0")/gitflow.sh"
 PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan of start and push), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
 [ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop and g and ghq pass only what reads
-project_load
+project_load "release $verb"
 read -r REL_PAT HOT_PAT < <(python3 -I - "$(dirname "$0")" "$METH" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 b = M.load(sys.argv[2])[2]["branches"]

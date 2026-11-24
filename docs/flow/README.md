@@ -5,6 +5,7 @@ How the work is named, who does it, how a project is developed and released, and
 - [Naming convention](#naming-convention)
 - [Roles and members](#roles-and-members)
 - [Methodologies](#methodologies)
+- [The plain methodology](plain.md): a project whose output is documents, with one branch and no releases
 - [Git-flow](git-flow.md): features, tasks, releases, hotfixes, detached branches, feature branches on origin, pruning, following an upstream repository, the worktree root, the parking branch
 - [Feature marshal](marshal.md): who leads which open feature, the lead's context, sharing the records, signing
 
@@ -76,7 +77,7 @@ local run for that role (default `build`): a read-only role keeps the clone unch
 
 A methodology file describes the way a project is developed and released: its branches, versioning and
 changelog, test tiers, CI, release steps, deployment options and the generic files a new project
-starts with. One ships, `gitflow`; add your own under `~/.qargi/config/methodologies/NAME/`
+starts with. Two ship, `gitflow` and [`plain`](plain.md) (for a project whose output is documents); add your own under `~/.qargi/config/methodologies/NAME/`
 (`methodology.json` and a `scaffold/` directory). `qargi methodology list` shows them, `show NAME`
 prints one, and `check [NAME]` validates one or all. These verbs only read.
 
@@ -86,7 +87,10 @@ write, the integration branch `project attach` looks for (the last of `branches.
 branch name patterns that `release` reads, and the `after_release` steps that `release finish` and `release status` print. What it does not set is the flow itself: the
 `feature`, `release` and `branch` verbs name `develop`, `master` and the `feature/` and `agent/` prefixes literally,
 so a second methodology can change the files a project starts with and those patterns, not how features and releases
-merge. Until the verbs read the branch roles from the file, treat `gitflow` as the only flow qargi runs.
+merge. Until the verbs read the branch roles from the file, `gitflow` is the only flow qargi runs for a project that has releases. The key `flow` of
+`methodology.json` names the one other shape, `plain` (one long-lived branch, no feature, release or hotfix branches, no tags): on such a project
+the `feature`, `release`, `branch prune`, `upstream` and `changelog renumber` verbs refuse (`methodology-no-flow`, exit 2, nothing changed), and
+the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
 
 - `qargi project new NAME [--dir DIR] [--param test_command='make test'] [--url URL]` starts a new
   project on the methodology's branches with its generic files.

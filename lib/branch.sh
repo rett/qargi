@@ -69,7 +69,7 @@ prune_dry_end() {
   echo "not run in a dry run: the deletion of the branches, of the worktrees qargi made and, with --remote, of the branches on origin"
   exit 0
 }
-project_load
+project_load "branch $verb"
 branch_exists develop || die "no develop branch"
 LL=$(jq -r '(.repo.long_lived // [])[]' "$af")
 

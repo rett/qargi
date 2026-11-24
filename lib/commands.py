@@ -157,12 +157,14 @@ COMMANDS = {
                  "is none for members: they are instructed to return patches without pushing. The lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
-            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
+            "template": verb("Print an answers file with defaults", [("NAME", "none")], [opt("--methodology", "the methodology the answers follow (default gitflow, which adds no methodology answer)", "NAME", "methodology")],
+                             desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set. With --methodology the answers carry its name, its long-lived branches (plain: main only, not master and develop) and the bases of its roles; a methodology that does not pass qargi methodology check is refused. project validate refuses a methodology answer that does not pass it either.",
+                             examples=["qargi project template notes --methodology plain > notes.json"]),
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
             "new": verb("Start a new project: its directory, a git repository on the methodology's branches and generic files", [("NAME", "none")],
-                        [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
+                        [opt("--methodology", "the methodology (default gitflow; plain for a project whose output is documents)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command; gates=JSON declares gates, which are stored in the answers too when --url is given", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
                          opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
@@ -172,8 +174,8 @@ COMMANDS = {
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. With --url (the answers are stored) a --provider or --provider-local runtime that does not confine reads (a command runtime whose definition has no dispatch.reads that confines them) adds the warning line members on NAME can read ... reads are not confined to the plan; it asks for no phrase. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
-                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
-                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
+                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment. With --methodology plain the repository has the one branch main and holds README.md, CONTRIBUTING.md, AGENTS.md, artifacts/ and BACKLOG.md: no develop, no VERSION, no changelog, no CI and no Makefile (the answers stored with --url name BACKLOG.md as the backlog file). --json prints the plan and its token as one object; the token approves the same plan."),
+                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme", "qargi project new notes --methodology plain --url https://github.com/me/notes"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
@@ -1267,15 +1269,16 @@ COMMANDS = {
     "methodology": {
         "summary": "List and inspect the development and release methodologies",
         "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
-                 "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
+                 "CI, release steps and deployment options, and the generic files a new project starts with. Two ship with qargi: gitflow, and plain for a project whose output is documents (one long-lived branch, main, and no feature, release or hotfix branches, no tag and no version); "
                  "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). Today a methodology sets "
                  "the files and parameters a project starts with and a few patterns; the feature, release and branch verbs name develop and master themselves. "
+                 "A methodology whose flow is plain (the key flow in methodology.json: gitflow by default) has exactly one long-lived branch and none of the release patterns; qargi feature, release (hotfixes included), branch prune, upstream and changelog renumber refuse such a project with the refusal methodology-no-flow (exit 2, nothing changed), while qargi local prepare, run, verify, close and clean, qargi review check, save and apply, and qargi backlog work with --base set to its branch. "
                  "These verbs only read; qargi project new and adopt write, and only after a plan."),
         "scripts": ["methodology.py"],
         "verbs": {
             "list": verb("List the methodologies and where they live"),
-            "show": verb("Print a methodology: branches, tests, CI, release steps, parameters, scaffold, deployment options", [("NAME", "methodology")]),
-            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")]),
+            "show": verb("Print a methodology: flow, branches, tests, CI, release steps (or the work steps of a plain one), parameters, scaffold, deployment options", [("NAME", "methodology")]),
+            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")], desc="Names each problem. A methodology with the flow plain must have exactly one long-lived branch and a task pattern, and none of branches.feature, release, hotfix and tag, after_release, release and versioning."),
             "files": verb("Print the scaffold rendered with the parameters, writing nothing", [("NAME", "methodology")],
                           [opt("--param", "a parameter as name=value (repeat)", "NAME=VALUE")],
                           examples=["qargi methodology files gitflow --param project=acme --param test_command='make test'"]),

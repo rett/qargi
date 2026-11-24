@@ -55,6 +55,7 @@ compares them with that page.
 | [`member-push`](#member-push) | guard | 2 | live | A member never pushes |
 | [`member-lead-verb`](#member-lead-verb) | guard | 2 | live | A member does not run the lead's verbs |
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
+| [`methodology-no-flow`](#methodology-no-flow) | methodology | 2 | live | A verb of the git-flow shape runs only on a project whose methodology has that flow |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-unknown`](#plan-unknown) | plan | 1 | live | qargi plan show answers for a plan that this build kept a record of |
@@ -245,6 +246,17 @@ compares them with that page.
 - Message: `a member may not write this run record`
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
 - Printed at 4 sites; `qargi help guard` says what a member's guard refuses.
+
+## Class methodology
+
+### methodology-no-flow
+
+- Rule: A verb of the git-flow shape runs only on a project whose methodology has that flow.
+- Why: the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there.
+- Exit 2, live.
+- Fields: `verb` (verb), `methodology` (label).
+- Message: `{verb} is refused: the project follows the {methodology} methodology, which has no feature, release or hotfix flow`
+- Next, for a lead: work goes on a branch cut from the project's one long-lived branch: qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog; the feature, release and hotfix verbs belong to a methodology of the git-flow shape
 
 ## Class plan
 

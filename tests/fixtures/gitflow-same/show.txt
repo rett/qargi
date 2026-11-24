@@ -1,0 +1,50 @@
+methodology: gitflow (built-in, version 1)
+dir: DIR
+
+Git-flow: master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged); the tagged master commit is then merged into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.
+
+branches: long-lived master, develop; release release/{version}; task agent/{slug}
+tests: per task, the targeted check that covers the change; per collection, the whole suite, once, when a feature is complete and again on a release branch's pull request in CI
+ci: github-actions (.github/workflows/test.yml)
+
+release:
+  1. a feature is a branch cut from develop, as broad as a theme: the lead merges the verified series of each related task into it with --no-ff; tasks get targeted checks only
+  2. when the feature is complete, run the whole suite once on it, then merge it into develop with --no-ff and delete it; develop sees one merge per feature
+  3. when you say develop is ready: start release/<version> from develop; the first commit bumps the version and dates the changelog; only minor fixes follow
+  4. push the release branch and open a pull request into master; CI runs on exactly the commit that will be released. A master created as a snapshot of the code has no merge base with develop (git refuses to merge unrelated histories): before the push, merge master into the release branch with -s ours --allow-unrelated-histories, which keeps the release tree, so the later merge into master is an ordinary --no-ff merge; qargi release push does this in its plan and checks that the tree is unchanged
+  5. when CI passes: merge release/<version> into master with --no-ff, tag it, merge that tagged master commit into develop with --no-ff, delete the branch
+  6. a critical fix to production is a hotfix/<version> branch from master, finished the same way (into the open release branch instead of develop when one exists)
+
+after a release (release finish names the step when the answer is true):
+  site         when site.enabled: qargi release site {version} (build the documentation site of the tag on the detached site branch, as a commit there that you push)
+
+parameters:
+  project       the project's name (required)
+  test_command  the command that runs the whole test suite (default make test)
+  gates         the project's declared gates as one line of JSON, an array of {name, command, tier} (tier feature or release); when given, the scaffold names them where it would name the test command and the CI workflow has one job per gate, named after it (a release-tier gate's job runs only on release and hotfix branches)
+  ci_timeout_minutes the time limit in minutes of the CI job that runs the whole suite; derive it from the suite's own time budgets (the sum of the budgets of the steps one job runs, times 1.5, plus the setup), because a limit below the suite's real time cancels every run (default 30)
+  runner        the task runner that holds the bootstrap and doctor targets (default make)
+  bootstrap_command the command that sets a checkout up (default make bootstrap)
+  dry_run_command the command that shows what the bootstrap would do, changing nothing (default make -n bootstrap)
+  doctor_command the command that checks a checkout, one line per item (default make doctor)
+  unreleased_heading the heading of the changelog section of the changes to come (the project's release.changelog.unreleased, with {version} replaced by the first version) (default ## [Unreleased])
+  changelog_entry where a changelog entry goes, as the contributor files say it: under the unreleased heading, as the next numbered item when the project numbers its entries (release.changelog.numbered) (default under `[Unreleased]`)
+  version       the first version (default 0.1.0)
+  year          the copyright year (default: this year)
+
+scaffold:
+  README.md
+  VERSION
+  CHANGELOG.md
+  CONTRIBUTING.md
+  AGENTS.md
+  Makefile
+  CLAUDE.md
+  .gitignore
+  .github/workflows/test.yml
+
+deployment options:
+  none             Nothing yet
+  github-release   A GitHub release with the built files
+  container-image  A container image built by CI on a tag
+  package-registry A package published to a registry on a tag

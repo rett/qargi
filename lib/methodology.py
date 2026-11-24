@@ -11,6 +11,12 @@ unique across both places. This module only reads: `qargi project new|adopt` wri
   methodology.py files NAME --param k=v ...      the scaffold rendered as JSON [{dest, content}], nothing written
   methodology.py deployment NAME [ID]            the deployment options, or one option's instructions
 
+The optional key flow names the shape of the methodology: gitflow (the default: master and develop, feature, release and hotfix branches, a tag
+for each release) or plain (one long-lived branch and the task branches cut from it; no feature, release or hotfix branches, no tag, no version
+file; the work is documents and nothing is released). A plain methodology has exactly one long-lived branch, a task pattern, and none of
+branches.feature, branches.release, branches.hotfix, branches.tag, after_release or the release list; the flow verbs (feature, release, hotfix
+and the others that need develop and master) refuse a project that follows one (refusal methodology-no-flow).
+
 A template's {{name}} is replaced by the parameter of that name; a {{...}} that is not a declared parameter is left
 alone (it may belong to the file's own language), but a declared parameter with no value is an error.
 The optional parameter gates is the project's declared gates (lib/gates.py) as one line of JSON, an array of {name, command, tier}. A template
@@ -32,6 +38,8 @@ import paths as P  # noqa: E402
 import gates as G  # noqa: E402
 
 NAME = re.compile(r"^[a-z][a-z0-9]{0,23}$")
+FLOWS = ("gitflow", "plain")
+FLOW_KEYS = ("feature", "release", "hotfix", "tag")   # the branch patterns a plain methodology does not have
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 # the placeholders of a template's {{#gate}} loop, filled for each declared gate; they are not parameters
 GATE_VARS = ("gate_id", "gate_name", "gate_name_quoted", "gate_name_code", "gate_tier", "gate_command", "gate_command_code")
@@ -113,7 +121,22 @@ def problems(name):
     ll = br.get("long_lived")
     if not (isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll)):
         bad.append("%s: branches.long_lived is a list of branch names" % name)
-    for k, need in (("release", "{version}"), ("task", "{slug}")):
+    flow = m.get("flow", "gitflow")
+    if flow not in FLOWS:
+        bad.append("%s: flow is one of %s, not %r" % (name, ", ".join(FLOWS), flow))
+    if flow == "plain":
+        if isinstance(ll, list) and len(ll) != 1:
+            bad.append("%s: a plain methodology has exactly one long-lived branch, not %d" % (name, len(ll)))
+        for k in FLOW_KEYS:
+            if k in br:
+                bad.append("%s: a plain methodology has no branches.%s (it has no %s branches%s)" % (name, k, k, " and no tags" if k == "tag" else ""))
+        for k in ("after_release", "release", "versioning"):
+            if m.get(k):
+                bad.append("%s: a plain methodology has no %s (nothing is released)" % (name, k))
+        need_keys = (("task", "{slug}"),)
+    else:
+        need_keys = (("release", "{version}"), ("task", "{slug}"))
+    for k, need in need_keys:
         if not (isinstance(br.get(k), str) and need in br[k]):
             bad.append("%s: branches.%s is a pattern containing %s" % (name, k, need))
     seen = set()
@@ -160,6 +183,19 @@ def problems(name):
         if not o.get("instructions"):
             bad.append("%s: deployment option %s has no instructions" % (name, o.get("id")))
     return bad
+
+
+def flow(name):
+    """The flow of the methodology: gitflow (the default) or plain. A methodology that cannot be read counts as gitflow, the default."""
+    f = find(name)
+    if not f:
+        return "gitflow"
+    try:
+        with open(os.path.join(f[1], "methodology.json")) as fh:
+            v = json.load(fh).get("flow", "gitflow")
+    except (OSError, ValueError, AttributeError):
+        return "gitflow"
+    return v if v in FLOWS else "gitflow"
 
 
 def render(name, given):
@@ -242,12 +278,24 @@ def main(argv):
         print("methodology: %s (%s, %s)\ndir: %s\n" % (m.get("name"), where, "version %s" % m.get("version"), d))
         print(m.get("description", ""))
         br = m.get("branches", {})
-        print("\nbranches: long-lived %s; release %s; task %s" % (", ".join(br.get("long_lived", [])), br.get("release"), br.get("task")))
-        print("tests: per task, %s; per collection, %s" % (m.get("tests", {}).get("task"), m.get("tests", {}).get("collection")))
-        print("ci: %s (%s)" % (m.get("ci", {}).get("provider"), m.get("ci", {}).get("file")))
-        print("\nrelease:")
-        for i, step in enumerate(m.get("release", []), 1):
-            print("  %d. %s" % (i, step))
+        if m.get("flow", "gitflow") == "plain":
+            print("\nflow: plain (no feature, release or hotfix branches, no tags, no version)")
+            print("branches: long-lived %s; task %s" % (", ".join(br.get("long_lived", [])), br.get("task")))
+            if m.get("tests"):
+                print("tests: per task, %s" % m["tests"].get("task"))
+            if m.get("ci"):
+                print("ci: %s (%s)" % (m["ci"].get("provider"), m["ci"].get("file")))
+            if m.get("work"):
+                print("\nwork:")
+                for i, step in enumerate(m["work"], 1):
+                    print("  %d. %s" % (i, step))
+        else:
+            print("\nbranches: long-lived %s; release %s; task %s" % (", ".join(br.get("long_lived", [])), br.get("release"), br.get("task")))
+            print("tests: per task, %s; per collection, %s" % (m.get("tests", {}).get("task"), m.get("tests", {}).get("collection")))
+            print("ci: %s (%s)" % (m.get("ci", {}).get("provider"), m.get("ci", {}).get("file")))
+            print("\nrelease:")
+            for i, step in enumerate(m.get("release", []), 1):
+                print("  %d. %s" % (i, step))
         if m.get("after_release"):
             print("\nafter a release (release finish names the step when the answer is true):")
             for s in m["after_release"]:

@@ -202,6 +202,15 @@ repo = c.get("repo", {})
 need(isinstance(repo.get("url"), str) and repo["url"] and "OWNER/REPO" not in repo["url"], "repo.url is required (replace the placeholder)")
 ll = repo.get("long_lived", [])
 need(isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll), "repo.long_lived: the branches no agent may ever touch (e.g. master, develop)")
+# methodology: the name of a methodology (qargi methodology list) that passes qargi methodology check; absent means gitflow
+if "methodology" in c:
+    mth = c["methodology"]
+    if not (isinstance(mth, str) and mth):
+        bad.append("methodology: the name of a methodology (qargi methodology list), a string")
+    else:
+        import methodology as _meth
+        for _p in _meth.problems(mth):
+            bad.append("methodology: %s (qargi methodology check %s says so)" % (_p, mth))
 # repo.detached: long-lived branches that never meet develop, master, release, hotfix or feature branches (a documentation site, say).
 # Names only: qargi refuses the merges between them and the git-flow branches (lib/gitflow.sh detached_mix)
 def branch_name(x):
@@ -770,9 +779,30 @@ verify_env_record() { # NAME PATH VERB: after the answers are stored, the approv
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || usage_die "template needs a project name (lower-case letters and digits)"
+    shift
+    meth=''
+    while [ $# -gt 0 ]; do
+      case $1 in --methodology) need_val "$1" $#; meth=$2; shift 2;; *) usage_die "unknown option $1 (usage: qargi project template NAME [--methodology M])";; esac
+    done
+    # the long-lived branches and the role bases come from the methodology; the one that ships as the default (gitflow) adds no answer, as before
+    mover='{}'
+    if [ -n "$meth" ] && [ "$meth" != gitflow ]; then
+      mover=$(python3 -I - "$(dirname "$(readlink -f "$0")")" "$meth" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1]); import methodology as M
+bad = M.problems(sys.argv[2])
+if bad:
+    sys.stderr.write("qargi: the methodology %s does not pass qargi methodology check: %s\n" % (sys.argv[2], "; ".join(bad)))
+    sys.exit(1)
+m = M.load(sys.argv[2])[2]
+print(json.dumps({"methodology": sys.argv[2], "long_lived": m["branches"]["long_lived"],
+                  "bases": {r: c["base"] for r, c in (m.get("roles") or {}).items() if isinstance(c, dict) and isinstance(c.get("base"), str)}}))
+PY
+      ) || exit 1
+    fi
     # no model and no provider: the template names no vendor. A role's model is its provider's tier (project set models.provider.local NAME)
     # until you give one; the efforts are the table's, the same for every provider
-    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
+    jq -n --arg n "$n" --argjson mo "$mover" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
     '$d[0].profiles as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
@@ -783,7 +813,11 @@ case $verb in
       lead: {context_window: null},
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
-      budget_cents: 500}';;
+      budget_cents: 500}
+    | if ($mo | has("methodology")) then
+        .methodology = $mo.methodology | .repo.long_lived = $mo.long_lived
+        | reduce ($mo.bases | to_entries[]) as $b (.; if .roles[$b.key] then .roles[$b.key].base = $b.value else . end)
+      else . end';;
   init)
     n=${1:-}; shift || true; valid_project "$n" || usage_die "init needs a project name"
     ans='' force=''
@@ -828,8 +862,10 @@ case $verb in
     long=$(python3 -I - "$lib" "$meth" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
+print(M.flow(sys.argv[2]))
 PY
     ) || exit 1
+    flow=${long#*$'\n'}; long=${long%%$'\n'*}
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" \
           | plan_token --basis "directory:path methodology:name url:name deployment:name provider:name provider-local:name provider-cloud:name files:name" --verb "project new" --target "$n:$(printf '%s' "${dir//[[:cntrl:]]/?}" | cut -c1-200)")
     echo "new project $n with the $meth methodology at $dir"
@@ -875,7 +911,7 @@ PY
     fi
     if [ -n "$dep" ]; then echo; python3 -I "$lib/methodology.py" deployment "$meth" "$dep"; fi
     echo; echo "next: create the repository on your host and push (git remote add origin URL; git push -u origin ${long// / })"
-    echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
+    [ "$flow" = plain ] || echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
   attach)
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
     dir=. name='' meth=gitflow url='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED=''

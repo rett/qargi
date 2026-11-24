@@ -75,6 +75,7 @@ full | par | 300 | 38 | bash tests/test_valued_opts.sh
 fast | par | 300 | 14 | bash tests/test_role.sh | lib/role.py roles/*/ROLE.md
 full | par | 300 | 38 | bash tests/test_cloud_bases.sh
 fast | par | 300 | 7 | bash tests/test_methodology.sh | lib/methodology.py methodologies/*
+full | par | 300 | 37 | bash tests/test_plain.sh | lib/methodology.py methodologies/* lib/project.sh lib/gitflow.sh lib/local.sh lib/attach.py lib/refusals.json lib/feature.sh lib/release.sh lib/branch.sh lib/upstream.sh lib/changelog.sh tests/fixtures/gitflow-same/*
 fast | par | 300 | 29 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 6 | bash tests/test_new.sh
 full | par | 300 | 62 | bash tests/test_adopt.sh

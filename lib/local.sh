@@ -339,6 +339,16 @@ parking_of() {
   echo "${p:-scratch}"
 }
 
+# plain_main -> the one long-lived branch of a project whose methodology has the plain flow (the run's answers: methodology.json flow plain), else nothing. The lead's
+# merges of a verified run go into it as the merges into develop and master go in a git-flow project (compare, below), because the plain flow has no develop or master.
+plain_main() {
+  local m
+  m=$(run_answers | jq -r '[.methodology // "gitflow", ((.repo | objects | .long_lived // [])[0] // "")] | join(" ")' 2>/dev/null) || return 0
+  [ "${m%% *}" != gitflow ] && [ "${m#* }" != "$m" ] || return 0
+  [ "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import methodology as M; print(M.flow(sys.argv[2]))' "$(dirname "$0")" "${m%% *}" 2>/dev/null)" = plain ] && printf '%s\n' "${m#* }"
+  return 0
+}
+
 # bridge_ref REPO NAME OLD NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own. A branch that exists now
 # (NEW) is the harness's when the worktree that holds it is the real path <main worktree>/<the harness directory>/worktrees/bridge-S, is locked (the harness locks it), and
 # the move (OLD, when there was one) is a fast-forward. A branch that is gone (NEW empty) is the harness's only when no worktree named bridge-S is left
@@ -391,14 +401,14 @@ owned_bases() {
 #     project validate; lib/owned_refs.py: a literal prefix of 3 characters, never develop, master, a long-lived or git-flow branch, a tag, a bridge branch
 #     or the base of a run). The answers are the run's own: the copy prepare took into the lead's registry (run_answers), not the stored file of today:
 #     accepted in either phase and named with the pattern. A ref that matches none is checked as before, in the strict phase too.
-# Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
-# agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
+# Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master (of the one long-lived branch of a plain
+# project) or an agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
 # or a deletion nobody journaled, a tag or a push made by hand, any other ref, is offending.
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} acc=${5:-/dev/null} bad=0 k kind name old new steps park='' dev tgt short a b c uo='' un='' hasr=''
   local zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
   local -A O=() N=() ACC=()
-  local ownf='' pat='' obase=() oans=''   # oans: the answers of the run (run_answers), read once
+  local ownf='' pat='' obase=() oans='' plainm=''   # oans: the answers of the run (run_answers), read once; plainm: the one long-lived branch of a plain project
   while read -r a b c; do case $a in local) O["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then uo=1; else O["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$ref")
   while read -r a b c; do case $a in local) N["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then un=1; else N["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$aft")
   if [ "$uo" != "$un" ]; then
@@ -408,7 +418,8 @@ compare() {
   dev=${N["local refs/heads/develop"]:-}
   journal_warn_bad "$DA_STATE/ref-journal.jsonl"   # once: journal_steps, called for each change, skips such a line without a word
   if owned_declared; then ownf=1; oans=$(run_answers); mapfile -t obase < <(owned_bases); fi
-  allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
+  plainm=$(plain_main)
+  allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; [ -z "$plainm" ] || [ "$1" != "refs/heads/$plainm" ] || return 0; return 1; }
   shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
   while read -r k; do
     [ -n "$k" ] || continue
@@ -770,12 +781,14 @@ case $verb in
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPROV='' CPJ=$(project_of "$REPO" "$URL")
     # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
-    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today
+    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today,
+    # and the methodology when it is not gitflow (verification accepts the merges into the one long-lived branch of a plain project)
     ANS='{}'
     if [ -n "$CPJ" ]; then
       ANS=$(jq -c 'def at(f): first(f, null); def own(k): if type == "object" then {(k): at(.[k])} else . end; def owns(ks): if type == "object" then . as $o | reduce ks[] as $k ({}; .[$k] = ($o | at(.[$k]))) else . end;
         {runs: ((at(.runs) | own("owned_refs"))), repo: {long_lived: at(.repo | objects | .long_lived), parking_branch: at(.repo | objects | .parking_branch)},
-         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy", "reject_trailers"]))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
+         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy", "reject_trailers"]))}
+        + (at(.methodology) as $m | if ($m | type) == "string" and $m != "gitflow" then {methodology: $m} else {} end)' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
         || die "the answers of project $CPJ cannot be read, so the run could not record them; nothing was made (qargi project validate $CPJ)"
     fi
     if [ -n "$CPJ" ]; then

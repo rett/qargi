@@ -33,7 +33,7 @@ export PLAN_ARG   # need_plan reads it
 case $verb in status|review|sync) ;; *) usage_die "$USAGE";; esac
 printf '%s' "$LIMIT" | grep -Eq '^[1-9][0-9]*$' || usage_die "--limit needs a positive number"
 . "$(dirname "$0")/gitflow.sh"
-project_load
+project_load "upstream $verb"
 UREM=$(jq -r '.upstream.remote // ""' "$af"); UBR=$(jq -r '.upstream.branch // ""' "$af"); INTO=$(jq -r '.upstream.into // "upstream"' "$af")
 [ -n "$UREM" ] && [ -n "$UBR" ] || die "no upstream answers for $PROJ: qargi project set $PROJ upstream.remote REMOTE and upstream.branch BRANCH (the remote and the branch the fork follows; upstream.into, default upstream, is the local branch that carries the upstream line)"
 g remote get-url "$UREM" >/dev/null 2>&1 || die "the repository has no remote named $UREM (upstream.remote): git -C $REPO remote add $UREM URL"
