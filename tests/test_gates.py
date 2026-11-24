@@ -271,7 +271,7 @@ COORD_ALLOWED = {
     "packs": "load check", "status": "", "report": "", "watch": "", "methodology": "list show check files deployment", "cloud": "list show check",
     "provider": "list show check addenda notes model", "noticed": "list", "team": "brief check contract", "memory": "lint get tiers check",
     "canon": "check plan audit", "credential": "check", "discover": "sources search recommend show", "lead": "usage compact-check status",
-    "supervise": "status hooks", "local": "list prepare run verify clean", "review": "check",
+    "supervise": "status hooks", "local": "list prepare run verify clean", "review": "check", "plan": "show",
 }
 LABEL = "lead-1:coord:alpha:1"
 sys.path.insert(0, ROOT + "/lib")

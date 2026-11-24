@@ -63,7 +63,7 @@ prune_dry_end() {
   if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${2// /, }"; exit 0; fi
   DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
   [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
-  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$1" "$2" < "$PSF" 2>/dev/null || true
+  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis scratch "$1" "$2" < "$PSF" 2>/dev/null || true
   DA_STATE=$DRYTMP need_plan "$1"
   [ "$DRYN" != 0 ] || echo "the plan $1 is the one shown: the apply of branch prune would go on"
   echo "not run in a dry run: the deletion of the branches, of the worktrees qargi made and, with --remote, of the branches on origin"
@@ -153,7 +153,7 @@ if [ "${#LOCAL[@]}" = 0 ] && [ "${#REM[@]}" = 0 ]; then
   exit 0
 fi
 
-tok=$({ printf '%s\n' "$PROJ" "${REMOTE:-0}"; printf 'local %s\n' "${LOCAL[@]}"; printf 'remote %s\n' "${REM[@]}"; } | tee "$PSF" | plan_token --basis "project remote branches")
+tok=$({ printf '%s\n' "$PROJ" "${REMOTE:-0}"; printf 'local %s\n' "${LOCAL[@]}"; printf 'remote %s\n' "${REM[@]}"; } | tee "$PSF" | plan_token --basis "project:name remote:count branches:ref" --verb "branch prune" --target "$PROJ:merged-branches${REMOTE:++origin}")
 if [ -n "$AGENTS" ]; then echo "prune the merged agent branches of $PROJ: ${#LOCAL[@]} local (--agents: no plan token and no approval; each tip stays reachable from the merge that took it in)"
 else echo "prune the merged branches of $PROJ: ${#LOCAL[@]} local, ${#REM[@]} on origin"; fi
 for e in "${LOCAL[@]}"; do

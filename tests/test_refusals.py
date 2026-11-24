@@ -327,9 +327,11 @@ def stored(token):
 class ThePlanBasis(unittest.TestCase):
     PLAN = "head abc\nbase def\nfiles a b\n"
 
+    WHO = ' --verb "feature finish" --target acme:demo'     # what a call site says: the verb and the project and object it acts on
+
     def token(self, text, labels=None, **env):
         """plan_token (with --basis LABELS when given) on the text: (status, token, standard error)."""
-        script = 'printf "%s" "$PLAN" | plan_token' + (' --basis "$LABELS"' if labels is not None else "")
+        script = 'printf "%s" "$PLAN" | plan_token' + (' --basis "$LABELS"' + self.WHO if labels is not None else "")
         rc, out, err = sh(script, PLAN=text, LABELS=labels or "", **env)
         return rc, out.strip(), err
 
@@ -435,8 +437,10 @@ class ThePlanBasis(unittest.TestCase):
         rc, out, err = sh('echo x | plan_token --basis')
         self.assertEqual(rc, 2)
         self.assertIn("needs the labels", err)
-        rc, _, err = sh('echo x | plan_token --basis ""')
+        rc, _, err = sh('echo x | plan_token --basis ""' + self.WHO)
         self.assertEqual(rc, 70, err)
+        rc, _, err = sh('echo x | plan_token --basis "line"')
+        self.assertEqual((rc, "needs --verb VERB and --target PROJECT:OBJECT" in err), (2, True), err)
 
     def test_the_stored_plans_are_read_by_token_only(self):
         self.assertIsNone(R.basis_read("../x"))

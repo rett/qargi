@@ -22,8 +22,9 @@ will apply later.
 
 ## What moved: the basis of a plan
 
-`plan_token --basis "LABELS"` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and
-keeps the labelled lines in `STATE/plans/TOKEN.json` (mode 600, seven days). LABELS are words separated by spaces: line N of the plan is
+`plan_token --basis "LABELS" --verb VERB --target PROJECT:OBJECT` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and
+keeps the plan in `STATE/plans/TOKEN.json` (mode 600, seven days) as the record `qargi.plan/0`, which `qargi plan show TOKEN` prints. LABELS are words separated by spaces,
+each `label` or `label:kind` (`ref`, `path`, `name`, `sha`, `label` or `count`; a label with no kind is `name`): line N of the plan is
 labelled with word N, and the lines after the last word belong to it. When `--plan` names a token that is no longer the plan's,
 `plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was
 planned without a basis. Nothing is kept in a dry run.
@@ -56,6 +57,9 @@ compares them with that page.
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
+| [`plan-unknown`](#plan-unknown) | plan | 1 | live | qargi plan show answers for a plan that this build kept a record of |
+| [`plan-expired`](#plan-expired) | plan | 1 | live | A stored plan is shown for the seven days it is kept |
+| [`plan-record-invalid`](#plan-record-invalid) | plan | 1 | live | A stored plan is shown only when its file is whole |
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
@@ -263,6 +267,36 @@ compares them with that page.
 - Message: `the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})`
 - Next, for a lead: run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}
 - Next, in the owner's own session (`host`): plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)
+
+### plan-unknown
+
+- Rule: qargi plan show answers for a plan that this build kept a record of.
+- Why: a plan that was never kept, was pruned after seven days, was made before the records had a schema, or belongs to a verb that keeps none has nothing to show, and a guess would put words in front of an approver that nobody hashed.
+- Exit 1, live.
+- Fields: `given` (name), `context` (enum:lead,host).
+- Message: `no stored plan has the token {given}`
+- Next, for a lead: plan again with the verb, which keeps its plan, then show it with qargi plan show TOKEN
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb, which keeps its plan, then show it with qargi host plan show TOKEN
+
+### plan-expired
+
+- Rule: A stored plan is shown for the seven days it is kept.
+- Why: a plan shown long after it was made may no longer say what the verb would do, so show says that it is past its days instead of presenting it as current.
+- Exit 1, live.
+- Fields: `token` (token), `context` (enum:lead,host).
+- Message: `the stored plan {token} is past its seven days`
+- Next, for a lead: plan again with the verb: a plan that has not changed has the same token and is kept again for seven days
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb: a plan that has not changed has the same token and is kept again for seven days
+
+### plan-record-invalid
+
+- Rule: A stored plan is shown only when its file is whole.
+- Why: the file lies in the state of the owner, and a plan that is shown must be the one that was hashed: a link, a file of the wrong kind or mode, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown.
+- Exit 1, live.
+- Fields: `token` (token), `problem` (label), `context` (enum:lead,host).
+- Message: `the stored plan {token} cannot be trusted ({problem}) and is not shown`
+- Next, for a lead: plan again with the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
 
 ## Class project-rule
 

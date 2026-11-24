@@ -18,15 +18,20 @@ and a `next` for a lead and for the owner's own session (`host`). A message and 
                                     (skipped, with a line saying so, when the page is absent), the generated page and the ratchet.
   refusal.py page                   the Markdown page of the catalogue (docs/reference/refusals.md)
   refusal.py sites [--root DIR]     the ratchet file: the unclassified `die` calls of each lib/*.sh
-  refusal.py basis store TOKEN LABELS   reads the plan on standard input, one labelled line per label, into STATE/plans/TOKEN.json
+  refusal.py basis store TOKEN LABELS --verb VERB --target PROJECT:OBJECT
+                                        reads the plan on standard input, one labelled line per label, into STATE/plans/TOKEN.json: the record
+                                        `qargi.plan/0` (LABELS are `label` or `label:kind`; qargi plan show prints it)
+  refusal.py basis scratch TOKEN LABELS the same without them: the scratch copy of a dry run, only {token, basis}, which `plan show` does not know
   refusal.py basis moved OLD NEW        the labels whose lines differ between two stored plans, comma separated; exit 1 when either is unknown
 
 The environment names the state directory (QARGI_STATE, else the layout of lib/paths.py). Library use: load, render, check, page_text."""
+import calendar
 import glob
 import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 
@@ -41,6 +46,11 @@ SITES_SEE = {"verify-environment": "[verify.environment](verify-environment.md) 
 CONTRACT = "qargi-refusal/1"
 LINE_MAX = 4096
 PLAN_DAYS = 7                       # a stored plan is kept this long
+PLAN_SCHEMA = "qargi.plan/0"        # draft: it may change without notice until a consumer publishes it as qargi.plan/1
+PLAN_KINDS = ("ref", "path", "name", "sha", "label", "count")   # what a line of a stored plan is, in the types of the catalogue; ref, path and name are lead-chosen
+PLAN_DEFAULT_KIND = "name"          # a label given without a kind: the conservative one, a lead-chosen text
+PLAN_MAX = 1 << 20                  # a stored plan is read up to this size
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 STATUSES = ("live", "planned", "withdrawn")
 EXITS = (1, 2, 77)                  # a refusal, a guard's deny, a lead refusal of the seat
@@ -193,12 +203,34 @@ def render(cat, code, pairs, notice=False, verb=None, project=None, role=None):
     return "%s\nqargi: refused [%s] %s\n  why: %s\n  next: %s\n" % (line, code, message, e["why"], nxt), e["exit"]
 
 
+def refuse(code, pairs=(), verb=None, project=None, role=None, out=None):
+    """Print the refusal on standard error (or out) as `refuse` of lib/lib.sh does, and return its exit status: for a verb written in Python. A Defect for a caller that is wrong."""
+    text, rc = render(load(), code, list(pairs), verb=verb, project=project, role=role)
+    (out or sys.stderr).write(text)
+    return rc
+
+
 # ---------------------------------------------------------------------------------------------------------------------------- the stored plans
 
 def state_dir():
     sys.path.insert(0, HERE)
     import paths
     return paths.state()
+
+
+def now_epoch():
+    """The clock of the plan records: the time, or QARGI_PLAN_NOW (UTC, YYYY-MM-DDTHH:MM:SSZ) when that is set (tests)."""
+    given = os.environ.get("QARGI_PLAN_NOW", "")
+    if given:
+        try:
+            return calendar.timegm(time.strptime(given, TIME_FORMAT))
+        except ValueError:
+            raise Defect("QARGI_PLAN_NOW is %r, not a time like 2026-11-22T10:00:00Z" % given)
+    return int(time.time())
+
+
+def stamp(epoch):
+    return time.strftime(TIME_FORMAT, time.gmtime(epoch))
 
 
 def basis_lines(text, labels):
@@ -214,8 +246,50 @@ def basis_lines(text, labels):
     return out
 
 
-def basis_store(token, labels, text, state=None):
+def parse_labels(words):
+    """[(label, kind)] of the words `label` or `label:kind`; a label without a kind is PLAN_DEFAULT_KIND. A word that is neither is a Defect."""
+    out = []
+    for word in words:
+        label, colon, kind = word.partition(":")
+        if not LABEL_RE.fullmatch(label) or (colon and kind not in PLAN_KINDS):
+            raise Defect("--basis takes labels: lower case words, digits and hyphens, each with an optional :kind (%s), separated by spaces" % ", ".join(PLAN_KINDS))
+        out.append((label, kind or PLAN_DEFAULT_KIND))
+    return out
+
+
+def plan_lines(text, specs):
+    """[{label, kind, value}], one for each line of the plan text, in order: the label of line N is the Nth, the last one for every line after it."""
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines.pop()
+    elif text == "":
+        lines = []
+    return [{"label": specs[min(n, len(specs) - 1)][0], "kind": specs[min(n, len(specs) - 1)][1], "value": value} for n, value in enumerate(lines)]
+
+
+def plan_input(lines, newline):
+    """The text the lines of a record were made from: the bytes that were hashed."""
+    return "\n".join(x["value"] for x in lines) + ("\n" if newline else "")
+
+
+def target_of(spec):
+    """(project, object) of PROJECT:OBJECT; a Defect for anything else."""
+    project, _, obj = spec.partition(":")
+    if not PROJECT_RE.fullmatch(project) or not clean_text(obj):
+        raise Defect("--target is PROJECT:OBJECT: a project and the one object the verb acts on, one line of at most %d characters" % VALUE_MAX)
+    return project, obj
+
+
+def basis_store(token, specs, text, verb=None, target=None, state=None):
+    """Keep the plan as the record qargi.plan/0 in STATE/plans/TOKEN.json: mode 600, in a directory of mode 700, by a temporary file and a rename.
+    specs is [(label, kind)], target (project, object). The old `basis` key, which `basis moved` reads, stays. With no verb it keeps only {token, basis}: the scratch copy
+    a dry run compares a token with, which `plan show` does not know (plan-unknown)."""
     state = state or state_dir()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if verb is not None and token != digest[:12]:
+        raise Defect("the token %s is not the start of the hash of the plan" % token)
+    if verb is not None and not (len(verb) <= 80 and VERB_RE.fullmatch(verb)):
+        raise Defect("%r is not a verb" % verb)
     d = os.path.join(state, "plans")
     os.makedirs(d, mode=0o700, exist_ok=True)
     os.chmod(d, 0o700)
@@ -226,8 +300,12 @@ def basis_store(token, labels, text, state=None):
                 os.unlink(p)
         except OSError:
             pass
-    rec = {"token": token, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "basis": [{"label": label, "lines": lines} for label, lines in basis_lines(text, labels)]}
+    basis = [{"label": label, "lines": lines} for label, lines in basis_lines(text, [x[0] for x in specs])]
+    created = now_epoch()
+    rec = {"token": token, "basis": basis} if verb is None else {
+        "schema": PLAN_SCHEMA, "verb": verb, "context": "lead", "target": {"project": target[0], "object": target[1]},
+        "lines": plan_lines(text, specs), "input_sha256": digest, "input_newline": text.endswith("\n"), "token": token,
+        "created": stamp(created), "expires": stamp(created + PLAN_DAYS * 86400), "basis": basis}
     path = os.path.join(d, token + ".json")
     tmp = path + ".tmp.%d" % os.getpid()
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -235,6 +313,119 @@ def basis_store(token, labels, text, state=None):
         json.dump(rec, f, separators=(",", ":"))
         f.write("\n")
     os.replace(tmp, path)
+
+
+class PlanRefusal(Exception):
+    """A plan record that cannot be shown: the code of the refusal and its fields."""
+
+    def __init__(self, code, pairs):
+        Exception.__init__(self, code)
+        self.code, self.pairs = code, pairs
+
+
+PLAN_KEYS = {"schema", "verb", "context", "target", "lines", "input_sha256", "input_newline", "token", "created", "expires"}
+
+
+def plan_problem(rec, token):
+    """None when rec is a sound record of the token, else a word (a label) for what is wrong."""
+    if not isinstance(rec, dict) or not PLAN_KEYS <= set(rec) or set(rec) - PLAN_KEYS - {"basis"}:
+        return "bad-form"
+    if rec["schema"] != PLAN_SCHEMA:
+        return "unknown-schema"
+    verb, target, lines = rec["verb"], rec["target"], rec["lines"]
+    if not (isinstance(verb, str) and len(verb) <= 80 and VERB_RE.fullmatch(verb)) or rec["context"] not in LEADS:
+        return "bad-form"
+    if not (isinstance(target, dict) and set(target) == {"project", "object"} and isinstance(target["project"], str) and PROJECT_RE.fullmatch(target["project"])
+            and isinstance(target["object"], str) and clean_text(target["object"])):
+        return "bad-form"
+    if not isinstance(lines, list) or not all(isinstance(x, dict) and set(x) == {"label", "kind", "value"} and isinstance(x["label"], str) and LABEL_RE.fullmatch(x["label"])
+                                              and x["kind"] in PLAN_KINDS and isinstance(x["value"], str) and "\n" not in x["value"] for x in lines):
+        return "bad-form"
+    if not isinstance(rec["input_newline"], bool) or "basis" in rec and not isinstance(rec["basis"], list):
+        return "bad-form"
+    for key in ("created", "expires"):
+        if not isinstance(rec[key], str) or not time_of(rec[key]):
+            return "bad-form"
+    digest = rec["input_sha256"]
+    if not (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) and rec["token"] == token and digest.startswith(token)):
+        return "bad-form"
+    try:
+        if hashlib.sha256(plan_input(lines, rec["input_newline"]).encode("utf-8")).hexdigest() != digest:
+            return "hash-mismatch"
+    except UnicodeError:
+        return "hash-mismatch"
+    return None
+
+
+def time_of(text):
+    try:
+        return calendar.timegm(time.strptime(text, TIME_FORMAT))
+    except ValueError:
+        return None
+
+
+def plan_read(token, state=None):
+    """The stored record of the token, a dict, after every check; PlanRefusal (plan-unknown, plan-record-invalid, plan-expired) otherwise. Reads only:
+    the directory and the file are opened without following a link, the file must be a regular file of one link and mode 600, nothing is removed."""
+    def invalid(problem):
+        return PlanRefusal("plan-record-invalid", [("token", token), ("problem", problem)])
+    def unknown():
+        return PlanRefusal("plan-unknown", [("given", token)] if clean_text(token) else [])
+    if not TOKEN_RE.fullmatch(token or ""):
+        raise unknown()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    try:
+        sfd = os.open(state or state_dir(), flags | os.O_DIRECTORY)
+    except OSError:
+        raise unknown()
+    try:
+        try:
+            pfd = os.open("plans", flags | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=sfd)
+        except FileNotFoundError:
+            raise unknown()
+        except OSError:                 # a link, or not a directory
+            raise invalid("bad-directory")
+        try:
+            try:
+                fd = os.open(token + ".json", flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=pfd)
+            except FileNotFoundError:
+                raise unknown()
+            except OSError:
+                raise invalid("link")
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    raise invalid("not-a-file")
+                if st.st_nlink != 1:
+                    raise invalid("links")
+                if stat.S_IMODE(st.st_mode) != 0o600:
+                    raise invalid("wrong-mode")
+                data = b""
+                while len(data) <= PLAN_MAX:
+                    chunk = os.read(fd, PLAN_MAX + 1 - len(data))
+                    if not chunk:
+                        break
+                    data += chunk
+            finally:
+                os.close(fd)
+        finally:
+            os.close(pfd)
+    finally:
+        os.close(sfd)
+    if len(data) > PLAN_MAX:
+        raise invalid("too-large")
+    try:
+        rec = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        raise invalid("bad-json")
+    if isinstance(rec, dict) and "schema" not in rec:
+        raise unknown()                 # a record of before this schema: {token, at, basis}
+    problem = plan_problem(rec, token)
+    if problem:
+        raise invalid(problem)
+    if time_of(rec["expires"]) <= now_epoch():
+        raise PlanRefusal("plan-expired", [("token", token)])
+    return rec
 
 
 def basis_read(token, state=None):
@@ -490,8 +681,9 @@ def page_text(cat):
            "prints `qargi: note [code] ...` and a `next:` line, with no contract line, and exits 0: the verb did its work and names a rule that",
            "will apply later.", "",
            "## What moved: the basis of a plan", "",
-           "`plan_token --basis \"LABELS\"` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and",
-           "keeps the labelled lines in `STATE/plans/TOKEN.json` (mode 600, seven days). LABELS are words separated by spaces: line N of the plan is",
+           "`plan_token --basis \"LABELS\" --verb VERB --target PROJECT:OBJECT` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and",
+           "keeps the plan in `STATE/plans/TOKEN.json` (mode 600, seven days) as the record `qargi.plan/0`, which `qargi plan show TOKEN` prints. LABELS are words separated by spaces,",
+           "each `label` or `label:kind` (`ref`, `path`, `name`, `sha`, `label` or `count`; a label with no kind is `name`): line N of the plan is",
            "labelled with word N, and the lines after the last word belong to it. When `--plan` names a token that is no longer the plan's,",
            "`plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was",
            "planned without a basis. Nothing is kept in a dry run.", "",
@@ -579,16 +771,29 @@ def main(argv):
             for path, n in die_sites(root).items():
                 print("%d %s" % (n, path))
             return 0
-        if cmd == "basis" and len(argv) == 4 and argv[1] == "store":
+        if cmd == "basis" and len(argv) >= 4 and argv[1] in ("store", "scratch"):
             if not TOKEN_RE.fullmatch(argv[2]):
                 raise Defect("%r is not a plan token" % argv[2])
-            labels = argv[3].split()
-            if not labels or any(not LABEL_RE.fullmatch(x) for x in labels):
+            specs = parse_labels(argv[3].split()) if argv[3].split() else []
+            if not specs:
                 raise Defect("--basis takes labels: lower case words, digits and hyphens, separated by spaces")
+            given = dict(zip(argv[4::2], argv[5::2]))
+            if argv[1] == "store" and (len(argv) % 2 or set(given) != {"--verb", "--target"} or len(given) * 2 != len(argv) - 4):
+                raise Defect("basis store takes the labels, then --verb VERB and --target PROJECT:OBJECT")
+            if argv[1] == "scratch" and len(argv) != 4:
+                raise Defect("basis scratch takes the token and the labels")
+            raw = sys.stdin.buffer.read()
             try:
-                basis_store(argv[2], labels, sys.stdin.read())
-            except (OSError, UnicodeError):
-                return 1                # the plan cannot be kept (a state directory that cannot be written, text that is not UTF-8): not a defect, the caller says so and goes on
+                text = raw.decode("utf-8")
+            except UnicodeError:
+                return 1                # a plan that is not UTF-8 cannot be kept: not a defect, the caller says so and goes on
+            try:
+                if argv[1] == "scratch":
+                    basis_store(argv[2], specs, text)
+                else:
+                    basis_store(argv[2], specs, text, given["--verb"], target_of(given["--target"]))
+            except OSError:
+                return 1                # the plan cannot be kept (a state directory that cannot be written): not a defect, the caller says so and goes on
             return 0
         if cmd == "basis" and len(argv) == 4 and argv[1] == "moved":
             moved = basis_moved(argv[2], argv[3])
@@ -602,7 +807,7 @@ def main(argv):
     except (OSError, ValueError) as e:
         sys.stderr.write("qargi: defect: refusal.py: %s\n" % e)
         return 70
-    sys.stderr.write("usage: refusal.py refuse|notice [--verb V] [--project P] [--role R] CODE [KEY=VALUE ...] | check [--root DIR] | page | sites [--root DIR] | basis store TOKEN LABELS | basis moved OLD NEW\n")
+    sys.stderr.write("usage: refusal.py refuse|notice [--verb V] [--project P] [--role R] CODE [KEY=VALUE ...] | check [--root DIR] | page | sites [--root DIR] | basis store TOKEN LABELS --verb VERB --target PROJECT:OBJECT | basis scratch TOKEN LABELS | basis moved OLD NEW\n")
     return 2
 
 

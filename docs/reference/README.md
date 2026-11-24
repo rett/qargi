@@ -4,6 +4,7 @@
 - [Campaign records v1](campaign-records.md) documents bounded local declarations, the closed schema, publication outcomes and bounded history.
 - [verify.environment](verify-environment.md) documents the optional project answer that starts the whole-suite runs of `qargi feature verify` and `qargi release verify` under a declared environment (signals, descriptors, terminal, cpu scope, variables): the schema, the refusal codes, the waiver, the record, and a table of each setting against the hosted Linux runner it was measured on.
 - [Refusals](refusals.md) is the catalogue of the rules that stop a command: each code with the rule, why it exists, its class and exit status, its status (live, planned or withdrawn), the fields of its message and the next step. It is generated from `lib/refusals.json`; `qargi help refusal [CODE]` prints the same from the command line.
+- [The stored plan record](plan-record.md) documents `STATE/plans/TOKEN.json` (schema `qargi.plan/0`, a draft): what a verb keeps of the plan it printed a token for, the kind of each value, the binding to `input_sha256`, and `qargi plan show TOKEN [--json]` with its refusals.
 - [Lead seat v1](lead-seat.md) is the contract of the lead handoff seat, written before the code: numbered rules with their refusals, the records, the handoff steps and the open points. The seat is not built.
 
 ## Planning reports and declarations
