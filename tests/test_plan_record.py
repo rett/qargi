@@ -100,6 +100,15 @@ class TheRecord(Scratch):
         self.assertEqual(os.stat(plans_dir()).st_mode & 0o777, 0o700)
         self.assertEqual(tok, hashlib.sha256(self.PLAN.encode()).hexdigest()[:12], "the token is the one plan_token always made")
 
+    def test_a_copy_of_the_plan_that_cannot_be_written_loses_the_record_never_the_token(self):
+        """The temporary copy of the plan (a full TMPDIR) fails to write: the token is still the one of the input, not the hash of no bytes, and no record is kept under it."""
+        for text in ("one\ntwo\n", "other plan\n"):
+            rc, out, err = sh(''tee() { command tee "$@" 2>/dev/null; return 1; }; cat() { :; }; '
+                              'printf "%s" "$PLAN" | plan_token --basis "$LABELS" --verb "release start" --target "acme:0.4.0"', PLAN=text, LABELS="a b")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(out.strip(), hashlib.sha256(text.encode()).hexdigest()[:12], "the token of the input, whatever happens to the copy")
+            self.assertNotEqual(out.strip(), hashlib.sha256(b"").hexdigest()[:12])
+
     def test_the_lines_rebuild_the_input_and_hash_to_the_token_with_and_without_a_final_newline(self):
         for text in ("a\nb\nc\n", "a\nb\nc", "a\n\nb\n\n", "\n", "", "one", "a\r\nb\n", "café ✓\nx\n"):
             with self.subTest(text=text):

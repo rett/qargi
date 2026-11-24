@@ -523,7 +523,7 @@ audit_log() { # verb [detail]
 # middle of a plan, is one label to need_plan). A plan that is one printf of words, or of `|` fields, is one line with one word: the record splits the hashed text on a newline only. A word is `label` or `label:kind` (ref, path, name, sha, label or count;
 # none is name, the conservative kind: a lead-chosen text). VERB is the verb as lib/commands.py names it (`release start`); the target is the project and the one object the verb
 # acts on (a feature, a version, a branch): the call site says both, nothing is read off the command line. The token is the same with or without --basis, and it is always printed:
-# a failure to keep the record (no temporary file, a target the record refuses) is a note on standard error, never a missing token.
+# a failure to keep the record (no temporary file, a copy that cannot be written, a target the record refuses) is a note on standard error, never a missing or a different token. A call missing its labels, --verb or --target is a usage error (exit 2, no token): every site gives them.
 plan_token() {
   [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
   [ $# -ge 2 ] || usage_die "plan_token --basis needs the labels: one word for each line of the plan"
@@ -542,8 +542,7 @@ plan_token() {
     sha256sum | cut -c1-12
     return 0
   fi
-  cat > "$plan"
-  tok=$(sha256sum < "$plan" | cut -c1-12)
+  tok=$(tee "$plan" | sha256sum | cut -c1-12)   # the token is of the input itself: a copy that cannot be written (a full TMPDIR) loses the record, never the token (basis store refuses a file that does not hash to it)
   if [ "${QARGI_DRY:-}" != 1 ]; then
     QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" --verb "$pverb" --target "$ptarget" < "$plan" || rc=$?
     case $rc in
