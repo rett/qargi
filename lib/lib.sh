@@ -517,18 +517,29 @@ audit_log() { # verb [detail]
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
-# plan_token [--basis "LABELS"]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the labelled lines are also kept in
-# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1): line N takes the Nth word of LABELS and the lines after the last word
-# belong to it, so a later need_plan can say which labels moved. The token is the same with or without --basis.
+# plan_token [--basis "LABELS" --verb VERB --target PROJECT:OBJECT]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the plan is also kept in
+# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1) as the record qargi.plan/0 that `qargi plan show TOKEN` prints: line N takes the Nth word
+# of LABELS and the lines after the last word belong to it, so a later need_plan can say which labels moved. A word is `label` or `label:kind` (ref, path, name, sha, label or count;
+# none is name, the conservative kind: a lead-chosen text). VERB is the verb as lib/commands.py names it (`release start`); the target is the project and the one object the verb
+# acts on (a feature, a version, a branch): the call site says both, nothing is read off the command line. The token is the same with or without --basis.
 plan_token() {
   [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
   [ $# -ge 2 ] || usage_die "plan_token --basis needs the labels: one word for each line of the plan"
-  local plan tok rc=0
+  local labels=$2 pverb='' ptarget='' plan tok rc=0
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --verb) [ $# -ge 2 ] || usage_die "plan_token --verb needs a value"; pverb=$2; shift 2;;
+      --target) [ $# -ge 2 ] || usage_die "plan_token --target needs a value"; ptarget=$2; shift 2;;
+      *) usage_die "plan_token: unknown option $1";;
+    esac
+  done
+  [ -n "$pverb" ] && [ -n "$ptarget" ] || usage_die "plan_token --basis needs --verb VERB and --target PROJECT:OBJECT: the record says what the plan is for"
   plan=$(mktemp) || fail "plan_token: cannot make a temporary file"
   cat > "$plan"
   tok=$(sha256sum < "$plan" | cut -c1-12)
   if [ "${QARGI_DRY:-}" != 1 ]; then
-    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$2" < "$plan" || rc=$?
+    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" --verb "$pverb" --target "$ptarget" < "$plan" || rc=$?
     case $rc in
       0) ;;
       70) rm -f "$plan"; exit 70;;

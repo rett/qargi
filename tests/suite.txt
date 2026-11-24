@@ -195,5 +195,8 @@ fast | par | 300 | 4 | bash tests/test_readonly_init.sh | lib/lib.sh
 fast | par | 300 | 1 | python3 tests/test_seat_contract.py | docs/reference/lead-seat.md tests/test_seat_contract.py
 # Refusal catalogue: 55 tests measured 5.0s in a member run (not the reference machine); recorded 5s, budget ceil(5 * 1.10) = 6s.
 fast | par | 300 | 6 | python3 tests/test_refusals.py | lib/refusals.json lib/refusal.py lib/*.sh docs/reference/refusals.md docs/reference/lead-seat.md tests/refusal-sites.txt
+# The stored plan record: 23 unit cases measured 8.5s (python) and the five verbs of a scratch repository 20.9s (shell) in a member run (not the reference machine); budgets ceil(8.5 * 1.10) = 10s and ceil(20.9 * 1.10) = 24s.
+fast | par | 300 | 10 | python3 tests/test_plan_record.py | lib/refusal.py lib/plan.py lib/refusals.json lib/lib.sh bin/qargi lib/commands.py
+fast | par | 300 | 24 | bash tests/test_plan_record.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/branch.sh lib/feature.sh lib/release.sh
 # Role cards: 40 tests measured 14.5s in a member run (not the reference machine); recorded 15s, budget ceil(15 * 1.10) = 17s.
 fast | par | 300 | 17 | python3 tests/test_rolecard.py | lib/rolecard.py lib/role.py lib/commands.py lib/guard.py lib/refusals.json lib/local.sh lib/hook.sh lib/agent.sh roles/*/ROLE.md agents/member.body.md agents/member.md tests/golden/rolecard/*

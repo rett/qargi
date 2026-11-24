@@ -140,7 +140,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -1413,6 +1413,27 @@ COMMANDS = {
                             [opt("--why", "the reason; required to dismiss", "CODE", REASONS)]),
         },
     },
+    "plan": {
+        "summary": "The stored record of a plan, as a verb kept it when it printed its token",
+        "desc": ("A verb that prints a plan token keeps the plan it hashed in STATE/plans/TOKEN.json (mode 600, seven days; nothing in a dry run), so that a stale token can name what moved "
+                 "and a reader can show the plan again. Five verbs keep the record so far: branch prune, feature finish, release plan, release start and release push; the plans of the others are not kept yet."),
+        "scripts": ["plan.py"],
+        "verbs": {
+            "show": verb("Print the stored record of a plan token: the verb, what it acts on, the labelled lines that were hashed, when it was made and when its seven days end", [("TOKEN", "none")],
+                         [opt("--json", "print the record as it was stored, with \"state\": \"valid\", as one JSON object")],
+                         desc=("Read only, open to a member, and it changes nothing: no file is made or removed (an expired record stays; the store prunes), no audit line, no lock, and it works under QARGI_DRY=1. "
+                               "The state directory's plans directory and the file are opened without following a link, and the file must be a regular file of one link and mode 600. Before it prints, it checks the "
+                               "record: the schema (qargi.plan/0, a draft that may change without notice until a consumer publishes it), the form, the SHA-256 of the lines (input_sha256, from the lines and input_newline) and the token "
+                               "against that hash and the name of the file. The text shows the verb, the target (the project and the one object the verb acts on), each line that was hashed with its label, "
+                               "and the times created and expires (created plus seven days). The lines hold the values in clear, lead-chosen ones (a branch, a path, a name) included, each with a kind (ref, path, name, sha, label or count): "
+                               "the file is the owner's, as the audit log is, and a card that showed a digest would ask for an approval blind. --json prints the record as stored (schema, verb, context, target, lines, "
+                               "input_sha256, input_newline, token, created, expires and the basis qargi plan-stale reads) and adds \"state\": \"valid\". "
+                               "Exit status: 0; 1 for a refusal: plan-unknown (the token is not 12 hex digits, no such file, or a file of before the schema), plan-expired (expires is past; QARGI_PLAN_NOW stands for the clock in tests) "
+                               "or plan-record-invalid (a link, a file of the wrong kind or mode, bad JSON, an unknown schema, a record that is malformed or whose lines do not hash to the token); 2 for a usage error. "
+                               "The token is the first 12 hex digits of input_sha256: a card is bound to input_sha256, not to the token. Expiry is not checked when a plan is applied."),
+                         examples=["qargi plan show 1a2b3c4d5e6f", "qargi plan show 1a2b3c4d5e6f --json"]),
+        },
+    },
     "track": {
         "summary": "Track a session that was started elsewhere (for example in the console)",
         "scripts": ["session.sh"],
@@ -2063,6 +2084,11 @@ TOPICS = {
         "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
         "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
         "with a null token. A verb that describes a --json option of its own keeps it.",
+        "A plan that a verb printed is kept so that it can be shown again: qargi plan show TOKEN (--json for the record) prints the verb, what it acts on and the labelled lines that were hashed, "
+        "with the values in clear and a kind for each (ref, path, name, sha, label or count), from STATE/plans/TOKEN.json (mode 600, seven days, nothing in a dry run). It changes nothing and works in a dry run. "
+        "Five verbs keep it so far (branch prune, feature finish, release plan, release start and release push); a token of another verb is not known to it (plan-unknown). The record is a draft, schema qargi.plan/0, and "
+        "the token stays the first 12 hex digits of its input_sha256: a record that was edited no longer hashes to its token and is not shown (plan-record-invalid), and one past its seven days is not shown either (plan-expired); "
+        "applying a plan does not check its age.",
         "start and send require --asked \"your request\" naming the cloud instance. The gate records it in the state directory's "
         "append-only audit log. Consult each command's help for its request and approval requirements. "
         "Audit entries record supplied --asked and --approved words only where the command calls audit_log.",
@@ -2172,6 +2198,7 @@ ENVIRONMENT = [
     ("QARGI_DRY", "set to 1 by --dry-run inside the verb that has it (release start, push and fix --push, feature finish, branch prune): a helper that writes (the audit log, the state files, the journal, a ref move, a commit) "
                   "stops the verb with exit 70, and git and gh pass only commands that read; unset, empty and 0 are a normal run. Do not set it yourself"),
     ("QARGI_VERB", "the verb a refusal's contract line names, as 'feature finish' (default: the verb the script was run as); the scripts that raise a refusal set it, you need not"),
+    ("QARGI_PLAN_NOW", "a time (UTC, 2026-11-22T10:00:00Z) that stands for the clock of the plan records: when a plan is kept (created, expires) and when qargi plan show asks whether it is past its seven days; for tests, you need not set it"),
     ("QARGI_ROLE", "the role a refusal's contract line names (default: none); set by a member's run, you need not"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
@@ -2199,6 +2226,7 @@ FILES = [
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
     ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
+    ("~/.qargi/state/plans/TOKEN.json", "the plan a verb printed under that token (mode 600, kept seven days, none in a dry run): qargi plan show TOKEN"),
 ]
 
 WORKFLOW = [

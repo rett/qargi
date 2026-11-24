@@ -894,7 +894,7 @@ dry_after_plan() {
     # names the labels whose lines differ, as it would in the apply
     DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
     [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
-    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$2" "$3" < "$PSF" 2>/dev/null || true
+    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis scratch "$2" "$3" < "$PSF" 2>/dev/null || true
     DA_STATE=$DRYTMP step_gate "$1" "$2"
     echo "the plan $2 is the one shown: the apply of $1 would go on"
   else step_gate "$1" "$2"; fi
@@ -1019,7 +1019,7 @@ case $verb in
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
     steps="start${haspush:+ push} finish${site:+ site}"
     fixp=$(fix_paths_derive); fixd=$(fragments_dir); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
-    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project kind version date keep allow-empty branch base head master second steps start-plan fix-paths")
+    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project:name kind:label version:name date:label keep:label allow-empty:label branch:ref base:ref head:sha master:sha second:ref steps:label start-plan:sha fix-paths:path" --verb "release plan" --target "$PROJ:$VER")
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
     grep -v '^plan token:' <<<"$sout" | sed 's/^/     /'
@@ -1099,7 +1099,7 @@ case $verb in
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
     # before a token does); the token covers them, the date and the head of the base
     bumped=$(git -C "$WT" diff --cached --name-only)
-    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project kind branch base head version date files")
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project:name kind:label branch:ref base:ref head:sha version:name date:label files:path" --verb "release start" --target "$PROJ:$VER")
     echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
@@ -1216,7 +1216,7 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
-    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project branch head join master")
+    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha join:label master:sha" --verb "release push" --target "$PROJ:$VER")
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"

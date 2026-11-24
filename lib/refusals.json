@@ -306,6 +306,36 @@
       "message": "the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})",
       "next": {"lead": "run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}
     },
+    "plan-unknown": {
+      "rule": "qargi plan show answers for a plan that this build kept a record of",
+      "why": "a plan that was never kept, was pruned after seven days, was made before the records had a schema, or belongs to a verb that keeps none has nothing to show, and a guess would put words in front of an approver that nobody hashed",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"given": "name", "context": "enum:lead,host"},
+      "message": "no stored plan has the token {given}",
+      "next": {"lead": "plan again with the verb, which keeps its plan, then show it with qargi plan show TOKEN", "host": "plan again with qargi host and the verb, which keeps its plan, then show it with qargi host plan show TOKEN"}
+    },
+    "plan-expired": {
+      "rule": "A stored plan is shown for the seven days it is kept",
+      "why": "a plan shown long after it was made may no longer say what the verb would do, so show says that it is past its days instead of presenting it as current",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"token": "token", "context": "enum:lead,host"},
+      "message": "the stored plan {token} is past its seven days",
+      "next": {"lead": "plan again with the verb: a plan that has not changed has the same token and is kept again for seven days", "host": "plan again with qargi host and the verb: a plan that has not changed has the same token and is kept again for seven days"}
+    },
+    "plan-record-invalid": {
+      "rule": "A stored plan is shown only when its file is whole",
+      "why": "the file lies in the state of the owner, and a plan that is shown must be the one that was hashed: a link, a file of the wrong kind or mode, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"token": "token", "problem": "label", "context": "enum:lead,host"},
+      "message": "the stored plan {token} cannot be trusted ({problem}) and is not shown",
+      "next": {"lead": "plan again with the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again", "host": "plan again with qargi host and the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again"}
+    },
     "approval-missing": {
       "rule": "An apply that the owner must approve is given the owner's own words with --approved",
       "why": "the owner's words are the approval: a verb that needs them cannot be told they were given",
