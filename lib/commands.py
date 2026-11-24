@@ -2014,7 +2014,7 @@ for _area, _names, _words in (
     ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
     ("team", "", "brief check contract"), ("memory", "", "lint get tiers check"), ("canon", "", "check plan audit"),
     ("credential", "", "check"), ("discover", "", "sources search recommend show"), ("lead", "", "usage compact-check status"),
-    ("supervise", "", "status hooks"), ("local", "", "list"),
+    ("supervise", "", "status hooks"), ("local", "", "list"), ("plan", "", "show"),
     # a coordinator's own work, narrowed to its feature
     ("local", "base", "prepare"), ("local", "run", "run verify clean"), ("review", "run", "check"), ("feature", "feature", "status verify"),
 ):
@@ -2038,7 +2038,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
