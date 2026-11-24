@@ -142,8 +142,9 @@ class Sync(unittest.TestCase):
                 by_script.setdefault(s, set()).update(doc_flags(cmd))
         ignore = {"--help"}
         # (script, flag) pairs that a script hands to another program and does not parse itself: doctor.py asks systemd-run `--version`, which is
-        # an argument of systemd-run and no flag of `qargi doctor`
-        passed_on = {("doctor.py", "--version")}
+        # an argument of systemd-run and no flag of `qargi doctor`; rolecard.py looks for the flag --plan in the command description to list the verbs that
+        # take a plan on the lead's card, and parses none of it
+        passed_on = {("doctor.py", "--version"), ("rolecard.py", "--plan")}
         for s, documented in by_script.items():
             src = slurp(os.path.join(LIB, s))
             found = set()
@@ -260,22 +261,24 @@ class Render(unittest.TestCase):
         self.assertNotIn("this directory", text)
         self.assertNotIn("Claude Code", C.COMMANDS["team"]["desc"])
 
-    def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
-        """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
-        guard reads after a separator. The behaviour itself is tested in test_guard.py."""
+    def test_the_guard_topic_and_the_read_only_card_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
+        """What the guard refuses a read-only member, as the member needs to read it: the guard topic says it all (an assignment, not the command; the TMP that TMPDIR
+        is; the words the guard reads after a separator) and the read-only card, which the task block carries in place of the review role's text, says what a reviewer
+        acts on. The behaviour itself is tested in test_guard.py, the card against the guard in test_rolecard.py."""
         topic = " ".join(" ".join(C.TOPICS["guard"][1]).split())
-        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
-        for name, text in (("the guard topic", topic), ("the review role", role)):
-            for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence" if text is topic else "middle of a sentence"):
-                self.assertIn(needle, text, "%s does not say %r" % (name, needle))
-            self.assertNotIn("is not set", text, name)
+        for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence"):
+            self.assertIn(needle, topic, "the guard topic does not say %r" % needle)
+        self.assertNotIn("is not set", topic)
         self.assertIn("is refused, not the command", topic)
-        self.assertIn("not the command", role)
         self.assertIn("the run's TMP", topic)
-        self.assertIn("the run's TMP", role)
-        self.assertIn("a Go test writes", role)
-        self.assertIn("environment", role)
-        self.assertIn("never the clone", role)
+        card = subprocess.run([sys.executable, "-I", os.path.join(LIB, "rolecard.py"), "card", "review"], capture_output=True, text=True, check=True).stdout
+        card = " ".join(card.split())
+        for needle in ("TMPDIR is TMP, where Go tests write", "OUT and TMP", "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*, PYTHONPATH, NODE_OPTIONS", "see `qargi help guard`",
+                       "A target platform (GOOS, GOARCH)", "Do not run the whole suite",
+                       "A line, even in a heredoc, a quoted string or a commit message, that starts with git push, ssh or gh is refused: write such text with your file tool."):
+            self.assertIn(needle, card, "the read-only card does not say %r" % needle)
+        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
+        self.assertNotIn("TMPDIR", role, "what the guard refuses of a read-only run is on the card, not in the role text")
 
     def test_review_check_help_and_the_review_role_state_the_report_only_rule(self):
         # what review_check.py requires of a report-only run: the manifest beside the report, a closing verdict line, SCOPE as a hard limit, a batch warning
@@ -779,6 +782,237 @@ class Infer(Env):
         r = subprocess.run([BIN, "project", "show"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 2)
         self.assertIn("which project?", r.stderr)
+
+
+class Surface(Env):
+    """What the rules-visible-early change declares (flags, forms, the card, the catalogue help), against what the command line does."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def test_role_card_goes_to_the_card_generator_and_the_other_role_verbs_to_role_py(self):
+        r = self.cli("role", "card", "build", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(sorted(doc), ["card", "chars", "class", "members_stale", "project", "role", "run", "words"])
+        self.assertEqual((doc["role"], doc["class"], doc["project"], doc["run"], doc["members_stale"]), ("build", "write", None, None, None))
+        self.assertEqual(doc["words"], len(doc["card"].split()))
+        self.assertEqual(doc["chars"], len(doc["card"]))
+        direct = subprocess.run([sys.executable, "-I", os.path.join(LIB, "rolecard.py"), "card", "build", "--json"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(json.loads(direct.stdout), doc)                         # the same object, by the command and by the module
+        plain = self.cli("role", "card", "build")
+        self.assertEqual((plain.returncode, plain.stdout), (0, doc["card"] + "\n"))
+        listed = self.cli("role", "list")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertIn("build", listed.stdout)
+        self.assertNotIn("Class write", listed.stdout)                           # role list is still role.py's, not the card's
+
+    def test_the_card_of_each_class_and_the_lead_card_with_the_stored_member_states(self):
+        self.assertEqual(json.loads(self.cli("role", "card", "review", "--json").stdout)["class"], "read-only")
+        lead = json.loads(self.cli("role", "card", "lead", "--json").stdout)
+        self.assertEqual(lead["class"], "lead")
+        self.assertIsNone(lead["members_stale"])
+        with open(os.path.join(self.t, "s", "agent-states.json"), "w") as f:
+            json.dump({"schema": 1, "projects": {"alpha": {"at": "2026-11-21T10:00:00Z", "members": {"forge": ["STALE"], "fine": []}}}}, f)
+        os.chmod(os.path.join(self.t, "s", "agent-states.json"), 0o600)
+        stale = json.loads(self.cli("role", "card", "lead", "--project", "alpha", "--json").stdout)
+        self.assertEqual(stale["project"], "alpha")
+        self.assertEqual(stale["members_stale"], {"as_of": "2026-11-21T10:00:00Z", "members": {"forge": ["STALE"]}})
+        self.assertIn("forge (STALE)", stale["card"])
+
+    def test_a_run_fills_in_its_paths(self):
+        run = os.path.join(self.t, "run")
+        for d in ("clone", "out", "tmp"):
+            os.makedirs(os.path.join(run, d))
+        with open(os.path.join(run, "tmpdir"), "w") as f:
+            f.write(os.path.join(run, "tmp") + "\n")
+        r = self.cli("role", "card", "review", "--run", run)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.join(run, "out"), r.stdout)
+        self.assertEqual(json.loads(self.cli("role", "card", "review", "--run", run, "--json").stdout)["run"], run)
+
+    def test_the_exit_statuses_of_the_card(self):
+        for args, code, words in ((["role", "card", "nobody"], 1, "no role named nobody"),
+                                  (["role", "card", "build", "--run", os.path.join(self.t, "none")], 1, "is not a run directory"),
+                                  (["role", "card"], 2, "usage:"), (["role", "card", "build", "--nope"], 2, "unknown option"),
+                                  (["role", "card", "build", "--project"], 2, "needs a value"), (["role", "card", "build", "extra"], 2, "unexpected argument")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (code, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_the_card_is_declared_and_agent_list_says_where_it_stores_the_states(self):
+        card = verbs("role")["card"]
+        self.assertEqual({o["flag"] for o in card["opts"]}, {"--project", "--run", "--json"})
+        self.assertEqual([a[0] for a in card["args"]], ["ROLE"])
+        self.assertIn("rolecard.py", C.COMMANDS["role"]["scripts"])
+        self.assertIn("STATE/agent-states.json", verbs("agent")["list"]["desc"])
+        self.assertEqual(H.complete(["role", ""]), ["list", "show", "prompt", "check", "card"])
+        self.assertIn("lead", H.complete(["role", "card", ""]))
+        self.assertEqual(sorted(H.complete(["role", "card", "build", "--"])), ["--help", "--json", "--project", "--run"])
+        text = " ".join(self.cli("help", "role", "card").stdout.split())
+        self.assertIn("qargi role card lead", text)
+        self.assertIn("open to a member", text)
+
+
+class EarlyRulesHelp(Env):
+    """The forms the rules-visible-early change put in the scripts are declared in lib/commands.py, with the usage errors the declaration promises."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def test_the_dry_run_is_declared_on_the_five_verbs_and_on_no_other(self):
+        has = {(c, v) for c in C.COMMANDS for v, spec in verbs(c).items() if "--dry-run" in {o["flag"] for o in spec["opts"]}}
+        # `local run --dry-run` and the commands with a flag of their own (export, import) print what would run and are another change
+        self.assertEqual({x for x in has if x[0] in ("release", "feature", "branch")},
+                         {("release", "start"), ("release", "push"), ("release", "fix"), ("feature", "finish"), ("branch", "prune")})
+        for c, v in (("release", "start"), ("release", "push"), ("release", "fix"), ("feature", "finish"), ("branch", "prune")):
+            flat = " ".join(C.COMMANDS[c]["verbs"][v]["desc"].split())
+            for want in ("dry-run: N would refuse; nothing was changed", "dry=1 first in the detail of the contract line", "git ls-remote", "the same token the plain plan has"):
+                self.assertIn(want, flat, "%s %s" % (c, v))
+        self.assertIn("for --push only (a usage error, exit 2, without it)", " ".join(C.COMMANDS["release"]["verbs"]["fix"]["desc"].split()))
+        self.assertIn("QARGI_DRY", dict(C.ENVIRONMENT))
+        man = H.man().replace("\\-", "-")
+        self.assertIn("dry-run", man)
+        self.assertIn("QARGI_DRY", man)
+
+    def test_the_dry_run_flag_of_another_verb_is_a_usage_error_as_declared(self):
+        for args, words in ((["release", "fix", "9.9.9", "--dry-run"], "--dry-run belongs to release start, release push and release fix --push"),
+                            (["release", "finish", "9.9.9", "--dry-run"], "--dry-run belongs to release start, release push and release fix --push"),
+                            (["feature", "start", "x", "--dry-run"], "--dry-run belongs to feature finish")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_release_fix_record_is_declared_with_its_exclusions(self):
+        fix = C.COMMANDS["release"]["verbs"]["fix"]
+        self.assertIn("--record", {o["flag"] for o in fix["opts"]})
+        flat = " ".join(fix["desc"].split())
+        for want in ("no plan, no token and no approval", "exclusive with --push, --plan and --approved", "fix_paths", "inside the cut: push goes on under its approval",
+                     "cut-fix-outside", "cut-branch-moved", "own_plan", "a later fix inside the paths goes on under the cut again"):
+            self.assertIn(want, flat)
+        self.assertIn("fix_paths", " ".join(C.COMMANDS["release"]["verbs"]["plan"]["desc"].split()))
+        for flag in ("--record", "--dry-run", "--push"):
+            self.assertIn(flag, H.complete(["release", "fix", "9.9.9", "--"]))                     # the completion offers each flag
+        self.assertIn("--deleted", H.complete(["ref", "record", "--"]))
+        self.assertIn("--agents", H.complete(["branch", "prune", "--"]))
+        for args, words in ((["release", "fix", "9.9.9", "--record", "--push"], "--record and --push are two ways of taking a fix in"),
+                            (["release", "fix", "9.9.9", "--record", "--plan", "abc"], "--record asks for no plan and no approval"),
+                            (["release", "fix", "9.9.9", "--record", "--approved", "ok"], "--record asks for no plan and no approval"),
+                            (["release", "start", "9.9.9", "--record"], "--record belongs to release fix")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_the_answer_for_changelog_fragments_is_described_and_completes(self):
+        self.assertIn("release.changelog.fragments", H.EXTRA_KEYS)
+        desc = " ".join(C.COMMANDS["release"]["desc"].split())
+        for want in ("release.changelog.fragments", "release-fragments-unfolded", "README* and .gitkeep", "release-notes-empty", "release fix VERSION --record"):
+            self.assertIn(want, desc)
+        flow = " ".join(slurp(os.path.join(ROOT, "docs", "flow", "git-flow.md")).split())
+        for want in ("`release.changelog.fragments`", "`release-fragments-unfolded`", "`fix_paths`", "`own_plan`", "`release fix VERSION --record`", "`cut-fix-outside`"):
+            self.assertIn(want, flow)
+        self.assertIn("release.changelog.fragments", [k for k, _ in H.keys([])])
+
+    def test_ref_record_declares_deleted_and_the_rewrite_of_a_release_branch(self):
+        record = C.COMMANDS["ref"]["verbs"]["record"]
+        self.assertEqual({o["flag"] for o in record["opts"]}, {"--rewrite", "--deleted", "--why", "--project"})
+        self.assertEqual([(a[0], a[2] if len(a) > 2 else False) for a in record["args"]], [("REF", False), ("OLD", False), ("NEW", True)])
+        flat = " ".join(record["desc"].split())
+        for want in ("release/* or hotfix/* branch that origin does not have", "ref:deleted", "qargi ref deleted", "never a long-lived branch"):
+            self.assertIn(want, flat)
+        for stale in ("agent/* only", "the one move"):
+            self.assertNotIn(stale, flat + " " + C.COMMANDS["ref"]["desc"])
+        self.assertIn("starts at absent", " ".join(C.COMMANDS["ref"]["desc"].split()))
+        self.assertIn("from absent when the ref was deleted since", " ".join(C.COMMANDS["ref"]["verbs"]["note"]["desc"].split()))
+        self.assertNotIn("deleted or rewrote by hand, is not covered", " ".join(C.COMMANDS["local"]["verbs"]["verify"]["desc"].split()))
+        r = self.cli("ref", "record", "--rewrite", "--deleted", "agent/x", "a", "--why", "x")
+        self.assertEqual((r.returncode, r.stdout), (2, ""))
+        self.assertIn("takes --rewrite or --deleted, not both", r.stderr)
+
+    def test_branch_prune_agents_is_declared_as_the_one_ungated_deletion(self):
+        prune = C.COMMANDS["branch"]["verbs"]["prune"]
+        self.assertEqual({o["flag"] for o in prune["opts"]}, {"--project", "--remote", "--agents", "--plan", "--approved", "--dry-run"})
+        flat = " ".join(prune["desc"].split())
+        for want in ("--agents is local only and the exception to the gate", "takes no --plan, --approved or --remote (a usage error, exit 2)", "never a feature branch", "(exit 2)"):
+            self.assertIn(want, flat)
+        self.assertIn("The one deletion that is not gated is prune --agents", " ".join(C.COMMANDS["branch"]["desc"].split()))
+        for extra in ("--remote", "--plan x", "--approved y"):
+            r = self.cli("branch", "prune", "--agents", *extra.split())
+            self.assertEqual((r.returncode, r.stdout), (2, ""), extra)
+            self.assertIn("--agents", r.stderr)
+        flow = " ".join(slurp(os.path.join(ROOT, "docs", "flow", "git-flow.md")).split())
+        self.assertIn("`qargi branch prune --agents [--dry-run]` is the exception to the gate", flow)
+        self.assertIn("qargi branch prune --agents", slurp(os.path.join(ROOT, "skills", "qargi-flow", "SKILL.md")))
+
+
+class WindowHelp(unittest.TestCase):
+    def test_a_window_from_the_model_that_the_tokens_exceed_counts_as_assumed_in_the_help_the_man_page_and_the_flow_page(self):
+        for name, text in (("help", C.COMMANDS["lead"]["verbs"]["usage"]["desc"]), ("man page", H.man().replace("\\-", "-")),
+                           ("docs/flow/marshal.md", slurp(os.path.join(ROOT, "docs", "flow", "marshal.md")))):
+            flat = " ".join(text.split())
+            self.assertRegex(flat, r"window that the (model id|table) gave( for the model id)? counts as assumed too once the tokens exceed it", name)
+            self.assertIn("no percentage and no advice", flat, name)
+        self.assertIn("nor when the tokens exceed the window the model id gave", C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"][1]["help"])
+
+
+class RefusalHelp(Env):
+    """qargi help refusal [CODE]: the catalogue entry of a code (lib/refusals.json, read through lib/refusal.py), the list of the codes, an unknown code."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def entries(self):
+        with open(os.path.join(LIB, "refusals.json")) as f:
+            return json.load(f)["codes"]
+
+    def test_the_list_names_every_code_with_its_class_exit_and_status(self):
+        r = self.cli("help", "refusal")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        flat = " ".join(r.stdout.split())
+        for code, e in self.entries().items():
+            self.assertIn(code, r.stdout)
+            self.assertIn("(%s, exit %d, %s)" % (e["class"], e["exit"], e["status"]), flat)
+        self.assertIn("qargi help refusal CODE", r.stdout)
+        self.assertIn("refusal", self.cli("help").stdout)                        # the overview lists the topic
+
+    def test_a_code_prints_its_rule_why_class_exit_fields_and_next(self):
+        for code, e in self.entries().items():
+            r = self.cli("help", "refusal", code)
+            self.assertEqual(r.returncode, 0, (code, r.stderr))
+            flat = "".join(r.stdout.split())                                     # the text is wrapped, also at a hyphen: compare without any white space
+            self.assertTrue(flat.startswith("".join(("%s (%s)" % (code, e["status"])).split())), (code, flat[:60]))
+            for want in ("Rule: " + e["rule"].rstrip("."), "Why: " + e["why"].rstrip("."), "Class: %s    Exit: %d" % (e["class"], e["exit"]),
+                         "Message: " + e["message"], "Next, for a lead: " + e["next"]["lead"]):
+                self.assertIn("".join(want.split()), flat, code)
+            self.assertEqual("".join("Next, in the owner's own session (host):".split()) in flat, e["next"]["host"] != e["next"]["lead"], code)
+            for k, v in e["fields"].items():
+                self.assertIn("".join(("%s (%s)" % (k, v)).split()), flat, code)
+        flat = " ".join(self.cli("help", "refusal", "plan-stale").stdout.split())
+        self.assertIn("Fields: verb (verb), moved (label-list)", flat)
+        self.assertIn("a token from a lead's plan never matches (R77)", flat)
+
+    def test_an_unknown_code_or_two_words_exit_2_and_print_nothing_on_standard_output(self):
+        for args in (["nosuch-code"], ["plan-stale", "plan-missing"], ["PLAN-STALE"]):
+            r = self.cli("help", "refusal", *args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn("no refusal code", r.stderr)
+            self.assertIn("qargi help refusal lists the codes", r.stderr)
+
+    def test_the_codes_are_completed_and_the_topic_is_in_the_man_page(self):
+        self.assertIn("plan-stale", H.complete(["help", "refusal", ""]))
+        self.assertIn("refusal", H.complete(["help", ""]))
+        self.assertEqual(H.complete(["help", "refusal", "plan-stale", ""]), [])
+        self.assertIn(".SH REFUSAL", H.man())
+        self.assertIn("refusal", C.TOPICS)
+
+    def test_the_reference_page_links_the_catalogue_and_the_environment_lists_the_refusal_variables(self):
+        self.assertIn("(refusals.md)", slurp(os.path.join(ROOT, "docs", "reference", "README.md")))
+        env = dict(C.ENVIRONMENT)
+        for k in ("QARGI_DRY", "QARGI_VERB", "QARGI_ROLE"):
+            self.assertIn(k, env)
+        man = H.man().replace("\\-", "-")
+        for k in ("QARGI_DRY", "QARGI_VERB", "QARGI_ROLE"):
+            self.assertIn(k, man)
 
 
 class ProviderNameHelp(unittest.TestCase):

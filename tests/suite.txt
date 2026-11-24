@@ -24,6 +24,9 @@ fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py
 fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib/provider*.py
+fast | par | 300 | 38 | bash tests/test_runtime_enable.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/lib.sh lib/guard.py tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
+fast | par | 300 | 19 | bash tests/test_runtime_resolve.sh | lib/agent.sh lib/prepared_request.py lib/refusals.json tests/prepared_request_cases.py tests/fixtures/runtime-no-extras/*
+fast | par | 600 | 250 | bash tests/test_runtime_run.sh | lib/local.sh lib/review.sh lib/attempts.py lib/local_run.py lib/member_skills.py lib/refusals.json tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
 fast | par | 300 | 8 | bash tests/conformance.sh claude-platform
 fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json lib/local.sh lib/lib.sh lib/attempts.py
@@ -33,7 +36,7 @@ full | serial | 900 | 179 | bash tests/test_conformance_selftest.sh
 full | par | 300 | 43 | python3 tests/test_tierplan.py | lib/tierplan.py
 fast | par | 300 | 22 | bash tests/test_tier_hook.sh
 full | par | 300 | 17 | bash tests/test_tier_packet.sh
-fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/* skills/qargi-verify/SKILL.md
+fast | par | 300 | 10 | python3 tests/test_help.py | bin/qargi lib/commands.py lib/help.py lib/refusals.json lib/rolecard.py man/qargi.1 completions/* skills/qargi-verify/SKILL.md
 full | par | 360 | 130 | python3 tests/test_startup.py | bin/qargi lib/help.py lib/commands.py lib/cloud.py lib/paths.py
 full | par | 300 | 46 | python3 tests/test_startup_modules.py | bin/qargi lib/lib.sh lib/provider.py lib/marshal_store.py lib/help.py lib/gates.py lib/lead_usage.py
 full | par | 300 | 2 | python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option | CHANGELOG.md
@@ -88,7 +91,9 @@ full | par | 300 | 30 | bash tests/test_release_checks.sh | lib/release*.sh lib/
 full | par | 300 | 32 | bash tests/test_release_unrelated.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 59 | bash tests/test_release_master_merge.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 9 | bash tests/test_release_snapshot_cycle.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
-full | par | 300 | 68 | bash tests/test_release_cut.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 600 | 180 | bash tests/test_release_cut.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 300 | 63 | bash tests/test_release_fix_record.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 300 | 116 | bash tests/test_dry_run.sh | lib/feature.sh lib/branch.sh lib/release*.sh lib/gitflow.sh lib/refusal.py lib/refusals.json lib/marshal_store.py lib/lead_usage.py lib/merged.py
 full | par | 300 | 24 | bash tests/test_release_after_steps.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 30 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 41 | bash tests/test_release_site.sh | lib/release*.sh lib/release*.py
@@ -142,7 +147,7 @@ full | par | 300 | 40 | bash tests/test_marshal_batch.sh | lib/marshal*.sh lib/m
 full | par | 300 | 17 | python3 tests/test_marshal_startup.py | lib/marshal*.sh lib/marshal*.py tests/startup-budget.txt
 # Isolate this long workflow test from the parallel pool.
 # Measured by a member on this host (not the reference machine): 286 s alone; beside other work 331 to 344 s (two more copies of the test running) and 381 to 409 s (a whole run, as the lead saw it), so the timeout is raised from 300 to 600 s. The budget stays at 108 s: the time limit of the CI jobs (.github/workflows/test.yml, checked by tests/test_ci.py) has no room for a larger one until the workflow follows.
-full | serial | 600 | 108 | bash tests/test_journal.sh | lib/merged.py lib/local.sh
+full | serial | 600 | 108 | bash tests/test_journal.sh | lib/merged.py lib/local.sh lib/ref.sh
 full | par | 850 | 185 | bash tests/test_runs_close.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/ref.sh lib/feature.sh lib/review.sh lib/review_check.py lib/lead_usage.py lib/merged.py lib/owned_refs.py tests/class_cases.py tests/fixtures/run-classes.json
 fast | par | 300 | 19 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 21 | bash tests/test_team.sh | lib/team.sh
@@ -188,3 +193,7 @@ fast | par | 300 | 14 | bash tests/test_audit_lock.sh | lib/lib.sh lib/procenv.p
 fast | par | 300 | 4 | bash tests/test_readonly_init.sh | lib/lib.sh
 # Seat contract: 8 checks of the contract text and 95 skipped rule tests measured 0.32s, 0.26s and 0.27s in a member run (not the reference machine); recorded 0s, budget 1s (the least a step has).
 fast | par | 300 | 1 | python3 tests/test_seat_contract.py | docs/reference/lead-seat.md tests/test_seat_contract.py
+# Refusal catalogue: 55 tests measured 5.0s in a member run (not the reference machine); recorded 5s, budget ceil(5 * 1.10) = 6s.
+fast | par | 300 | 6 | python3 tests/test_refusals.py | lib/refusals.json lib/refusal.py lib/*.sh docs/reference/refusals.md docs/reference/lead-seat.md tests/refusal-sites.txt
+# Role cards: 40 tests measured 14.5s in a member run (not the reference machine); recorded 15s, budget ceil(15 * 1.10) = 17s.
+fast | par | 300 | 17 | python3 tests/test_rolecard.py | lib/rolecard.py lib/role.py lib/commands.py lib/guard.py lib/refusals.json lib/local.sh lib/hook.sh lib/agent.sh roles/*/ROLE.md agents/member.body.md agents/member.md tests/golden/rolecard/*

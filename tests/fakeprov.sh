@@ -36,3 +36,42 @@ fake_family() {
   fake_runtime "$src" "$tool" "$name-local" local ".family = \"$name\" | .models.catalog = \"$name\" | (${5:-.})" || return 1
   fake_runtime "$src" "$tool" "$name-cloud" cloud ".family = \"$name\" | .models.catalog = \"$name\" | (${6:-.})"
 }
+
+#   fake_command_runtime SRC TOOL NAME [FILTER]
+#       TOOL/lib/providers/NAME.json: the shipped codex definition under another name, in no family (its model table is the openai catalog's),
+#       a runtime of the local surface that qargi local run starts as a command. Its command is a stub, TOOL/stubs/NAME: it reads the prompt,
+#       commits one file in the clone it is given with -C and writes the final message to the file it is given with -o, and nothing else. Its
+#       sign-in source is a scratch file, ~/.NAME-members/auth.json of the test's HOME (the test makes it: the directory is not under ~/.codex),
+#       and the variable of its run home is NAME_HOME in capitals, the dashes made underscores. FILTER (jq, run on the whole definition)
+#       changes what the test is about: the barrier claim (.capabilities.read_only_barrier.value: yes, partial or no), the reads claim
+#       (.dispatch.reads), the links, the override claims.
+fake_command_runtime() {
+  local src=$1 tool=$2 name=$3 filter=${4:-.} var
+  var=$(tr 'a-z-' 'A-Z_' <<<"$name")_HOME
+  mkdir -p "$tool/lib/providers" "$tool/stubs"
+  jq --arg n "$name" --arg stub "$tool/stubs/$name" --arg v "$var" --arg from '~'"/.$name-members/auth.json" \
+    ".provider = \$n | .family = null | .dispatch.argv[0] = \$stub | .dispatch.home.env = \$v
+     | .dispatch.home.link = [{from: \$from, to: \"auth.json\"}] | .resources.skills.user_dir = \"~/.\(\$n)/skills\"
+     | .resources.skills.exclusion.file = \"~/.\(\$n)/config.toml\" | .resources.instructions.user_file = \"~/.\(\$n)/AGENTS.md\" | ($filter)" \
+    "$src/lib/providers/codex.json" > "$tool/lib/providers/$name.json.new" || { rm -f "$tool/lib/providers/$name.json.new"; return 1; }
+  mv "$tool/lib/providers/$name.json.new" "$tool/lib/providers/$name.json"
+  rm -rf "${tool:?}/lib/providers/$name"
+  cp -r "$src/lib/providers/codex" "$tool/lib/providers/$name"
+  cat > "$tool/stubs/$name" <<'STUB'
+#!/usr/bin/env bash
+# the command of a fake command runtime: commits one file in the clone (-C) and writes the final message (-o)
+clone='' final=''
+while [ $# -gt 0 ]; do
+  case $1 in -C) clone=$2; shift 2;; -o) final=$2; shift 2;; *) shift;; esac
+done
+cat > /dev/null
+if [ -n "$clone" ]; then
+  cd "$clone" || exit 1
+  echo stub > stub.txt
+  git add stub.txt
+  git commit -q -m "Stub: a file"
+fi
+if [ -n "$final" ]; then echo "stub report" > "$final"; fi
+STUB
+  chmod +x "$tool/stubs/$name"
+}

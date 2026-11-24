@@ -27,6 +27,8 @@ For each run:
 
 Report DONE or BLOCKED, evidence, deviations and the agent's `noticed_not_acted_on` notes (`qargi noticed list`, then `resolve`). Ask before any push; merge to a long-lived branch only when told.
 
+A verified task's `feature merge` into its own open feature needs no owner approval and no token: do not ask; the owner's words are needed for `feature finish`, releases and pushes.
+
 On approval, for each run in turn, with an open feature: `qargi feature merge NAME agent/<slug>` (the run's slug). For a cloud collect or a project with no open feature, apply the series with `git am` onto the branch the user names (authors reset to the user), or split a mixed commit by file yourself. Apply the profile's coordinator steps and strip trailers. Colliding changelog numbers: `qargi changelog renumber`, then commit. **Never squash**: keep the agent's separate commits; send one that mixes changes back to be split.
 
 ## 4. Clean up, after the merge

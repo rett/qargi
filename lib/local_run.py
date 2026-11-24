@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """qargi local run: start the member of a prepared local run as a command line, from the data of the project's local runtime.
 
-  local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model TIER|ID] [--effort LEVEL]
+  local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model TIER|ID] [--effort LEVEL] [--drift-check]
                [--timeout SECONDS] [--dry-run] [--again]
 
 lib/local.sh `run` finds the project and its runtime (the one resolver, `provider.py of`) and calls this. Everything the command line is
@@ -135,6 +135,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import prepared_request as PR
+import refusal as RF
 import member_skills as MS
 import provider as P  # noqa: E402
 import paths  # noqa: E402
@@ -184,6 +185,13 @@ class Stop(Exception):
 
 def fail(msg, code=2):
     raise Stop(msg, code)
+
+
+class Drift(Stop):
+    """The run drifted while it waited for the lock: a refusal (exit 1) that prints as qargi local run prints runtime-drift before it starts (text: that print)."""
+    def __init__(self, msg, text):
+        Stop.__init__(self, msg, 1)
+        self.text = text
 
 
 # ---- the data -----------------------------------------------------------------------------------------------------------------------
@@ -952,6 +960,56 @@ def read_run_file(path, limit, what):
         fail("%s (%s) is not text" % (what, path))
 
 
+DRIFT_EXIT = 6    # --drift-check: the run is not current for its runtime (the first line of standard output says why, the second what)
+
+
+def drift_check(run, project, runtime, cls):
+    """None when the run may start on RUNTIME as prepared, else (why, detail). Only a run of a project with extra runtimes has something to drift from: its registry
+    line names the runtime it was prepared for, and its prepared request binds it. RUNTIME must still be the project's own or one of its enabled extra runtimes
+    (not-enabled), an extra one must still be sealed, local and started by a command (not-usable), and the request must still hold (changed: the runtime's
+    definition, catalog, composition, the profile or the policy is not what it was at prepare). A line without a runtime, or a run without a request, has none."""
+    store = A.Store(run)
+    row = store.registry()
+    if row is None or "lifecycle" not in row or "runtime" not in row:
+        return None
+    request = store.show()["prepared"].get("request")
+    if request is None:
+        return None
+    try:
+        primary, extra = P.local_runtimes_of(project)
+    except P.ProviderError as e:
+        return "not-enabled", "the runtimes of project %s cannot be read: %s" % (project, e)
+    if runtime != primary and runtime not in extra:
+        return "not-enabled", "the project enables %s, not %s" % (", ".join([primary] + extra), runtime)
+    if runtime != primary:
+        try:
+            problem = P.runtime_problem(runtime, primary)
+        except P.ProviderError as e:
+            return "not-usable", str(e)
+        if problem != "ok":
+            return "not-usable", "%s cannot be used as an extra runtime (%s)" % (runtime, problem)
+    try:
+        PR.current(request, project, runtime, cls)
+    except (PR.Invalid, P.ProviderError) as e:
+        return "changed", str(e)[:1000]
+    return None
+
+
+def drift_after_lock(plan, run):
+    """The run drift_check passed before it waited for the lock is checked again once it holds it: the wait has no bound, and the owner may have disabled
+    the runtime, or it or the profile may have changed, in that time. A drift is the refusal runtime-drift (exit 1, as before the wait), and nothing is started."""
+    found = drift_check(run, plan["project"], plan["runtime"], plan["class"])
+    if found is None:
+        return
+    why, detail = found
+    detail = " ".join(detail.split())
+    try:
+        text, _ = RF.render(RF.load(), "runtime-drift", [("name", plan["runtime"]), ("why", why)], verb="local run", project=plan["project"])
+    except RF.Defect as e:
+        text = "qargi: defect: %s\n" % e
+    raise Drift("the run was prepared for the runtime %s, which it can no longer start on (%s): %s" % (plan["runtime"], why, detail), text + "qargi: %s\n" % detail)
+
+
 def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     """Everything a run needs, as a dict; Stop for a refusal. Nothing is written."""
     if not os.path.isfile(os.path.join(run, "refs.before")) or not os.path.isdir(os.path.join(run, "clone")):
@@ -1024,26 +1082,30 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
-        if state == "refused":
+        if state not in ("yes", "partial", "accepted"):      # refused, missing (an extra runtime with no barrier of its own) or anything a later state adds: no member starts
             fail(text)
+        # the acceptance the project recorded for no barrier is for its own runtime of this surface: it exempts no other runtime (an extra) from the rules below
+        own = P.is_primary(runtime, "local", project)
+        own_accepted = own and P.accepted(project, "local")
+        way_out = ("Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
+                   % P.accept_command(runtime, "local", project)) if own else (
+                   "Dispatch it where that barrier is applied: the acceptance of no barrier is the project's own runtime's and does not count for %s." % runtime)
         prov = comp["provenance"] or {}
         by = next((x for x in (prov.get("barrier"), prov.get("capabilities.read_only_barrier")) if x not in (None, runtime)), None)
         if by is not None:
             # the barrier is an extension's: nothing in a local run applies it (an extension adds no class_argv), so it is no barrier here
-            if state in ("yes", "partial") and not P.accepted(project, "local"):
+            if state in ("yes", "partial") and not own_accepted:
                 fail("the read-only barrier of %s on local is provided by the extension %s (barrier kind %s), and qargi local run applies only the barrier the runtime's own "
                      "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
-                     "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
-                     % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
-        elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not P.accepted(project, "local") and not has_class_args(disp):
+                     "%s" % (runtime, by, (doc.get("barrier") or {}).get("kind"), way_out))
+        elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not own_accepted and not has_class_args(disp):
             # the runtime's own barrier is a hook (it lives in the member file of a runtime that loads agent files; a local run has none) or an adapter's
             # barrier-check (a local run never calls it): nothing in this run applies it, so the capability that reads as held holds nothing here
             kind = doc["barrier"]["kind"]
             fail("the read-only barrier of %s on local is a %s, which a local run does not apply (%s) and its dispatch supplies no read-only arguments "
                  "(class_argv, or a {\"class\": \"read-only\"} group in argv), so it would start this member without a barrier: a read-only run is refused here.\n"
-                 "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
-                 % (runtime, kind, "a local run has no agent file to carry the hook" if kind == "hook" else "a local run never calls the adapter's barrier-check",
-                    P.accept_command(runtime, "local", project)))
+                 "%s" % (runtime, kind, "a local run has no agent file to carry the hook" if kind == "hook" else "a local run never calls the adapter's barrier-check",
+                         way_out))
         elif (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
             fail("the barrier of %s is sandbox-args but its dispatch supplies no read-only arguments (class_argv, or a {\"class\": \"read-only\"} group in argv)" % runtime)
         note = text if state == "partial" else ""
@@ -1104,7 +1166,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         fail("dispatch.cwd of %s is %s, outside the clone" % (runtime, cwd))
     exe, how, exe_notes = find_command(runtime, argv[0], run, keep)
     watched = git_watch(argv_t, class_extra(disp, cls, runtime), cls, argv, clone)
-    return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
+    return {"runtime": runtime, "class": cls, "project": project, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "skills": skills, "prepared": prepared, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
@@ -2154,7 +2216,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
     made, home_left, staged, locks = [], [], False, []
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
-    proc = code = error = outcome = left = None
+    proc = code = error = outcome = left = drifted = None
     timed_out, stop_code = False, 2
     unexpected = None
     previous = prev_manifest = False
@@ -2162,6 +2224,7 @@ def run_started(plan, run, store, dispatch_state, sig):
         try:
             if home:
                 locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
+                drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
                 made = make_home(run, home)              # the links exist for the length of the run only
             if plan.get('skills') is not None:
                 MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
@@ -2226,6 +2289,7 @@ def run_started(plan, run, store, dispatch_state, sig):
                 code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
+            drifted = getattr(e, "text", None)
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
                 left = kill_group(proc)                  # left running after the runner has gone
                 code = proc.returncode
@@ -2326,7 +2390,9 @@ def run_started(plan, run, store, dispatch_state, sig):
     if gitdir:
         rec["git_dir"] = gitdir
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
-    if error:
+    if drifted:
+        sys.stderr.write(drifted)
+    elif error:
         print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds%s)" % (plan["timeout_s"], "; " + stopped_text(left) if left else "") if timed_out else "")
@@ -2368,7 +2434,7 @@ def run_started(plan, run, store, dispatch_state, sig):
 def parse(argv):
     if len(argv) < 1 or argv[0].startswith("--"):
         fail("usage: local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model M] [--effort E] [--timeout S] [--dry-run] [--again]", 1)
-    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None}
+    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None, "drift": False}
     i = 1
     flags = {"--project": "project", "--runtime": "runtime", "--class": "class", "--task": "task", "--model": "model", "--effort": "effort", "--timeout": "timeout"}
     while i < len(argv):
@@ -2377,6 +2443,8 @@ def parse(argv):
             o["dry"], i = True, i + 1
         elif a == "--again":
             o["again"], i = True, i + 1
+        elif a == "--drift-check":
+            o["drift"], i = True, i + 1
         elif a in flags and i + 1 < len(argv):
             o[flags[a]], i = argv[i + 1], i + 2
         else:
@@ -2395,6 +2463,13 @@ def main(argv):
     try:
         o = parse(argv)
         run = os.path.realpath(o["run"])
+        if o["drift"]:
+            found = drift_check(run, o["project"], o["runtime"], o["class"])
+            if found:
+                print(found[0])
+                print(" ".join(found[1].split()))
+                return DRIFT_EXIT
+            return 0
         if not o["dry"]:
             earlier_start(run, o["again"])
         plan = build(run, o["project"], o["runtime"], o["class"], o["task"], o["model"], o["effort"], o["timeout"], keep)

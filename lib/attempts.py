@@ -582,8 +582,10 @@ class Store:
                      and "request" in record["prepared"], "prepared command request is missing or unsupported; re-prepare")
             if "request" in record["prepared"]:
                 request = record["prepared"]["request"]
+                # the registry line of a project with extra runtimes names the run's runtime, which the request binds; a line without the key was prepared without
+                # extras and is not compared. model and model_confirmed of the line are display fields: no check reads them.
                 need(all(row.get(k) == request[v] for k, v in (
-                    ("project", "project"), ("ability", "role"), ("class", "class"), ("profile", "profile"))),
+                    ("project", "project"), ("ability", "role"), ("class", "class"), ("profile", "profile")) + ((("runtime", "runtime"),) if "runtime" in row else ())),
                      "prepared command request disagrees with lead registry; re-prepare")
             return record
         finally:

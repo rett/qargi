@@ -48,14 +48,16 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
                                        the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
                                        it lists); the second runs it and removes the copy
-  notes_of(project, surface=local)     (runtime, {topic: text}): the notes of the definition of the project's runtime on a surface, composed (notes: an
-                                       optional object of topic name to one line of text, at most 16 topics of 2000 characters)
+  notes_of(project, surface=local, runtime=None)
+                                       (runtime, {topic: text}): the notes of the definition of the project's runtime on a surface, composed (notes: an
+                                       optional object of topic name to one line of text, at most 16 topics of 2000 characters); with a runtime
+                                       the notes of that enabled runtime of the local surface (local_runtimes_of) in its place
   lead_topics(definition)              the topics of a definition's notes that are about the lead's own session on that runtime (lead_notes: a list
                                        of topics of its notes), as a set; every other topic is about the members the runtime runs
   lead_notes_of(name)                  (runtime, {topic: text}): the notes about the lead's own session of the lead runtime NAME (a usable runtime
-                                       of the local surface), or Unsupported; member_notes_of(project, surface=local) is (runtime, the notes
-                                       about its members, the topics it lists as about a lead session, whether it starts a member inside
-                                       the lead's session) of the project's runtime
+                                       of the local surface), or Unsupported; member_notes_of(project, surface=local, runtime=None) is (runtime,
+                                       the notes about its members, the topics it lists as about a lead session, whether it starts a member inside
+                                       the lead's session) of the project's runtime, or of the enabled runtime it names
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
@@ -84,7 +86,20 @@ Usage: provider.py list
                                          lib/provider.sh does it: plan first, then the token and the approval
        provider.py require-barrier PROVIDER SURFACE [--project P]
                                          exit 0 when a read-only role may run there (a partial barrier prints its note to
-                                         stderr), 2 with the qargi provider accept command when it may not
+                                         stderr), 2 with the qargi provider accept command when it may not, 4 when PROVIDER is
+                                         one of the project's extra runtimes (models.extra_runtimes.local) and has no barrier of
+                                         its own: the project's acceptance does not count for it, so no command is offered
+       provider.py enable|disable PROJECT --runtime NAME [--asked W] [--plan T --approved W]
+                                         an extra runtime for one project (models.extra_runtimes.local of its answers): lib/provider.sh makes the
+                                         plan (runtime_plan: the runtime, its link sources, barrier, reads, tool packs), the token and the
+                                         approval; a runtime that does not confine reads needs approval words that carry "reads are not confined"
+       provider.py runtime-info PROJECT NAME enable|disable
+                                         the plan of that verb as one JSON object (what provider.sh reads)
+       provider.py reads-warning NAME    the line that says what members on the local runtime NAME can read, when its definition does not confine
+                                         reads (dispatch.reads); nothing for a runtime that confines them or works in the session
+       provider.py runtimes PROJECT
+                                         the runtimes of the project's local surface: the line "primary NAME", then a line
+                                         "extra NAME" for each runtime of models.extra_runtimes.local
        provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
                                          prints yes, partial or no (what enforcement may rely on; with a project, as composed with its
                                          enabled extensions); exit 1 when the provider does not list the surface, 2 on a conflict
@@ -100,7 +115,7 @@ Usage: provider.py list
        provider.py model NAME SURFACE TIER
                                          the model id of a tier of the runtime on a surface
        provider.py launch NAME RENDER [--project P]   the command that starts a session on the render directory RENDER (exit 3: none)
-       provider.py notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]
+       provider.py notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME] [--runtime NAME | --run RUN]
                                          the text of a notes topic of the definition of the project's runtime on a surface (local unless told
                                          otherwise; composed with its enabled extensions; the project is P, else the one in effect), or the
                                          topic names when none is given; exit 1 when the runtime has no such topic or no notes, 2 when the
@@ -109,7 +124,12 @@ Usage: provider.py list
                                          its definition lists in lead_notes are answered by it and the others by the project's runtime; exit 3
                                          when NAME is no such runtime or has no such note about the lead's session (no other runtime answers),
                                          and for spawn and member-out when the project's runtime starts a member inside the lead's session
-                                         (dispatch.mode in-session) and the lead runtime is another one: that lead cannot start its members
+                                         (dispatch.mode in-session) and the lead runtime is another one: that lead cannot start its members.
+                                         --runtime NAME answers the topics about members from that runtime, which the project must have enabled
+                                         (its own or one of models.extra_runtimes.local; exit 2 otherwise), and --run RUN from the runtime the
+                                         lead's registry records for the run directory RUN (the project's own for a line without one); the
+                                         topics about the lead's own session stay with the lead runtime, or with the project's own runtime when
+                                         none is named; the two options exclude each other and apply to the local surface
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -1511,6 +1531,7 @@ def validate2(d, name=None):
         out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
         out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
         out += [("fail", m) for m in hidden_paths_problems(disp, shape=False)]
+        out += [("fail", m) for m in _reads_problems(disp)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
@@ -2297,7 +2318,148 @@ def launch_line(name, render, root=None, library=None, project=None, conf=None):
     return re.sub(r"\[([^\]]*)\]", group, tpl)
 
 
+# ---- what a runtime's sandbox does not hold: dispatch.reads ----------------------------------------------------------------------
+
+READS_KEYS = ("confined", "exposes", "note")
+READS_PHRASE = "reads are not confined"      # the words an approval of a runtime that does not confine reads must carry (letter case and runs of blanks ignored)
+
+
+def _reads_problems(disp):
+    """The findings of dispatch.reads, as messages. dispatch.reads says what the runtime's sandbox does not hold: {confined: true|false, exposes:
+    [paths a member can read that are the user's own, ~/PATH or absolute], note: what they hold}. Absent: the runtime does not confine reads and
+    names no path."""
+    reads = disp.get("reads") if isinstance(disp, dict) else None
+    if reads is None:
+        return []
+    if not isinstance(reads, dict):
+        return ["dispatch.reads: %s is not an object {confined, exposes, note}" % _show(reads)]
+    bad = ["dispatch.reads.%s: unknown key (confined, exposes, note)" % k for k in reads if k not in READS_KEYS]
+    if not isinstance(reads.get("confined"), bool):
+        bad.append("dispatch.reads.confined: true or false is required")
+    ex = reads.get("exposes", [])
+    if not isinstance(ex, list) or len(ex) > 8 or not all(isinstance(x, str) and x.strip() for x in ex):
+        bad.append("dispatch.reads.exposes: a list of at most 8 paths (~/PATH or absolute), each a non-empty text")
+    note = reads.get("note")
+    if note is not None and not (isinstance(note, str) and note.strip() and len(note) <= 300):
+        bad.append("dispatch.reads.note: a non-empty text of at most 300 characters")
+    return bad
+
+
+def reads_claim(doc):
+    """{confined, exposes, note, declared} of a definition: what its dispatch.reads says. A definition with no valid dispatch.reads does not confine
+    reads and names no path (declared false): nothing is assumed in its favour."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    r = disp.get("reads") if isinstance(disp, dict) else None
+    if isinstance(r, dict) and not _reads_problems(disp):
+        return {"confined": r["confined"], "exposes": list(r.get("exposes") or []), "note": r.get("note"), "declared": True}
+    return {"confined": False, "exposes": [], "note": None, "declared": False}
+
+
+def reads_warning(name, doc):
+    """The line that says what members on the runtime NAME can read, or None when the runtime confines reads (its definition says so) or is no
+    command runtime (a member of a runtime that works in the session is not one this warning is about)."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    if not isinstance(disp, dict) or disp.get("mode") != "command":
+        return None
+    c = reads_claim(doc)
+    if c["confined"]:
+        return None
+    if c["exposes"]:
+        what = "the real %s%s and whatever else this account can read" % (" and ".join(c["exposes"]), " (%s)" % c["note"] if c["note"] else "")
+    else:
+        what = "whatever this account can read"
+    return "members on %s can read %s: %s" % (name, what, READS_PHRASE)
+
+
+def reads_warning_of(name, root=None, library=None):
+    """reads_warning() of the runtime NAME (a runtime or a family name, resolved on the local surface); None for an unknown runtime or one that
+    cannot be used as it stands: the warning says nothing it cannot know."""
+    try:
+        runtime = resolve_runtime(name.strip(), "local", root, library)
+        return reads_warning(runtime, definition(runtime, "local", root, library))
+    except (ProviderError, AttributeError):
+        return None
+
+
+
+def cmd_reads_warning(args):
+    """reads-warning NAME: the line reads_warning_of() gives for the local runtime NAME (a runtime or a family name), nothing when there is none."""
+    if len(args) != 1:
+        print("usage: provider.py reads-warning NAME", file=sys.stderr)
+        return 2
+    line = reads_warning_of(args[0])
+    if line:
+        print(line)
+    return 0
+
+
+# ---- the runtimes a project runs members on: the enabled set --------------------------------------------------------------
+
+def extra_runtimes_of(answers):
+    """The names models.extra_runtimes.local of the answers lists, in the order stored: the other runtimes of the local surface the project may
+    start members on beside its own (qargi provider enable PROJECT --runtime NAME). [] when the answer is absent, null, empty or not a list of names."""
+    models = answers.get("models") if isinstance(answers, dict) else None
+    ex = models.get("extra_runtimes") if isinstance(models, dict) else None
+    lst = ex.get("local") if isinstance(ex, dict) else None
+    return [x for x in lst if isinstance(x, str)] if isinstance(lst, list) else []
+
+
+def runtimes_from(answers, project=None, root=None, library=None):
+    """(primary, [extra]) of a project's answers: the runtime of its local surface (resolve_project: NoProvider when it names none) and the
+    runtimes listed in models.extra_runtimes.local, each once, the primary never among them. The enabled set of a project is {primary} + extra;
+    "the project has extras" is the second not being empty."""
+    primary = resolve_project(answers, "local", project, root, library)[0]
+    extra = []
+    for n in extra_runtimes_of(answers):
+        if n != primary and n not in extra:
+            extra.append(n)
+    return primary, extra
+
+
+def local_runtimes_of(project, conf=None, root=None, library=None):
+    """(primary, [extra]) of a stored project: runtimes_from() of its answers. NoProvider (exit 2) when there is no such project or it names no
+    local runtime. The one function that answers which runtimes a project's members may run on."""
+    return runtimes_from(_stored_answers(project, conf), project, root, library)
+
+
+def has_extras(project, conf=None, root=None, library=None):
+    """Does the project have extra runtimes (models.extra_runtimes.local is a non-empty list that names a runtime other than its own)? False for
+    a project that names no local runtime."""
+    try:
+        return bool(local_runtimes_of(project, conf, root, library)[1])
+    except ProviderError:
+        return False
+
+
+def is_extra(runtime, project, conf=None, root=None, library=None):
+    """Is the runtime one of the project's enabled extras (listed in models.extra_runtimes.local and not the project's own)? A project that names
+    no local runtime, or has no stored answers, has none."""
+    if not project or not isinstance(runtime, str):
+        return False
+    try:
+        primary, extra = local_runtimes_of(project, conf, root, library)
+    except ProviderError:
+        return False
+    return runtime in extra and runtime != primary
+
+
 # ---- the read-only barrier ----------------------------------------------------------------------------------------------
+
+def is_primary(provider, surface, project, conf=None, root=None, library=None, unknown=False):
+    """Is the provider (a runtime or the family name that resolves to it) the project's own runtime of that surface (resolve_project of its stored
+    answers)? UNKNOWN when there is no such project or it names no runtime for the surface (so none is its own)."""
+    answers = project_answers(project, conf)
+    if answers is None:
+        return unknown
+    try:
+        own = resolve_project(answers, surface, project, root, library)[0]
+    except ProviderError:
+        return unknown
+    try:
+        return provider == own or _resolve(provider, surface, root, library)[0] == own
+    except ProviderError:
+        return False
+
 
 def project_answers(project, conf=None):
     """The project's stored answers as a dict, or None when there are none (or they cannot be read)."""
@@ -2327,8 +2489,13 @@ def accept_command(provider, surface, project=None):
 
 def require_barrier(provider, surface, project=None, root=None, conf=None, library=None):
     """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
-    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command). The barrier
-    is the runtime's composed with the project's enabled extensions (a barrier an extension provides counts once it is verified)."""
+    accepted (the project recorded that it accepts no barrier here), refused (text says why and names the command) or missing (the runtime is
+    one of the project's extra runtimes, or is not its own and relies on an acceptance: text says why). The barrier is the runtime's composed with the project's enabled extensions (a barrier an
+    extension provides counts once it is verified). The barrier belongs to the runtime the role runs on, never to the project: the acceptance
+    models.accept_no_barrier.local was given for the project's own runtime and does not count for an extra runtime, so a barrier that is neither
+    yes nor partial on an extra is missing, and nothing the project recorded changes that. The same holds for a runtime that is neither the
+    project's own nor one of its extras: the recorded acceptance counts only for the project's own runtime of the surface (a project that names
+    none for the surface has no other to tell it from)."""
     v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
@@ -2341,14 +2508,32 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
     cell = _dict(_dict(doc and doc.get("capabilities")).get("read_only_barrier"))
     if v == "partial":
         return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
-    if accepted(project, surface, conf):
-        return "accepted", ""
     by = (comp["provenance"] if comp else {}).get("capabilities.read_only_barrier")
     claim = barrier_claim_problem(doc, by=by if by != provider else None) if doc is not None else None
     why = claim or ("not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported")
+    if surface == "local" and is_extra(provider, project, conf, root, library):
+        return "missing", ("the runtime %s has no read-only barrier on %s (%s). A read-only role needs the barrier of its own runtime: the acceptance "
+                           "of the project's own runtime does not count for an extra runtime" % (provider, surface, why))
+    if accepted(project, surface, conf):
+        if not is_primary(provider, surface, project, conf, root, library, unknown=True):   # a project that names no runtime for the surface has none to tell it from
+            return "missing", ("the runtime %s has no read-only barrier on %s (%s), and it is not the project's own runtime: the acceptance "
+                               "models.accept_no_barrier.%s was given for the project's own runtime and does not count for another" % (provider, surface, why, surface))
+        return "accepted", ""
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
                        % (provider, surface, why, accept_command(provider, surface, project)))
+
+
+MISSING_BARRIER = 4        # the exit status of require-barrier for an extra runtime with no read-only barrier (2 is a project's own runtime without one)
+
+
+def cmd_runtimes(args):
+    """runtimes PROJECT: "primary NAME", then "extra NAME" for each runtime of models.extra_runtimes.local."""
+    primary, extra = local_runtimes_of(args[0])
+    print("primary " + primary)
+    for n in extra:
+        print("extra " + n)
+    return 0
 
 
 def cmd_require_barrier(provider, surface, project):
@@ -2358,6 +2543,9 @@ def cmd_require_barrier(provider, surface, project):
     if state == "refused":
         print("qargi: " + text, file=sys.stderr)
         return 2
+    if state == "missing":                         # an extra runtime without its own barrier: lib.sh barrier_guard raises runtime-barrier-missing on this status
+        print("qargi: " + text, file=sys.stderr)
+        return MISSING_BARRIER
     if state == "partial":
         print("qargi: note: " + text, file=sys.stderr)
     return 0
@@ -2369,6 +2557,189 @@ def cmd_effective(provider, surface, capability, project=None):
     if surface not in surfaces_of(provider):
         raise ProviderError("the provider %s does not list the surface %s" % (provider, surface))
     print(effective(provider, surface, capability, project=project))
+    return 0
+
+
+# ---- the enable plan of an extra runtime -----------------------------------------------------------------------------------------
+
+EXTRA_WHY = ("not-sealed", "not-local", "not-command", "is-primary")   # why a runtime cannot be an extra one (the field `why` of runtime-unusable)
+
+
+def runtime_verdict(project, name, conf=None, root=None, library=None):
+    """"ok", or why the runtime NAME cannot be an extra runtime of the project: is-primary (it is the project's own), not-sealed (a library pack
+    that is not sealed or changed since), not-local (it does not serve the local surface) or not-command (qargi local run does not start it as a
+    command). ProviderError when there is no such runtime."""
+    return runtime_problem(name, local_runtimes_of(project, conf, root, library)[0], root, library)
+
+
+def runtime_problem(name, primary, root=None, library=None):
+    """runtime_verdict() for a project whose own runtime (primary, or None) is known: "ok" or the reason NAME cannot be an extra runtime. ProviderError
+    when there is no such runtime."""
+    if not isinstance(name, str) or not NAME_RE.match(name) or name in NON_PROVIDERS:
+        raise ProviderError("no runtime named %s (qargi provider list)" % _show(name))
+    e = entry_any(name, root, library)
+    if e is None or (_kind(e) != "provider"):
+        raise ProviderError("no runtime '%s' (qargi provider list)" % name)
+    if name == primary:
+        return "is-primary"
+    state, _ = seal_state(e)
+    if state not in ("shipped", "sealed"):
+        return "not-sealed"
+    docs = _docs(e)
+    if "local" not in docs:
+        return "not-local"
+    disp = docs["local"].get("dispatch")
+    if not isinstance(disp, dict) or disp.get("mode") != "command":
+        return "not-command"
+    return "ok"
+
+
+def role_tool_packs(project, conf=None):
+    """{role: [(pack, [scopes])] or None} of the tool packs a member of each role of the project would get, from the links as they stand (the packs
+    `qargi tool effective` lists for the role); None for a role whose links cannot be read."""
+    import packs_mcp
+    conf = conf or _conf()
+    roles = (project_answers(project, conf) or {}).get("roles")
+    links = []
+    try:
+        with open(os.path.join(conf, "packs", "links.json")) as f:
+            doc = json.load(f)
+        links = doc.get("links") if isinstance(doc, dict) and isinstance(doc.get("links"), list) else []
+    except (OSError, ValueError):
+        links = []
+    out = {}
+    for role in sorted(roles) if isinstance(roles, dict) else []:
+        try:
+            eff = packs_mcp.effective(conf, project, role)
+        except packs_mcp.McpError:
+            out[role] = None
+            continue
+        row = []
+        for entry in eff:
+            if not entry.startswith("tool:"):
+                continue
+            scopes = sorted({x.get("scope") for x in links if isinstance(x, dict) and x.get("pack") == entry and packs_mcp.reaches(x, project, role)} - {None})
+            row.append((entry[5:], scopes))
+        out[role] = row
+    return out
+
+
+def _first_line(text):
+    return text.split("\n")[0]
+
+
+def _link_lines(doc, runtime):
+    """([lines], refusal or None): the sign-in links of the runtime's run home, FROM -> TO with the real path, present or missing, and the verdict
+    a local prepare would give (the rule of home_source_problem, for a shipped runtime and a library pack alike). No content of a source is read."""
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    home = disp.get("home") if isinstance(disp.get("home"), dict) else None
+    links = home.get("link") if home and isinstance(home.get("link"), list) else []
+    if not links:
+        return ["links: none"], None
+    lines = []
+    shape = home_problems(home, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)
+    for ln in links:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        to = ln.get("to") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            lines.append("link: %s -> %s: refused: %s" % (_show(frm), _show(to), home_link_problem(frm)))
+            continue
+        real = _source_real(frm)
+        exists = os.path.lexists(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+        state = "missing" if not exists or not os.path.exists(real) else "present" if os.path.isfile(real) else "not a regular file"
+        one = copy.deepcopy(doc)
+        one["dispatch"]["home"]["link"] = [ln]
+        forbidden = home_source_forbidden(one, runtime)
+        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, state,
+                     "not inside ~/.codex" if forbidden is None else "refused: " + _first_line(forbidden)))
+    why = ("dispatch.home: " + shape[0]) if shape else home_source_problem(doc, runtime)
+    if why is None:
+        lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
+    return lines, why
+
+
+def runtime_plan(project, name, verb, conf=None, root=None, library=None):
+    """The plan of `qargi provider enable|disable PROJECT --runtime NAME`: {verdict, lines, refusal, nothing, new, needs_phrase, phrase}. lines are
+    the plan, one per element (the token is made over them); refusal is a message (exit 2, no token is printed); nothing says the project is
+    already as asked; new is what models.extra_runtimes.local would become. For an enable, verdict is runtime_verdict() and the lines are only made
+    when it is ok."""
+    conf = conf or _conf()
+    answers = _stored_answers(project, conf)
+    cur = extra_runtimes_of(answers)
+    out = {"verdict": "ok", "lines": [], "refusal": None, "nothing": None, "new": None, "needs_phrase": False, "phrase": READS_PHRASE}
+    if verb == "disable":
+        if name not in cur:
+            out["nothing"] = "nothing to do: %s is not enabled for %s" % (name, project)
+            return out
+        out["new"] = [x for x in cur if x != name]
+        users = sorted(p for p, pf in (answers.get("profiles") or {}).items() if isinstance(pf, dict) and pf.get("runtime") == name) if isinstance(answers.get("profiles"), dict) else []
+        out["lines"] = ["disable runtime %s for project %s (models.extra_runtimes.local)" % (name, project),
+                        "runs prepared for it are refused when they start (the project no longer runs on it); finished runs are verified, reviewed, applied and cleaned as before",
+                        "effect: models.extra_runtimes.local of project %s becomes %s" % (project, json.dumps(out["new"]))]
+        if users:
+            out["refusal"] = "profile%s %s of project %s name%s the runtime %s: unset profiles.NAME.runtime first (qargi project unset %s profiles.%s.runtime)" % (
+                "s" if len(users) > 1 else "", ", ".join(users), project, "" if len(users) > 1 else "s", name, project, users[0])
+        return out
+    if name in cur:
+        out["nothing"] = "nothing to do: %s is enabled for %s already" % (name, project)
+        return out
+    out["verdict"] = runtime_verdict(project, name, conf, root, library)
+    if out["verdict"] != "ok":
+        return out
+    e = entry_any(name, root, library)
+    doc = composed(name, "local", project, root, library, conf)
+    out["new"] = cur + [name]
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    seal = seal_state(e)[0]
+    lines = ["enable runtime %s for project %s (models.extra_runtimes.local)" % (name, project),
+             "runtime: %s (%s%s), mode command, serves the local surface" % (name, e["origin"], ", sealed" if seal == "sealed" else "")]
+    argv = disp.get("argv")
+    exe = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else None
+    if exe:
+        import shutil
+        found = shutil.which(exe)
+        lines.append("executable: %s -> %s" % (exe, found) if found else "executable: %s (not found on PATH now)" % exe)
+    link_lines, out["refusal"] = _link_lines(doc, name)
+    lines += link_lines
+    # the barrier, with its whole note, and what it means for a read-only role
+    v = effective(name, "local", "read_only_barrier", root, library, project=project, conf=conf)
+    cell = _dict(_dict(doc.get("capabilities")).get("read_only_barrier"))
+    lines.append("read-only barrier: %s%s%s" % (v, " (verified %s)" % cell["verified_on"] if cell.get("verified_on") else "", ": %s" % cell["note"] if cell.get("note") else ""))
+    if v == "no":
+        lines.append("read-only roles (review) on %s are refused: it has no read-only barrier, and the acceptance of the project's own runtime does not count for it" % name)
+    else:
+        lines.append("read-only roles (review) on %s run under the %s barrier: no `provider accept` is asked and none counts" % (name, "partial" if v == "partial" else "read-only"))
+        lines.append("a read-only member on %s reads and reports and runs nothing that writes (no build, no test that writes a cache, no patch applied): "
+                     "put the diff and the test output on disk first" % name)
+    unverified = [c for c in ("per_dispatch_model_override", "per_dispatch_effort_override") if cap(name, "local", c, root, library, project=project, conf=conf) != "yes"]
+    lines.append("model and effort of a run on %s are requested, not confirmed: %s" % (name, "the override claims are unverified (%s)" % ", ".join(unverified)
+                 if unverified else "an override that is verified still does not report the model that answered"))
+    warn = reads_warning(name, doc)
+    if warn:
+        out["needs_phrase"] = True
+        lines.append("reads: " + warn)
+        lines.append("the owner's approval words must contain: \"%s\"" % READS_PHRASE)
+    else:
+        lines.append("reads: confined, as the definition of %s claims (qargi has not verified it)" % name)
+    packs = role_tool_packs(project, conf)
+    for role, row in packs.items():
+        lines.append("tool packs of role %s: %s" % (role, "none" if row == [] else "unreadable (qargi tool effective %s %s)" % (project, role) if row is None
+                                                      else ", ".join("%s (%s)" % (p, "/".join(s) or "?") for p, s in row)))
+    lines.append("the MCP servers of tool packs run outside the sandbox; the list is read now, and a pack linked later is not approved again")
+    hp = disp.get("hidden_paths") if isinstance(disp.get("hidden_paths"), dict) else None
+    if hp:
+        lines.append("hidden paths: %s (%s)" % (", ".join(hp.get("prefixes") or []), hp.get("note", "")))
+    lines.append("not available to a member on %s: a qargi guard hook (the barrier of its definition holds it), managed member skills, pack renders" % name)
+    lines.append("effect: models.extra_runtimes.local of project %s becomes %s" % (project, json.dumps(out["new"])))
+    out["lines"] = lines
+    return out
+
+
+def cmd_runtime_info(args):
+    """runtime-info PROJECT NAME enable|disable: the plan of provider.sh as JSON (runtime_plan)."""
+    if len(args) != 3 or args[2] not in ("enable", "disable"):
+        raise Unsupported("usage: provider.py runtime-info PROJECT NAME enable|disable")
+    sys.stdout.write(json.dumps(runtime_plan(args[0], args[1], args[2])) + "\n")
     return 0
 
 
@@ -2752,28 +3123,49 @@ def _project_in_effect():
         return None
 
 
-def _notes_doc(project, conf=None, root=None, library=None, surface="local"):
-    """(runtime, definition) of a project's runtime on a surface, as composed with the extensions the project enabled: what its notes are read from."""
-    runtime, _ = resolve_project(_stored_answers(project, conf), surface, project, root, library)
+def _enabled_runtime(project, runtime, why=None, conf=None, root=None, library=None):
+    """The runtime, when the project has it enabled: its own runtime of the local surface or one of models.extra_runtimes.local
+    (local_runtimes_of). Refused (exit 2) otherwise, saying which runtimes the project has (and `why` it was asked for, when that is not
+    on the command line); NoProvider when there is no such project or it names no local runtime."""
+    if not isinstance(runtime, str) or not NAME_RE.match(runtime) or runtime in NON_PROVIDERS:
+        raise Refused("%s is not a runtime name%s" % (_show(runtime), "; " + why if why else ""))
+    primary, extra = local_runtimes_of(project, conf, root, library)
+    if runtime != primary and runtime not in extra:
+        raise Refused("the runtime %s is not enabled for project %s: its runtimes are %s (qargi provider enable %s --runtime %s)%s"
+                      % (runtime, project, ", ".join([primary] + extra), project, runtime, "; " + why if why else ""))
+    return runtime
+
+
+def _notes_doc(project, conf=None, root=None, library=None, surface="local", runtime=None):
+    """(runtime, definition) of a project's runtime on a surface, as composed with the extensions the project enabled: what its notes are read
+    from. With a runtime (an enabled one of the local surface, _enabled_runtime) its own, in place of the project's."""
+    answers = _stored_answers(project, conf)
+    if runtime is not None:
+        if surface != "local":
+            raise Refused("a runtime is named for the %s surface: the runtimes a project enables serve the local surface" % surface)
+        _enabled_runtime(project, runtime, None, conf, root, library)
+    else:
+        runtime, _ = resolve_project(answers, surface, project, root, library)
     return runtime, composed(runtime, surface, project, root, library, conf)
 
 
-def notes_of(project, conf=None, root=None, library=None, surface="local"):
+def notes_of(project, conf=None, root=None, library=None, surface="local", runtime=None):
     """(runtime, {topic: text}) of a project: the notes of the definition of its runtime on a surface (local unless told otherwise), as composed
-    with the extensions the project enabled. NoProvider (exit 2) when the project does not exist or names no provider for that surface; there
-    is no default."""
-    runtime, doc = _notes_doc(project, conf, root, library, surface)
+    with the extensions the project enabled; with a runtime, of that enabled runtime of the local surface. NoProvider (exit 2) when the project
+    does not exist or names no provider for that surface; there is no default; Refused (exit 2) for a runtime the project has not enabled."""
+    runtime, doc = _notes_doc(project, conf, root, library, surface, runtime)
     notes = doc.get("notes")
     return runtime, notes if isinstance(notes, dict) else {}
 
 
-def member_notes_of(project, conf=None, root=None, library=None, surface="local"):
+def member_notes_of(project, conf=None, root=None, library=None, surface="local", runtime=None):
     """(runtime, {topic: text}, [topic], in_session) of a project, for a lead whose own runtime is named: of the notes notes_of() gives, the
-    ones about the members the project's runtime runs (the topics its definition does not list in lead_notes), and the sorted topics it does
-    list. Those are about a lead session on that runtime, so they are no answer for a lead on another one. in_session is whether the runtime,
-    as composed, starts a member inside the lead's own session (dispatch.mode in-session): only a lead on that runtime can start one then.
+    ones about the members the project's runtime runs (the enabled runtime `runtime` names, when it does; the topics its definition does not
+    list in lead_notes), and the sorted topics it does list. Those are about a lead session on that runtime, so they are no answer for a lead
+    on another one. in_session is whether the runtime, as composed, starts a member inside the lead's own session (dispatch.mode in-session):
+    only a lead on that runtime can start one then.
     The errors of notes_of(), and ProviderError when the list cannot be read."""
-    runtime, doc = _notes_doc(project, conf, root, library, surface)
+    runtime, doc = _notes_doc(project, conf, root, library, surface, runtime)
     notes = doc.get("notes") if isinstance(doc.get("notes"), dict) else {}
     marked = lead_topics(doc)
     disp = doc.get("dispatch")
@@ -2829,18 +3221,49 @@ LEAD_RUNTIME_ENV = "QARGI_LEAD_RUNTIME"
 START_NOTES = ("spawn", "member-out")
 
 
-def _notes_for_lead(topic, project, surface, lead, source):
+def _run_runtime(run, project=None):
+    """(project, runtime) of the run directory RUN, from the lead's registry alone (the line `local prepare` wrote; never from the run
+    directory, which a member can write): the project the line records (the one asked for, else the one in effect, when it records none) and the
+    runtime it records, None for a line that has none (a run of the project's own runtime). Refused (exit 2) when the registry names no such run,
+    the line's project is not the one asked for, or its runtime is not a name."""
+    reg = os.path.join(_state_dir(), "local-runs.jsonl")
+    want, row = os.path.realpath(run), None
+    try:
+        with open(reg) as f:
+            for raw in f:
+                try:
+                    r = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and isinstance(r.get("run"), str) and os.path.realpath(r["run"]) == want:
+                    row = r                           # the last line of a run is the one that holds, as lib.sh reg_load has it
+    except OSError:
+        pass
+    if row is None:
+        raise Refused("the lead's registry (%s) names no run %s: only a run made by qargi local prepare on this machine has a runtime to read" % (reg, run))
+    recorded = row.get("project") if isinstance(row.get("project"), str) else ""
+    if project and recorded and project != recorded:
+        raise Refused("the run %s was made for project %s, not %s" % (run, recorded, project))
+    runtime = row.get("runtime")
+    if "runtime" in row and (not isinstance(runtime, str) or not NAME_RE.match(runtime)):
+        raise Refused("the lead's registry records %s as the runtime of the run %s, which is not a runtime name" % (_show(runtime), run))
+    return project or recorded or _project_in_effect(), runtime
+
+
+def _notes_for_lead(topic, project, surface, lead, source, runtime=None):
     """cmd_notes with a lead runtime named: the notes about the lead's own session are the lead runtime's and the notes about members the
-    project's runtime's. A topic the lead runtime lists is answered from it alone, so the lead's own guidance does not depend on the
-    project's runtime (it needs the project, not its runtime). Any other topic, and the list of topics, asks the project's runtime as
+    project's runtime's (the enabled runtime `runtime` names, when it does). A topic the lead runtime lists is answered from it alone, so the
+    lead's own guidance does not depend on the project's runtime (it needs the project, not its runtime). Any other topic, and the list of topics, asks the project's runtime as
     without a lead runtime, with the same refusals; a topic that runtime lists as about a lead session is Unsupported (exit 3) and never
     printed: it is for a lead on that runtime. So are spawn and member-out (START_NOTES) when that runtime starts a member inside the lead's
     session and the lead runtime is another one: the text would send this lead to a tool of a session it is not in, so it is told that it
     cannot start the project's members, and the list of topics leaves the two out. `source` is what named the lead runtime (the option or
-    the variable): every refusal ends with it, since a name from the environment is not on the command line the person sees refused."""
+    the variable): every refusal ends with it, since a name from the environment is not on the command line the person sees refused. Without
+    one (None) the lead runtime is the project's own, which cmd_notes names when a runtime is asked for and no lead runtime was: the lead's
+    own session is then taken to be on the project's runtime, and the refusals say so."""
     project = project or _project_in_effect()
     _stored_answers(project)                       # no project, or no such project: exit 2, as without a lead runtime
-    by = "; the lead runtime is named by %s" % source
+    by = "; the lead runtime is named by %s" % source if source else "; the lead runtime is the project's own, %s, as none was named" % lead
     try:
         lname, lnotes = lead_notes_of(lead)
     except Unsupported as e:
@@ -2849,7 +3272,7 @@ def _notes_for_lead(topic, project, surface, lead, source):
         print(lnotes[topic])
         return 0
     try:
-        runtime, mnotes, mlead, in_session = member_notes_of(project, surface=surface)
+        runtime, mnotes, mlead, in_session = member_notes_of(project, surface=surface, runtime=runtime)
     except (NoProvider, Refused, Unsupported):
         raise
     except ProviderError as e:                     # as without a lead runtime: a runtime that cannot be read as it stands is a refusal (exit 2)
@@ -2882,7 +3305,7 @@ def _notes_for_lead(topic, project, surface, lead, source):
 
 
 def cmd_notes(args):
-    """notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]: the text of a notes topic of the project's runtime on a
+    """notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME] [--runtime NAME | --run RUN]: the text of a notes topic of the project's runtime on a
     surface (local unless told otherwise), or the topic names when none is given. Exit 1 when the runtime has no such topic or no notes (the
     message names both and lists the topics there are); exit 2 when the project has no runtime on that surface or the runtime cannot be used as
     it stands (a library pack not sealed or changed since it was sealed, an unreadable definition). With a lead runtime named (--lead-runtime
@@ -2890,29 +3313,53 @@ def cmd_notes(args):
     and the others from the project's (_notes_for_lead); exit 3 when the name is not a usable local runtime, when it has no such note about the
     lead's session, or when the topic is how a member is started (spawn, member-out) and the project's runtime starts one inside a session of
     its own that this lead is not in, saying which of the two named it. With neither, nothing below reads lead_notes and the answer is what
-    it always was."""
+    it always was. --runtime NAME names the runtime whose notes about its members are asked for, one the project has enabled (its own, or one
+    of models.extra_runtimes.local: Refused, exit 2, otherwise); --run RUN names the run directory whose runtime it is, as the lead's registry
+    records it (the project's own for a line that has none). Neither takes the notes about the lead's own session from that runtime: they
+    stay with the lead runtime, or with the project's own when none is named. The runtime of the project's own, named or not, is answered as
+    without the option, and the options are for the local surface."""
     topics, project, surface, lead, i = [], None, "local", None, 0
+    rt = run = None
+    cloud = False
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:
             project, i = args[i + 1], i + 2
         elif args[i] == "--surface" and i + 1 < len(args) and args[i + 1] in SURFACES:
             surface, i = args[i + 1], i + 2
+            cloud = surface != "local"
         elif args[i] == "--lead-runtime" and i + 1 < len(args) and lead is None:
             lead, i = args[i + 1], i + 2
+        elif args[i] == "--runtime" and i + 1 < len(args) and rt is None:
+            rt, i = args[i + 1], i + 2
+        elif args[i] == "--run" and i + 1 < len(args) and run is None:
+            run, i = args[i + 1], i + 2
         elif args[i].startswith("--"):
             topics = [None, None]
             break
         else:
             topics.append(args[i])
             i += 1
-    if len(topics) > 1:
-        print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]", file=sys.stderr)
+    if len(topics) > 1 or (rt is not None and run is not None):
+        print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME] [--runtime NAME | --run RUN]", file=sys.stderr)
         return 2
+    runtime = None
+    if rt is not None or run is not None:
+        if cloud:
+            raise Refused("--%s names a runtime of the local surface: the runtimes a project enables serve no other" % ("runtime" if rt is not None else "run"))
+        if run is not None:
+            project, rt = _run_runtime(run, project)
+        else:
+            project = project or _project_in_effect()
+        if rt is not None:
+            _enabled_runtime(project, rt, "the registry records it for the run %s" % run if run is not None else None)
+            runtime = rt if rt != local_runtimes_of(project)[0] else None
     source = "--lead-runtime"
     if lead is None:
         lead, source = os.environ.get(LEAD_RUNTIME_ENV) or None, LEAD_RUNTIME_ENV
+    if lead is None and runtime is not None:        # the lead is on the project's own runtime, whose notes about its session are the lead's
+        lead, source = local_runtimes_of(project)[0], None
     if lead is not None:
-        return _notes_for_lead(topics[0] if topics else None, project, surface, lead, source)
+        return _notes_for_lead(topics[0] if topics else None, project, surface, lead, source, runtime)
     try:
         runtime, notes = notes_of(project or _project_in_effect(), surface=surface)
     except (NoProvider, Refused, Unsupported):
@@ -3024,7 +3471,7 @@ def cmd_of(args, if_set=False):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT | reads-warning NAME | enable|disable PROJECT --runtime NAME")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -3033,6 +3480,10 @@ def main(argv):
         sh = os.path.join(HERE, "provider.sh")
         sys.stdout.flush()
         os.execv(sh, [sh, "accept"] + rest)
+    if verb in ("enable", "disable") and "--runtime" in rest:     # an extra runtime of a project: the same shell gate (plan, token, approval, audit line)
+        sh = os.path.join(HERE, "provider.sh")
+        sys.stdout.flush()
+        os.execv(sh, [sh, verb] + rest)
     try:
         if verb == "list" and not rest:
             return cmd_list()
@@ -3072,6 +3523,12 @@ def main(argv):
             return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
+        if verb == "runtime-info":
+            return cmd_runtime_info(rest)
+        if verb == "reads-warning":
+            return cmd_reads_warning(rest)
+        if verb == "runtimes" and len(rest) == 1:
+            return cmd_runtimes(rest)
         if verb == "model":
             return cmd_model(rest)
         if verb == "of":

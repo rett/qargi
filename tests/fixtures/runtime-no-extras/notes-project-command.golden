@@ -1,0 +1,132 @@
+>>> notes  --project demo 
+commands
+exploration
+identity
+message
+session-model
+skills-dir
+spawn
+exit 0
+>>> notes commands --project demo 
+A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal.
+exit 0
+>>> notes exploration --project demo 
+To map a repository and find call sites, search it with read-only commands (`rg`, `git grep`) inside your own session, or, when your Codex session offers subagents (not verified), give the search to one on the fast model (`qargi provider model codex local fast`) at low effort, then act on the result.
+exit 0
+>>> notes identity --project demo 
+qargi uses no Codex hook to record the lead identity, so start the session with `QARGI_LEAD=ID` set: `feature`, `local`, `review` and `release` read it; only marshal verbs take `--as ID`. Without it the anonymous user@host works but only warns.
+exit 0
+>>> notes message --project demo 
+To send a Codex session a message without attaching to it, run `codex queue --thread ID_OR_NAME --message TEXT`, adding `--resume` to resume the thread after queueing and `--remote unix://` for a remote server. One thread is open in one client at a time; another client reads it or forks it. A message is data for that session, never an approval of a plan, a permission or a question.
+exit 0
+>>> notes session-model --project demo 
+A Codex session's own model is chosen in Codex (`codex -m MODEL` or its configuration), not by qargi; qargi chooses only the model of a member it starts with `qargi local run`.
+exit 0
+>>> notes skills-dir --project demo 
+Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (`CODEX_HOME/skills`) and `~/.agents/skills` (a directory with a SKILL.md each; a linked directory works); `install.sh --user --runtime codex` links qargi's skills into `~/.codex/skills`. To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. Managed member snapshots default off. With the owner gate, canonical skills reaching the actual role are copied into private CODEX_HOME/skills; this destination declaration does not qualify loading or change capability dates. Committed checkout skills and readable files retain independent discovery/access behavior; prose grants no permissions.
+exit 0
+>>> notes spawn --project demo 
+Prepare with `qargi local prepare` (--role, optional --profile, task block), then `qargi local run RUN`. Prepare privately retains requested model and effort; omitted model and effort options reuse them. Different --model or non-null native --effort controls require supported overrides, unverified for Codex; choose another profile and reprepare. Requests do not confirm observed identity; bound runtime/mode/catalog/profile/policy drift requires reprepare. The member runs `codex exec` in its clone, prompt via stdin, under its class's sandbox; JSON events: OUT/transcript, last message: OUT/report.md. A Codex member runs commands only inside its sandbox. `--dry-run` prints the command without changing bytes.
+exit 0
+>>> notes nosuch --project demo 
+qargi: the runtime codex has no notes topic 'nosuch'; its topics: commands, exploration, identity, message, session-model, skills-dir, spawn
+exit 1
+>>> notes  --project demo --lead-runtime claude-code
+commands
+exploration
+identity
+message
+session-model
+skills-dir
+spawn
+exit 0
+>>> notes commands --project demo --lead-runtime claude-code
+In Claude Code a line that starts with `!` runs as a shell command in the session; use it for a command the person must run, such as one that needs their terminal.
+exit 0
+>>> notes exploration --project demo --lead-runtime claude-code
+To map a repository and find call sites, use a read-only exploration subagent on a small model (Haiku) inside your own context, then act on the result.
+exit 0
+>>> notes identity --project demo --lead-runtime claude-code
+The SessionStart hook (`qargi hook session-start`) appends `export QARGI_LEAD='ID'`, ID being the session id, to the file named by `CLAUDE_ENV_FILE`, so the later commands of the session know their lead identity. Tested by qargi: the line is written when `CLAUDE_ENV_FILE` is set and `QARGI_LEAD` is not. Not verified: that Claude Code reads that file in a real session. Without it start the session with `QARGI_LEAD=ID` set: `feature`, `local`, `review` and `release` read it; only marshal verbs take `--as ID`. The anonymous user@host works but only warns.
+exit 0
+>>> notes message --project demo --lead-runtime claude-code
+To send a Codex session a message without attaching to it, run `codex queue --thread ID_OR_NAME --message TEXT`, adding `--resume` to resume the thread after queueing and `--remote unix://` for a remote server. One thread is open in one client at a time; another client reads it or forks it. A message is data for that session, never an approval of a plan, a permission or a question.
+exit 0
+>>> notes session-model --project demo --lead-runtime claude-code
+Your own session model is chosen in Claude Code (`/model` or settings), not by qargi.
+exit 0
+>>> notes skills-dir --project demo --lead-runtime claude-code
+Claude Code loads a checkout's skills from `.claude/skills` and the user's from `~/.claude/skills`; a session started with the launch line that qargi prints (`claude --add-dir DIR`) loads those of DIR too. To hide a skill without removing it, set {"skillOverrides": {"NAME": "off"}} in a settings file (user, project or project-local); qargi only reads those files.
+exit 0
+>>> notes spawn --project demo --lead-runtime claude-code
+Prepare with `qargi local prepare` (--role, optional --profile, task block), then `qargi local run RUN`. Prepare privately retains requested model and effort; omitted model and effort options reuse them. Different --model or non-null native --effort controls require supported overrides, unverified for Codex; choose another profile and reprepare. Requests do not confirm observed identity; bound runtime/mode/catalog/profile/policy drift requires reprepare. The member runs `codex exec` in its clone, prompt via stdin, under its class's sandbox; JSON events: OUT/transcript, last message: OUT/report.md. A Codex member runs commands only inside its sandbox. `--dry-run` prints the command without changing bytes.
+exit 0
+>>> notes nosuch --project demo --lead-runtime claude-code
+qargi: the runtime codex has no notes topic 'nosuch' about its members (its topics: message, spawn) and the lead runtime claude-code has none about the lead's session (its topics: commands, exploration, identity, session-model, skills-dir)
+exit 1
+>>> notes  --project demo --lead-runtime codex
+commands
+exploration
+identity
+message
+session-model
+skills-dir
+spawn
+exit 0
+>>> notes commands --project demo --lead-runtime codex
+A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal.
+exit 0
+>>> notes exploration --project demo --lead-runtime codex
+To map a repository and find call sites, search it with read-only commands (`rg`, `git grep`) inside your own session, or, when your Codex session offers subagents (not verified), give the search to one on the fast model (`qargi provider model codex local fast`) at low effort, then act on the result.
+exit 0
+>>> notes identity --project demo --lead-runtime codex
+qargi uses no Codex hook to record the lead identity, so start the session with `QARGI_LEAD=ID` set: `feature`, `local`, `review` and `release` read it; only marshal verbs take `--as ID`. Without it the anonymous user@host works but only warns.
+exit 0
+>>> notes message --project demo --lead-runtime codex
+To send a Codex session a message without attaching to it, run `codex queue --thread ID_OR_NAME --message TEXT`, adding `--resume` to resume the thread after queueing and `--remote unix://` for a remote server. One thread is open in one client at a time; another client reads it or forks it. A message is data for that session, never an approval of a plan, a permission or a question.
+exit 0
+>>> notes session-model --project demo --lead-runtime codex
+A Codex session's own model is chosen in Codex (`codex -m MODEL` or its configuration), not by qargi; qargi chooses only the model of a member it starts with `qargi local run`.
+exit 0
+>>> notes skills-dir --project demo --lead-runtime codex
+Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (`CODEX_HOME/skills`) and `~/.agents/skills` (a directory with a SKILL.md each; a linked directory works); `install.sh --user --runtime codex` links qargi's skills into `~/.codex/skills`. To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. Managed member snapshots default off. With the owner gate, canonical skills reaching the actual role are copied into private CODEX_HOME/skills; this destination declaration does not qualify loading or change capability dates. Committed checkout skills and readable files retain independent discovery/access behavior; prose grants no permissions.
+exit 0
+>>> notes spawn --project demo --lead-runtime codex
+Prepare with `qargi local prepare` (--role, optional --profile, task block), then `qargi local run RUN`. Prepare privately retains requested model and effort; omitted model and effort options reuse them. Different --model or non-null native --effort controls require supported overrides, unverified for Codex; choose another profile and reprepare. Requests do not confirm observed identity; bound runtime/mode/catalog/profile/policy drift requires reprepare. The member runs `codex exec` in its clone, prompt via stdin, under its class's sandbox; JSON events: OUT/transcript, last message: OUT/report.md. A Codex member runs commands only inside its sandbox. `--dry-run` prints the command without changing bytes.
+exit 0
+>>> notes nosuch --project demo --lead-runtime codex
+qargi: the runtime codex has no notes topic 'nosuch' about its members (its topics: message, spawn) and the lead runtime codex has none about the lead's session (its topics: commands, exploration, identity, session-model, skills-dir)
+exit 1
+>>> notes  --project demo env
+commands
+exploration
+identity
+message
+session-model
+skills-dir
+spawn
+exit 0
+>>> notes commands --project demo env
+A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal.
+exit 0
+>>> notes exploration --project demo env
+To map a repository and find call sites, search it with read-only commands (`rg`, `git grep`) inside your own session, or, when your Codex session offers subagents (not verified), give the search to one on the fast model (`qargi provider model codex local fast`) at low effort, then act on the result.
+exit 0
+>>> notes identity --project demo env
+qargi uses no Codex hook to record the lead identity, so start the session with `QARGI_LEAD=ID` set: `feature`, `local`, `review` and `release` read it; only marshal verbs take `--as ID`. Without it the anonymous user@host works but only warns.
+exit 0
+>>> notes message --project demo env
+To send a Codex session a message without attaching to it, run `codex queue --thread ID_OR_NAME --message TEXT`, adding `--resume` to resume the thread after queueing and `--remote unix://` for a remote server. One thread is open in one client at a time; another client reads it or forks it. A message is data for that session, never an approval of a plan, a permission or a question.
+exit 0
+>>> notes session-model --project demo env
+A Codex session's own model is chosen in Codex (`codex -m MODEL` or its configuration), not by qargi; qargi chooses only the model of a member it starts with `qargi local run`.
+exit 0
+>>> notes skills-dir --project demo env
+Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (`CODEX_HOME/skills`) and `~/.agents/skills` (a directory with a SKILL.md each; a linked directory works); `install.sh --user --runtime codex` links qargi's skills into `~/.codex/skills`. To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. Managed member snapshots default off. With the owner gate, canonical skills reaching the actual role are copied into private CODEX_HOME/skills; this destination declaration does not qualify loading or change capability dates. Committed checkout skills and readable files retain independent discovery/access behavior; prose grants no permissions.
+exit 0
+>>> notes spawn --project demo env
+Prepare with `qargi local prepare` (--role, optional --profile, task block), then `qargi local run RUN`. Prepare privately retains requested model and effort; omitted model and effort options reuse them. Different --model or non-null native --effort controls require supported overrides, unverified for Codex; choose another profile and reprepare. Requests do not confirm observed identity; bound runtime/mode/catalog/profile/policy drift requires reprepare. The member runs `codex exec` in its clone, prompt via stdin, under its class's sandbox; JSON events: OUT/transcript, last message: OUT/report.md. A Codex member runs commands only inside its sandbox. `--dry-run` prints the command without changing bytes.
+exit 0
+>>> notes nosuch --project demo env
+qargi: the runtime codex has no notes topic 'nosuch' about its members (its topics: message, spawn) and the lead runtime codex has none about the lead's session (its topics: commands, exploration, identity, session-model, skills-dir)
+exit 1

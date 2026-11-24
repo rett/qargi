@@ -61,8 +61,18 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
             "so it cannot block an agent. Register it with qargi supervise hooks.")
 ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
+RUNTIME_GATE = opt("--runtime", "the extra local runtime to allow or stop for the project (models.extra_runtimes.local), in place of an extension", "NAME")
+ASKED_WORDS = opt("--asked", "your request, in your words (with --runtime)", "WORDS")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
+DRY = opt("--dry-run", "print what the apply would do and change nothing: the plan with its token, then each refusal the apply would meet, ending with 'dry-run: N would refuse; nothing was changed'")
+DRY_NOTE = ("--dry-run changes nothing: no ref, no push, no pull request, no audit line, no lock and no file in the state directory (QARGI_DRY=1 inside the verb: a helper that writes, "
+            "or a git or gh command that is not a read, stops it with exit 70, a defect of the verb). It prints the plan with the same token the plain plan has, and ends with 'invalidated by: ...', "
+            "the labels of the plan (what changing any of them makes the token stale). Given --plan TOKEN it also says what the apply would meet: the token is compared with the plan as it is now "
+            "(plan-stale names the labels that moved), and each other refusal is printed in the normal format of a refusal, with dry=1 first in the detail of the contract line; the first refusal "
+            "stops it, as it would the apply, except a check that is independent of the others, which is listed and the run goes on, so several may be shown. Origin is asked with git ls-remote "
+            "and never fetched (the plan says 'not fetched'). The last line of standard output is 'dry-run: N would refuse; nothing was changed', and the exit status is what the apply would exit with: 0, "
+            "or 1 when N is not 0. Ask it just before asking the owner: a token dies when what it hashed changes.")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 LOCAL_TARGET = opt("--target", "session.render_target of an eligible local runtime; omitted selects the project's member runtime", "TARGET")
 TARGET = opt("--target", "claude-code renders for a local session; any eligible local session.render_target is supported; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
@@ -160,7 +170,7 @@ COMMANDS = {
                          opt("--provider-local", "the runtime of the local surface (models.provider.local); use it with --provider-cloud instead of --provider", "NAME"),
                          opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
-                              "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
+                              "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. With --url (the answers are stored) a --provider or --provider-local runtime that does not confine reads (a command runtime whose definition has no dispatch.reads that confines them) adds the warning line members on NAME can read ... reads are not confined to the plan; it asks for no phrase. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
                               "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
                         examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
@@ -184,7 +194,8 @@ COMMANDS = {
                                  "versioned unreleased heading right after a release is printed apart, as noted, not a gap. The lead's accepted deviations (the answer methodology_accepted, a list of "
                                  "{gap, reason, date}, the gap written as it is printed here: file: CONTRIBUTING.md) are printed apart from the open gaps, and one whose gap is gone says "
                                  "'accepted, no longer applies'. It never guesses a provider: models.provider (and the roles' models) are stored only with "
-                                 "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
+                                 "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one. "
+                                 "A runtime that does not confine reads, named with --provider or --provider-local, adds the line warning: members on NAME can read the real ~/.codex ... reads are not confined; it asks for no phrase.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"),
                            opt("--show", "also print everything the plan token covers: the refs it starts from, the branches, and the full content of each file to write (changes nothing; not with --plan)"), PLAN, APPROVED],
@@ -201,7 +212,9 @@ COMMANDS = {
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")], [PLAN, APPROVED],
-                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, or a runtime with --runtime) and qargi provider accept. "
+                              "profiles.NAME.runtime (the runtime a profile's members run on: the project's own, or one enabled with qargi provider enable PROJECT --runtime NAME) is a plain set, with a hyphen allowed in the profile's name (profiles.codex-build.runtime), and a member's guard refuses it as it does roles.NAME.tools. "
+                              "Setting models.provider.local (or models.provider) to a runtime that does not confine reads prints a warning line: members on NAME can read the real ~/.codex ... reads are not confined; it asks for no phrase. "
                               "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
@@ -222,8 +235,8 @@ COMMANDS = {
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "unset": verb("Remove one answer", [("NAME", "project"), ("PATH", "key")], [PLAN, APPROVED],
                           desc=("PATH is dotted, as for set. Prints 'was: OLD' (the JSON the answer held) and writes an audit line (project:unset, with the old value). It refuses what set refuses: "
-                                "the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions and models.accept_no_barrier, also as keys of a whole models object (exit 2: "
-                                "qargi provider enable|disable and qargi provider accept take a plan token and an approval). A key that is not set is an error and changes nothing, and so is the removal of an answer the "
+                                "the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions, models.extra_runtimes and models.accept_no_barrier, also as keys of a whole models object (exit 2: "
+                                "qargi provider enable|disable and qargi provider accept take a plan token and an approval). PATH may name a profile with a hyphen (profiles.codex-build.runtime). A key that is not set is an error and changes nothing, and so is the removal of an answer the "
                                 "project needs (repo.url, a role's base): validate refuses it and the file is not touched. A member never runs it: it is refused in a member's run directory "
                                 "or with the member mark in the environment (exit 2); propose the removal in the report. "
                                 + VERIFY_ENV_UNSET),
@@ -276,7 +289,10 @@ COMMANDS = {
                          [opt("--project", "only the members of this project", "PROJECT", "project")],
                          desc="One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then in brackets MISSING (the runtime's file is gone), "
                               "STALE (the copy in the configuration directory is gone or changed, or the definition, catalog, renderer or an extension changed since the render) or DRIFT (the file was edited by hand), "
-                              "each followed by the command that fixes it: qargi agent refresh NAME --project P. Members are kept per project, so two projects can each have a worker."),
+                              "each followed by the command that fixes it: qargi agent refresh NAME --project P. Members are kept per project, so two projects can each have a worker. "
+                              "It also keeps, for each project it lists, the time and each member's STALE or DRIFT in STATE/agent-states.json (mode 600; the reading of a project it did not list is kept, "
+                              "a listing of every project replaces the file's projects; a write that fails is ignored and the listing is printed as before): the lead card's line "
+                              "'members STALE or DRIFT as of TIME' (qargi role card lead) is read from it, and without a stored reading there is no line."),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
                            desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
@@ -295,6 +311,7 @@ COMMANDS = {
                                 "JSON keeps the existing keys and profile metadata, adding mode: command, profile selected and requested_effort, and base logical: true; members and base registration flags are empty. Refused profiles carry the resolver's reason. "
                                 "effort_control describes native support; a requested level remains visible with null native control. A null profiles container is absent; malformed non-null containers and selected entries refuse. The lead row is informational (never dispatched), while agent for --profile lead still refuses. "
                                 "Row flags do not fail the display; command-mode extension composition or load errors may fail the command. "
+                                "A project with extra runtimes (models.extra_runtimes.local) gets the line runtimes: OWN (the project's own), EXTRA..., a RUNTIME column, and each profile resolved in its own runtime (profiles.NAME.runtime, else the project's own); a row whose runtime is not enabled, cannot be used or does not offer the profile's model is a refused row. The JSON gains runtimes and, in each profile, runtime. A project without extra runtimes gets the output it had. "
                                 "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). In-session members shown are that project's (`agent list` shows all projects'). Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                            desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
@@ -302,11 +319,15 @@ COMMANDS = {
                         [opt("--project", "the project whose members serve and whose profiles apply (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
                          opt("--surface", "local (default) or cloud: with cloud, resolve the registered base instance (<project>-worker or -reviewer) instead of a member; needs --project", "SURFACE", ("local", "cloud")),
+                         opt("--runtime", "the local runtime to resolve the profile in: the project's own or one it enabled (provider enable --runtime); default the profile's own runtime (profiles.NAME.runtime), else the project's own. A runtime not enabled is refused (runtime-not-enabled)", "NAME"),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
                         desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE. "
                              "How the project's runtime starts a member with them is in its notes: qargi provider notes spawn. "
-                             "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse."),
+                             "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse. "
+                             "The runtime is chosen in this order: --runtime, then the runtime the profile names, then the project's own; the profile's tier is resolved through that runtime's catalog and its effort through its levels, so --runtime against a profile that names another runtime resolves the tier again in the one asked for, "
+                             "and a profile whose own model that runtime neither lists nor matches is the refusal runtime-profile-model (give the profile a tier). A runtime that is not the project's own and not enabled is runtime-not-enabled, also for a project without extra runtimes. "
+                             "A project with extra runtimes (models.extra_runtimes.local not empty) gets a fifth word, MEMBER MODEL EFFORT PROFILE RUNTIME, on every answer, the project's own runtime's too, and the JSON the key runtime last; a project without them gets the output it had."),
         },
     },
     "role": {
@@ -314,13 +335,26 @@ COMMANDS = {
         "desc": ("A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions). "
                  "Four ship with qargi: build, write, review and test (review is read-only). Add your own under ~/.qargi/config/roles/NAME/: "
                  "a name of one lower-case token, never lead. The class decides what the guard allows a member (read-only: nothing in the clone "
-                 "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt."),
-        "scripts": ["role.py"],
+                 "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt. "
+                 "The card of a role says, before a refusal does, what the role is held to: a member finds it at the end of its task block (CARD:), the lead's session loads it at its start."),
+        "scripts": ["role.py", "rolecard.py"],
         "verbs": {
             "list": verb("List the roles, their class and where they live"),
             "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
             "prompt": verb("Print a role's instructions as a task block carries them", [("NAME", "workrole")]),
             "check": verb("Validate one role, or all of them", [("[NAME]", "workrole")]),
+            "card": verb("Print the card of a role: what it is held to, said before the guard or a verb refuses it", [("ROLE", "role")],
+                         [PROJECT_OPT, opt("--run", "fill in the real paths of this prepared run (RUN/clone, RUN/out, its temporary directory); without it the words CLONE, OUT and TMP stand for them", "RUN", "dir"),
+                          opt("--json", "one object: role, class, card, words, chars, project, run and members_stale")],
+                         desc=("Read only, and open to a member: nothing is written and no remote is asked. The card is generated from the role's class, the guard's tables, the command description and the catalogue "
+                               "of refusals, and names no runtime. A role of class write gets a short card (work in CLONE, patches and the report in OUT; refused: push, the lead's verbs and directories; a plan you compute "
+                               "goes in the report with its token, never applied; report a refusal's code; run the checks that cover your change, the whole suite is the lead's). A role of class read-only gets the paths "
+                               "it may write (OUT and TMP), how to write its report, how to test patches in a copy, and what is refused. The lead's card lists the gated verbs by area, the verbs only a terminal runs, "
+                               "that a token dies when what it hashed changes (qargi release fix VERSION --record and the dry run before asking), whose words --approved is, and the line 'members STALE or DRIFT as of TIME', "
+                               "read from STATE/agent-states.json, which qargi agent list writes (no stored reading, no line); a line that names a rule whose code is not live in the catalogue is left out. "
+                               "The task block carries the member card, and the lead's session-start hook loads the lead card; a runtime with no start hook runs qargi role card lead. "
+                               "--project is where the lead card reads the stored member states. Exit status: 0; 1 for a role or a run that is not there; 2 for a usage error."),
+                         examples=["qargi role card lead", "qargi role card review --run RUN", "qargi role card build --json"]),
         },
     },
     "feature": {
@@ -361,7 +395,7 @@ COMMANDS = {
                            desc=GATES_NOTE + " " + ENV_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE,
                            examples=["qargi feature verify login", 'qargi feature verify login --waive-environment cpu --plan TOKEN --approved "go ahead"']),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
-                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
+                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT, DRY],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
                                  "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
@@ -371,7 +405,10 @@ COMMANDS = {
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists "
                                  "each one: prepared and not verified, verified and not applied, or applied and not merged. A run that was cleaned, discarded (local clean --discard), closed "
-                                 "(local close --applied-by-am) or applied and merged is not open. " + FLOW_UNREACHABLE_NOTE)),
+                                 "(local close --applied-by-am) or applied and merged is not open. " + FLOW_UNREACHABLE_NOTE + " " + DRY_NOTE +
+                                 " For finish it also renews no lease of the feature's lead (the marshal is asked without --renew and with --no-fetch), takes no lock and writes no intent file; a finish that was cut off is shown as it would be completed, "
+                                 "with its record left as it is; an open run of the feature is a refusal (feature-runs-open) that it lists beside the ones that follow. Not for the other feature verbs (exit 2)."),
+                           examples=["qargi feature finish login --dry-run", "qargi feature finish login --dry-run --plan TOKEN"]),
         },
     },
     "marshal": {
@@ -474,19 +511,29 @@ COMMANDS = {
     "branch": {
         "summary": "Branch housekeeping: delete the merged agent and feature branches and their worktrees",
         "desc": ("Prune prints the merged agent/* and feature/* branches of the project (and with --remote the same branches on origin, asked live) and the worktrees "
-                 "qargi made for them, with a token; with --plan and --approved it deletes them. A branch is merged when it was merged with --no-ff into develop, "
+                 "qargi made for them, with a token; with --plan and --approved it deletes them. The one deletion that is not gated is prune --agents: it deletes the merged agent/* "
+                 "branches of the repository at once, with no token and no approval (the lead's; the tip of each stays reachable from the merge that took it in); the feature branches and "
+                 "the branches on origin always take a plan and an approval. A branch is merged when it was merged with --no-ff into develop, "
                  "into a branch of repo.long_lived or repo.detached, or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of one of them "
                  "was never merged and is kept. It never deletes master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, "
                  "or a branch checked out in a worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with "
                  "the reason. A remote branch is deleted as a lease on the tip the plan showed."),
         "scripts": ["branch.sh"],
         "verbs": {
-            "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
-                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED],
+            "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees; --agents deletes the merged agent/* ones at once", [],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"),
+                           opt("--agents", "only the merged agent/* branches of this repository, deleted at once with no --plan, --approved or --remote: plan lines printed, journaled, one audit line; the lead's"),
+                           PLAN, APPROVED, DRY],
                           desc=("A branch is merged when it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached or the remote-tracking branch origin/BRANCH of a detached one "
                                 "(a detached branch that origin changes only through a pull request lags behind it locally; fetch first, --remote does), or, for an agent branch, into an open feature. "
-                                "A branch that only sits at a tip was never merged and is kept."),
-                          examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
+                                "A branch that only sits at a tip was never merged and is kept. " + DRY_NOTE + " For prune it asks origin, with --remote, with git ls-remote: a branch of origin whose tip this repository does not have "
+                                "is kept ('its tip is not fetched') where the apply, which fetches first, might prune it. "
+                                "--agents is local only and the exception to the gate: it takes no --plan, --approved or --remote (a usage error, exit 2) and deletes only merged agent/* branches, never a feature branch. "
+                                "It prints what it deletes (the lines of the plan: each branch, the commit and the branch it was merged into, the worktree qargi made that goes with it, the commits made with git "
+                                "that the journal takes in, and the branches kept with the reason), then for each branch brings the commits made with git on it into the ref journal first (so a run prepared before them still verifies), "
+                                "deletes it only if it is still at the tip the plan showed, and journals the deletion; one audit line records it. A member run, or a call nested in an approved apply, is refused (exit 2). "
+                                "With --dry-run it prints the plan and deletes nothing."),
+                          examples=["qargi branch prune", "qargi branch prune --agents", "qargi branch prune --dry-run", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },
     "changelog": {
@@ -625,28 +672,38 @@ COMMANDS = {
                  "in the repository and for the branch it deletes on origin: one line per commit, with the verb's own name and a why that says git made the step, "
                  "so a run prepared before those commits accepts the deletion, and verify names the verb. No such line is written for a branch that is kept, "
                  "that the journal never had, or whose tip is not within 500 first-parent commits of a commit the journal has it at (a branch rewritten by hand, for one). "
-                 "qargi ref record adds the one move a lead makes by hand "
-                 "that verify must still accept: the rewrite of an agent branch that keeps its content. qargi ref note adds the branches the lead made by hand or pushed "
-                 "(git branch, git push), so that verify does not blame the run for them."),
+                 "qargi ref record adds the two moves a lead makes by hand "
+                 "that verify must still accept: the rewrite of an agent branch, or of a release or hotfix branch not yet pushed, that keeps its content (--rewrite), and the deletion of a branch "
+                 "that no verb deleted (--deleted). qargi ref note adds the branches the lead made by hand or pushed "
+                 "(git branch, git push), so that verify does not blame the run for them; a branch deleted and made again is journaled with --deleted, then ref note, whose line starts at absent."),
         "scripts": ["ref.sh"],
         "verbs": {
-            "record": verb("Rewrite an agent branch to a commit with the same tree, and journal the move with the reason", [("REF", "branch"), ("OLD", "none"), ("NEW", "none")],
-                           [opt("--rewrite", "the kind of move: REF goes from OLD to NEW, whose trees must be identical"),
+            "record": verb("Rewrite a branch to a commit with the same tree, or record a branch deleted by hand, and journal the move with the reason", [("REF", "branch"), ("OLD", "none"), ("NEW", "none", True)],
+                           [opt("--rewrite", "the kind of move: REF goes from OLD to NEW, whose trees must be identical (exclusive with --deleted)"),
+                            opt("--deleted", "the kind of move: REF was deleted by hand and was at OLD; give no NEW (exclusive with --rewrite)"),
                             opt("--why", "the reason, journaled and named by local verify", "TEXT"), PROJECT_OPT],
-                           desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
+                           desc=("--rewrite: REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME), or a release/* or hotfix/* branch that origin does not have (asked live: a branch that was pushed, "
+                                 "and an origin that cannot be asked, are refused); never a long-lived branch (master, develop, repo.long_lived, repo.detached, the parking branch) or a feature branch. "
+                                 "It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
                                  "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
                                  "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
-                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. Not available in a member run."),
-                           examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
+                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. "
+                                 "--deleted: REF is a branch NAME, or origin/NAME for a branch of origin (asked live); it must be absent now, must not be long-lived, and OLD must be a commit. "
+                                 "It first journals the commits made with git on the branch since the journal last had it (as a verb that deletes a branch does), then the deletion from OLD to absent "
+                                 "(verb ref:deleted, with the reason), so local verify and local clean of a run prepared before accept the deletion and name it as qargi ref deleted. "
+                                 "Nothing is moved or deleted: the branch is gone already. A branch deleted and made again is journaled with --deleted, then ref note. Not available in a member run."),
+                           examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\"",
+                                     "qargi ref record --deleted agent/fix-names 1a2b3c4 --why \"deleted by hand after the merge\""]),
             "note": verb("Journal a branch you made by hand, or pushed to origin, so that local verify accepts it", [("REF", "none")],
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
                          desc=("REF (give several) is a branch NAME, or origin/NAME for the branch NAME of origin, whose live value is asked (git ls-remote); the branch must exist now. "
                                "The journal line (verb ref:note) goes from the ref being absent to the value it has now, or, when you noted that ref before, from where the earlier note left it "
-                               "(pushing the same branch again); a second note is refused when the earlier note's value is not an ancestor of the current one (the ref was rewritten: inspect it; "
-                               "qargi ref record --rewrite records a rewrite of an agent branch that keeps its tree). The note prints the author and subject of the tip, and REF@SHA "
+                               "(pushing the same branch again), or from absent when the ref was deleted since (by ref record --deleted, or by a verb that deletes branches), so a branch made again with the same name is noted as created; "
+                               "a second note is refused when the earlier note's value is not an ancestor of the current one (the ref was rewritten: inspect it; "
+                               "qargi ref record --rewrite records a rewrite of an agent branch, or of a release or hotfix branch not yet pushed, that keeps its tree). The note prints the author and subject of the tip, and REF@SHA "
                                "(7 to 40 hex digits) notes REF only while it is at SHA, so the lead notes what it looked at. Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. "
                                "Only a ref that did not exist when the run was prepared (or that you noted before) is accepted this way: a ref that existed then and has moved, "
-                               "a deletion, and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. "
+                               "a deletion that no verb made and you did not record (ref record --deleted), and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. "
                                "Not available in a member run. The harness's own worktree branches (worktree-bridge-NAME, held by the locked worktree bridge-NAME of the harness) need no note: verify leaves them out."),
                          examples=["qargi ref note feature/search origin/feature/search", "qargi ref note feature/search@1a2b3c4d"]),
         },
@@ -675,6 +732,10 @@ COMMANDS = {
                  "{name, command, who (lead or owner), evidence (what shows it was done)}; the names are distinct. release finish prints them as 'after the release:' lines and records them as pending; "
                  "release step marks one done; qargi never runs them. "
                  "release.notes_file (a file relative to the repository, {version} replaced; default none) is the text release publish uses for the notes, and release push warns when it leaves out an item of the version's changelog section. "
+                 "release.changelog.fragments (a directory relative to the repository; default none; the lead's) is for a project that records its notes as files: a fragment is any file in it but README* and .gitkeep. "
+                 "With it release start counts the fragments at the base as notes (so --allow-empty-notes is not needed; the plan says how many are to be folded on the branch), and release push and release finish "
+                 "refuse, with release-fragments-unfolded, while the directory at the branch head holds a fragment or the released section of CHANGELOG.md has no notes, is missing, or CHANGELOG.md is missing: "
+                 "fold them in the fix worktree, commit, then release fix VERSION --record. Without the answer nothing changes, and an empty unreleased section refuses with release-notes-empty, which names the option and the answer. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
                  "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
@@ -687,19 +748,22 @@ COMMANDS = {
                           opt("--again", "discard the recorded cut of VERSION and plan anew"), PLAN, APPROVED],
                          desc=("Without --approved it changes nothing: it prints every step of the ceremony with what moves (1 start, 2 push when the repository has an origin, 3 finish, 4 site when "
                                "site.enabled is true) and ONE plan token; publish is named as outside the cut. The start step is planned by release start itself, so its refusals come before a token does. "
+                               "The push step names fix_paths, kept in the cut record: the paths a fix may change and still go on under this approval, derived from the project's answers (the directory of release.changelog.fragments "
+                               "when set, CHANGELOG.md, release.version_file and each of release.version_files; docs/ and the manual pages are outside); a fix that changes any other path is pushed with the push's own plan "
+                               "(release fix VERSION --record says which applies), after which the cut goes on from the pushed head. "
                                "Approving it is release plan VERSION --plan TOKEN --approved \"<your go-ahead>\" (the same --date, --keep and --allow-empty-notes): the words are recorded once, with the plan, "
                                "under the state's release directory (PROJECT-VERSION.cut.json), and the audit log gets a release:cut line. Lead only. Then each step is its own verb with --plan TOKEN alone "
                                "(release start, push, finish, site VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
                                "still holds, and each prints the next one. start must find its own plan as it was frozen (the head of the base, the files bumped, the date); push the branch where start left it; "
                                "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site the tag on the commit finish tagged. "
                                "release publish is not a step of the cut: what it creates (the notes and the release files, whose hashes exist only after the tag) is shown by its own plan, so it refuses the cut token (run publish with its own plan and approval). A step that no longer matches "
-                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
+                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start that changes a path outside fix_paths is pushed that way, release fix --push; one inside them rides the cut); the cut records it and goes on from "
                                "the new state. A step under the cut is the lead's, as approving is: it is refused (exit 2) in a member run and when QARGI_NESTED is set, and a --plan that is not the recorded cut's token (without --approved) is refused naming that a cut is recorded. "
                                "finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
                                "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
                          examples=["qargi release plan 0.2.4", "qargi release plan 0.2.4 --date 2026-11-12 --plan TOKEN --approved \"cut 0.2.4\"", "qargi release start 0.2.4 --plan TOKEN"]),
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
-                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED],
+                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED, DRY],
                           desc=("Without --approved it changes nothing: it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files "
                                 "the commit changes, the date) and a plan token. Apply it with the same command and --plan TOKEN --approved \"<your go-ahead>\" (the token covers the head of the base "
                                 "and the date, so a plan that went stale is refused); the apply creates the branch and writes a line of the audit log. Nothing is pushed. "
@@ -714,7 +778,9 @@ COMMANDS = {
                                 "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them. "
                                 "With the answer release.version_files (a list of paths relative to the repository) it checks, once VERSION is bumped, that each listed file on the new branch "
                                 "contains the version (as a whole version: 0.2.1 is not found in 0.2.10) and prints a warning naming the ones that do not: bump these on the release branch "
-                                "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked.")),
+                                "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked. "
+                                + DRY_NOTE + " For start the temporary worktree in which the plan builds the bump commit is removed again, also when the dry run is interrupted."),
+                          examples=["qargi release start 0.2.4 --dry-run", "qargi release start 0.2.4 --dry-run --plan TOKEN"]),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). With declared gates a 'gates:' line lists each with its result at the last run. " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
@@ -741,13 +807,28 @@ COMMANDS = {
                                  "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
-                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
+                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"),
+                         opt("--record", "journal the commits made with git on the branch, and say whether they are inside the cut: the lead's, no plan, no token, no approval; exclusive with --push, --plan and --approved"),
+                         PLAN, APPROVED, DRY],
                         desc=("For the pull request whose checks failed, or a change review asked for. Without --push it creates the worktree of release/VERSION (hotfix/VERSION with --hotfix) "
                               "under the worktree root (worktrees.root, default <state>/worktrees/<project>/<branch>), prints 'worktree: PATH' and the next step, and changes nothing else; "
                               "run again it names the same worktree. Fix there, commit on the branch, then run it with --push (or release push), which asks for a plan token and an approval, "
                               "pushes the branch and updates the open pull request, whose checks run again. Refused when the branch does not exist or the tag VERSION does (then it is a hotfix). "
-                              "release finish removes the worktree with the branch when it is clean.")),
-            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
+                              "release finish removes the worktree with the branch when it is clean. "
+                              "--record is a record of fact, like ref note: the lead's (a member run, and a call nested in an approved apply, are refused, exit 2), with no plan, no token and no approval, "
+                              "and exclusive with --push, --plan and --approved (a usage error, exit 2). It journals the commits made with git on release/VERSION (hotfix/VERSION with --hotfix) in the ref journal, "
+                              "with or without a cut, so a run prepared before them verifies; the head of the branch must follow the cut's anchor (the latest of the heads recorded for fix, push and start) along first parents, "
+                              "else it is refused with cut-branch-moved. Then it says where the commits stand. With a live cut it checks every commit since the anchor against the paths the cut plan names, "
+                              "fix_paths (release plan prints them: the directory of release.changelog.fragments when set, CHANGELOG.md, release.version_file and each of release.version_files; "
+                              "docs/ and the manual pages are outside, a manual page being generated from the code): when all are inside it records fix in the cut and says 'inside the cut: push goes on under its approval'; "
+                              "otherwise it records nothing in the cut and prints the notice cut-fix-outside with the commits that leave the paths (three and +N), 'outside the cut: push will take its own plan'. "
+                              "It exits 0 either way: the journal is written and nothing was asked. Release push and fix --push make the same catch-up and the same check, so a lead who never ran --record "
+                              "gets the same answer: inside, the push passes under the cut's token and records fix and push; outside, the cut's token is refused with cut-fix-outside, and release push VERSION without it "
+                              "has its own plan, which lists every commit since the anchor and takes the owner's approval. A push under its own approval records the push in the cut (head and own_plan) and leaves the cut live, "
+                              "anchored at the pushed head: the commits before it are no longer counted, and a later fix inside the paths goes on under the cut again. "
+                              + DRY_NOTE + " With fix it is for --push only (a usage error, exit 2, without it)."),
+                        examples=["qargi release fix 0.2.4", "qargi release fix 0.2.4 --record", "qargi release fix 0.2.4 --push --dry-run"]),
+            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED, DRY],
                          desc=REMOTE_NOTE + " When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
                               "does not mention (never a refusal; the plan still has its token). An item is a line at the margin that starts with -, *, + or a number and a dot; it is mentioned when its leading `backticked term`, "
                               "else its first three words, occurs in the file, ignoring case and spacing. A notes file that is not on the branch is a warning. When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
@@ -757,7 +838,11 @@ COMMANDS = {
                               "the plan has the line 'join the history of master': once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary worktree, "
                               "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
                               "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
-                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join."),
+                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join. "
+                              "When the project's answer release.changelog.fragments is set and the directory at the head of the branch still holds a fragment, or the section of VERSION in CHANGELOG.md has no notes, is missing, "
+                              "or CHANGELOG.md is missing, it refuses with release-fragments-unfolded: fold them in the fix worktree, commit, then qargi release fix VERSION --record. "
+                              "Commits since the cut last stood that change a path outside the cut's fix_paths refuse the cut's token with cut-fix-outside (see release fix --record). " + DRY_NOTE,
+                         examples=["qargi release push 0.2.4 --dry-run", "qargi release push 0.2.4 --dry-run --plan TOKEN"]),
             "finish": verb("After the checks pass: merge into master, tag, merge the tagged commit back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
@@ -1254,9 +1339,29 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let a project use a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED, EXEC],
-                           desc="An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified."),
-            "disable": verb("Stop a project using a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED]),
+            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
+                           desc=("An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified. "
+                                 "With --runtime NAME (and no extension) it allows an extra runtime: the project may then start members on NAME beside its own local runtime (models.extra_runtimes.local), "
+                                 "chosen by a profile (profiles.NAME.runtime) or by one task (qargi local prepare --runtime NAME). NAME is a command runtime of the local surface (a shipped one, or a library pack that is sealed and unchanged) that is not the project's own; "
+                                 "else the refusal runtime-unusable names which of the three fails. Without --plan and --approved it prints the plan and a token and changes nothing: the runtime, its origin and the executable it would resolve; "
+                                 "each link source of its home as FROM -> TO with the real path, present or missing, and that it is not inside ~/.codex (a source that would be refused refuses the plan too, with no token); that runs sharing a source run one at a time; "
+                                 "the whole barrier note; that a read-only role runs on it under the partial barrier (no provider accept is asked and none counts), and that a read-only member reads and reports and runs nothing that writes; "
+                                 "that its model and effort are requested, not confirmed while the override claims are unverified; the reads warning when the runtime does not confine reads (dispatch.reads), with the words the approval must carry; "
+                                 "the tool packs each role would get on it and that their MCP servers run outside the sandbox; the hidden paths and what the runtime lacks (a guard hook, managed member skills, pack renders). "
+                                 "Applied with --plan TOKEN --approved WORDS it writes models.extra_runtimes.local and one audit line (provider:enable). For a runtime that does not confine reads the owner's words must contain reads are not confined "
+                                 "(letter case and runs of blanks ignored, matched as words), else the refusal runtime-reads-unacknowledged and the token stays good: the lead passes the owner's words on and never writes the phrase itself. "
+                                 "A lead's verb: the guard refuses it to a member. The project's own runtime, one already enabled and a name that is not a runtime are refused; nothing is changed.")),
+            "disable": verb("Stop a project using a library extension pack, or one extra local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED],
+                            desc=("With --runtime NAME it takes NAME out of models.extra_runtimes.local, with a plan and a token as for enable and no phrase to say. It is refused, with no token, while a profile names the runtime "
+                                  "(unset profiles.NAME.runtime first: qargi project unset PROJECT profiles.NAME.runtime). Runs prepared for it are refused when they start (runtime-drift: prepare again); "
+                                  "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime.")),
+            "runtimes": verb("Print the runtimes the project's local surface runs members on", [("PROJECT", "project")],
+                             desc=("The line primary NAME (the project's own local runtime, models.provider.local), then a line extra NAME for each runtime of models.extra_runtimes.local, each once. "
+                                   "Read-only and open to a member. Exit 2 for a project with no local runtime or no such project.")),
+            "reads-warning": verb("Print the line that says what a member on a local runtime can read, when its sandbox does not confine reads", [("NAME", "none")],
+                                  desc=("The line the plans of provider enable --runtime, project new, project attach and project set models.provider.local print: members on NAME can read the real ~/.codex (the paths the definition names under dispatch.reads.exposes, "
+                                        "and what they hold) and whatever else this account can read: reads are not confined. A definition with no dispatch.reads counts as not confining reads, with no path named. "
+                                        "Nothing is printed for a runtime that confines reads or works in the session. Read-only and open to a member.")),
             "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
                                 [opt("--check", "check that the adapter and the verb exist and print nothing else")],
                                 desc="NAME is a runtime name, not a family name. A verb the definition does not list exits 3."),
@@ -1267,7 +1372,9 @@ COMMANDS = {
                           [opt("--project", "the project whose runtime is asked (default: the one in effect)", "PROJECT", "project"),
                            opt("--surface", "the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output-dir, clone-dir)", "SURFACE", ("local", "cloud")),
                            opt("--lead-runtime", "the runtime of the lead's own session, when it is not the project's: the notes about the lead's session are read from it "
-                                                 "(default: QARGI_LEAD_RUNTIME when it is set and not empty; with neither, every note is the project's runtime's, as before)", "NAME")],
+                                                 "(default: QARGI_LEAD_RUNTIME when it is set and not empty; with neither, every note is the project's runtime's, as before)", "NAME"),
+                           opt("--runtime", "answer the notes about the members from this runtime of the project (its own, or one of models.extra_runtimes.local) in place of the project's own; local surface only, and not with --run", "NAME"),
+                           opt("--run", "answer them from the runtime the lead's registry records for this run directory (the project's own for a run prepared before the project had extra runtimes; nothing is read from the directory); local surface only, and not with --runtime", "RUN", "dir")],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
                                "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only. "
@@ -1280,7 +1387,11 @@ COMMANDS = {
                                "NAME is a runtime of the local surface that can be used as it stands, by its own name (not a family's), whatever --surface says; any other name is unsupported, exit 3, whatever is asked. "
                                "Both refusals say whether the option or the variable named the lead runtime. "
                                "A topic the project's runtime lists as about a lead's session and the lead runtime does not have is unsupported too, exit 3: it is never answered by the project's runtime. "
-                               "The name selects which definition is read and nothing else: nothing is stored or changed, and no identity, approval or permission depends on it."),
+                               "The name selects which definition is read and nothing else: nothing is stored or changed, and no identity, approval or permission depends on it. "
+                               "A project with extra runtimes starts members on more than one runtime, and the notes about members depend on the runtime a member runs on: --runtime NAME (one the project has enabled) or --run RUN (the runtime of that run) names it, "
+                               "and spawn, member-out and message are then that runtime's (provider notes spawn --run RUN says qargi local run RUN for a run on a command runtime, and the session's tool for one on an in-session runtime); a runtime the project does not enable, "
+                               "a run the registry does not name and a run of another project are refused, exit 2, naming the runtimes the project has. The topics about the lead's own session keep to the lead runtime. With neither option the notes are the project's own runtime's, as before, "
+                               "and a project without extra runtimes gets the same text for every topic."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")],
                           desc="NAME is a runtime name, not a family name."),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
@@ -1331,6 +1442,7 @@ COMMANDS = {
                               "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy. "
                               "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): a clone, contract, git wrapper, OUT or TMP there that the run's class does not show refuses it before it starts (exit 2), naming the path and the fix. "
                               "When the member can write the clone's .git (the argv grants it, or the class has no sandbox arguments), a change to what git there would run (.git/config, hooks/, info/) is named in a GITDIR=changed: line and git_dir of RUN/dispatch.json; never run git in that clone. "
+                              "The run starts on the runtime it was prepared for (the runtime of its registry line; a line without one means the project's own): it is refused with runtime-drift, nothing started, when that runtime is no longer enabled for the project, no longer sealed, local and started by a command, or when its definition, catalog, composition, profile or policy changed since prepare; prepare the run again. --runtime is not an option here. "
                               "Exit status: 0 the command succeeded, 1 it failed (or a usage error, such as no task block), 2 refused (a barrier the run cannot have, a refused definition), 3 the runtime cannot be run this way (not a command runtime, its command is not on PATH), 4 transport (the definition maps the command's exit to it).")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this https URL (no user name or password in it: that is --credential-file)", "URL"),
@@ -1338,10 +1450,14 @@ COMMANDS = {
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability, with its class in RUN/class and in your registry (the registry's decides); a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); command runtimes also resolve omitted profiles by role, then class fallback, before making run artifacts; the class must fit the role", "NAME"),
+                             opt("--runtime", "the local runtime this run is prepared for: the project's own or one it enabled (provider enable --runtime); default the runtime the profile names (profiles.NAME.runtime), else the project's own. A runtime not enabled is refused (runtime-not-enabled)", "NAME"),
                              opt("--task-file", "the file with the task: prepare then writes the whole task block to RUN/task.md for every runtime (refused when the file is empty, not a regular file, a link, over 1 MiB, or has a line that starts SCOPE:); needs --done", "FILE", "file"),
                              opt("--done", "the check that says the task is done, as one command line (with --task-file). Refused when it is empty, has several lines or bash -n cannot parse it, and when the word that starts any of its simple commands (at the start of the line and after ; & && || | ( or $(, past NAME=value words and redirections) is not an executable on PATH, a shell builtin or keyword, or a script, so prose that only contains an operator (coverage > 80%) is refused (a first word with a slash is a file of BASE, a file under a --scope path that the task may create, or an absolute one; with --repo-url a relative path is taken as given; a later word with a slash is not looked up, since a cd may precede it). Only command words are checked, never the arguments", "COMMAND"),
                              opt("--scope", "a path the task may change, relative, with no space, comma or .. in it (repeat for several; a directory, a file or a glob); written as the SCOPE: line, which qargi review check applies as the limit. Without it the line says none (with --task-file)", "PATH")],
-                            desc=("Under a coordinator label (QARGI_ACTOR, qargi help coordinator) the base must be feature/ followed by the label's feature, and the run's registry line records the label (actor) and the feature (feature); a run prepared without a label has neither field. "
+                            desc=("The run is prepared for one runtime: --runtime, else the runtime the profile names, else the project's own, and that runtime is used where the project's own was: the contract addenda, the mode, the prepared request, the read-only barrier (the barrier of an extra runtime is its own: runtime-barrier-missing for one that has none, whatever the project accepted for its own runtime) and the hidden-paths check. "
+                                  "A project with extra runtimes (models.extra_runtimes.local not empty) sees more: RUNTIME=NAME for every run, the project's own too; RUNTIME_OVERRIDE=profile P names R, resolved in NAME: MODEL EFFORT when --runtime differs from the runtime the profile names (also profile P names no runtime (OWN) when it names none and --runtime picks an extra one; nothing when --runtime equals the profile's runtime, or is the project's own for a profile that names none); "
+                                  "and MEMBER_SKILLS=none (not delivered to an extra runtime) for a run on an extra runtime, which freezes no managed member skills. Its registry line carries runtime, model_confirmed (display only: whether the runtime's model override is verified) and model; a project without extra runtimes sees no new word, key or digest. "
+                                  "Under a coordinator label (QARGI_ACTOR, qargi help coordinator) the base must be feature/ followed by the label's feature, and the run's registry line records the label (actor) and the feature (feature); a run prepared without a label has neither field. "
                                   "Command runtimes resolve the role's explicit or implicit profile before RUN, TMP or the clone is made, without member registration. The logical worker/reviewer base, requested model and effort, class and runtime are retained in lead-owned private lifecycle authority, bound to runtime/mode/catalog/profile/policy inputs. RUN/request.json and RUN/profile mirror that request for inspection; they cannot authorize selection or accept drift. MEMBER names the logical base, MODEL the requested id or alias, and EFFORT the requested level, including when the runtime has no native effort control. "
                                   "Managed member snapshots default off; the owner gate packs member-skills freezes canonical role-specific skills in private lifecycle authority, including empty selections. Exact prepared-request hashes stay unchanged, so a changed shipped home declaration requires re-prepare. With --task-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: "
                                   "ROLE (with the class), ABILITY (the role's text), TASK (the file), DONE, PROFILE (the text of the repository's profile, ~/.qargi/config/profiles/<repository>.md, when there is one), "
@@ -1379,8 +1495,9 @@ COMMANDS = {
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
                                  "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite, and the commits you made with git on a branch that "
-                                 "release finish, hotfix finish, feature finish or branch prune then deleted, named as that verb's deletion; a branch that still exists, "
-                                 "or that you deleted or rewrote by hand, is not covered), a remote-tracking ref of origin that says what origin has "
+                                 "release finish, hotfix finish, feature finish or branch prune then deleted, named as that verb's deletion; the commits you made with git on a release or hotfix branch "
+                                 "and journaled with qargi release fix VERSION --record; a branch you deleted with git and recorded with qargi ref record --deleted, named as qargi ref deleted; "
+                                 "a branch that still exists, or that you deleted or rewrote by hand and did not record, is not covered), a remote-tracking ref of origin that says what origin has "
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
@@ -1467,6 +1584,7 @@ COMMANDS = {
                           opt("--actor", "only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead-id>:coord:<feature>: lists every coordinator of a feature; a lead identity may hold colons, so a prefix can also match the labels of a lead whose identity begins with it, and the whole label is exact); a run prepared without a label matches none", "ID"),
                           opt("--feature", "only the runs of this feature: the one a labeled prepare recorded, else the one the run's base feature/NAME names", "NAME")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
+                               "A project with extra runtimes (models.extra_runtimes.local) has a RUNTIME column before RUN (- for a run prepared before it had any) and, after RUN, model=M (requested at prepare, not confirmed) or (requested at prepare, override verified) for a run that asked for a model: no runtime reports which model answered, so the wording says requested, and override verified only when the runtime's per-dispatch model override is verified; --json has runtime and model_confirmed. "
                                "A run prepared under a coordinator label (qargi help coordinator) carries two more fields after RUN, actor=LABEL and feature=NAME, and so does every row when --actor or --feature is given (- for none). "
                                "Both options together are an AND; both are lead-side filters on what the registry recorded, never on a file of the run directory. "
                                "It is the list that qargi local clean --applied --scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), "
@@ -1487,6 +1605,7 @@ COMMANDS = {
                                 "OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. "
                                 "Given a run directory instead (no patches or manifest.json in it, an out directory in it), it checks RUN_DIR/out and notes that it did. "
                                 "Refuses a commit without a message body and a manifest that does not match the patches. "
+                                "For a run of a project with extra runtimes (models.extra_runtimes.local) one line, runtime=R model=M (requested at prepare, not confirmed) or (requested at prepare, override verified), comes first, from the lead's registry and never from a file of the run directory; a report from a codex-style runtime says which model was requested, not which answered, and none is printed for a run prepared before the project had extra runtimes. "
                                 "Area-count heuristics emit advisory warnings for a single wide patch or a dominant wide patch in a series. Reviewers must substantively assess commit cohesion, including supporting tests, docs and changelog. "
                                 "Source acceptance requires independent review of concrete changes and dependencies. Reject semantically mixed work with concrete evidence. Keep one patch per actual commit and meaningful buildable commit boundaries. "
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
@@ -1679,8 +1798,8 @@ COMMANDS = {
                  "(also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes "
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
-                 "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
-                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
+                 "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions, "
+                 "models.extra_runtimes or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
                  "methodology_accepted, review.reject_trailers, backlog.archive and backlog.section (a member's project set is refused them too); an archive may keep or drop "
                  "entries of such a list but not add or change one: the stored value stays, "
                  "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
@@ -1713,11 +1832,13 @@ COMMANDS = {
                                 "window, and any other id is assumed at 200,000. The table gives the API's window, which the product may cap lower on some plans, so "
                                 "lead.context_window overrides it. While the window is only assumed the line shows the tokens in use and says window unknown; set "
                                 "lead.context_window, with no percentage and no advice to compact; when the tokens exceed the guess it adds that they do, since the real window is larger. "
-                                "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
+                                "A window that the model id gave counts as assumed too once the tokens exceed it (the table is wrong for that id, for example a [1m] id whose entry is smaller than the real window): "
+                                "the same line, no percentage and no advice. "
+                                "--json says window_source answer, model or assumed; while it is assumed (a model window the tokens exceed included) percent is null (window is the guess) and window_exceeded says whether the tokens "
                                 "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a compact of the session safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
-                                  [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window)"), opt("--json", "machine-readable")],
+                                  [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window), nor when the tokens exceed the window the model id gave"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
                                         "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
@@ -1974,6 +2095,14 @@ TOPICS = {
         "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
+    "refusal": ("A refusal's code and the rule behind it", [
+        "A command that a rule stops prints, on standard error, a line that starts qargi-refusal/1 and holds one JSON object (the code, the exit status, the verb, the project, the role and, in detail, qargi's own text: "
+        "the typed fields as key=value, with dry=1 first in a dry run), then 'qargi: refused [CODE] message', a 'why:' line and a 'next:' line. The code names the rule once, in the catalogue lib/refusals.json. "
+        "qargi help refusal lists the codes; qargi help refusal CODE prints the entry of one (an unknown code exits 2): the rule, why it exists, its class and exit status, its status, "
+        "the fields its message fills, the message, and the next step for a lead and for the owner's own session.",
+        "A code is live when a verb raises it, planned when it is written down before a verb raises it (so that it is reviewed early) and withdrawn when it is no longer raised; a code is never reused. "
+        "The guard's refusals carry the code in front of their sentence. A note, 'qargi: note [CODE] ...', names a rule that will apply later and changes no exit status. "
+        "docs/reference/refusals.md is the page of the catalogue, generated from it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
@@ -2040,6 +2169,10 @@ ENVIRONMENT = [
     ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
+    ("QARGI_DRY", "set to 1 by --dry-run inside the verb that has it (release start, push and fix --push, feature finish, branch prune): a helper that writes (the audit log, the state files, the journal, a ref move, a commit) "
+                  "stops the verb with exit 70, and git and gh pass only commands that read; unset, empty and 0 are a normal run. Do not set it yourself"),
+    ("QARGI_VERB", "the verb a refusal's contract line names, as 'feature finish' (default: the verb the script was run as); the scripts that raise a refusal set it, you need not"),
+    ("QARGI_ROLE", "the role a refusal's contract line names (default: none); set by a member's run, you need not"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "

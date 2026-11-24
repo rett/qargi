@@ -498,7 +498,7 @@ run a b --project withnotes
 run alpha --project
 [ $rc = 2 ] && ok "--project with no name is a usage error" || no "--project alone: rc=$rc"
 run identity --project on-one --lead-runtime
-{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "^usage: qargi provider notes \[TOPIC\] \[--project P\] \[--surface local|cloud\] \[--lead-runtime NAME\]$" <<<"$err"; } \
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "^usage: qargi provider notes \[TOPIC\] \[--project P\] \[--surface local|cloud\] \[--lead-runtime NAME\] \[--runtime NAME | --run RUN\]$" <<<"$err"; } \
   && ok "--lead-runtime with no name is a usage error, and the usage names the option" || no "--lead-runtime alone: rc=$rc out=$out err=$err"
 run identity --project on-one --lead-runtime lead-one --lead-runtime lead-two
 { [ $rc = 2 ] && [ -z "$out" ]; } && ok "--lead-runtime twice is a usage error" || no "--lead-runtime twice: rc=$rc out=$out err=$err"
@@ -515,5 +515,202 @@ run identity --project on-one --lead-runtime lead-two; run spawn --project on-on
 run message --project on-one --lead-runtime lead-two; run identity --project on-one --lead-runtime nosuch
 out=$(QARGI_LEAD_RUNTIME=lead-one "$DA" provider notes identity --project on-two 2>&1)
 [ "$before" = "$(tree)" ] && ok "naming a lead runtime stores and rewrites nothing (answers, definitions, state, home), answered or refused" || no "a lead runtime changed a file"
+
+
+# a project without extra runtimes: every topic answers as it did before runtime-per-profile (the fixtures of tests/fixtures/runtime-no-extras,
+# recorded from the head before it, are the two projects of the design; NOTES_RECORD=1 writes them again when a shipped note changes)
+FIX=$SRC/tests/fixtures/runtime-no-extras
+notes_dump() { # NAME: for the stored project NAME, each topic its runtime and the two lead runtimes answer, as the verb printed it
+  local p=$1 v t vs topics
+  vs=("" "--lead-runtime claude-code" "--lead-runtime codex" "env")
+  topics=$(for v in "${vs[@]}"; do
+    case $v in env) QARGI_LEAD_RUNTIME=codex "$DA" provider notes --project "$p" 2>/dev/null;; *) "$DA" provider notes --project "$p" $v 2>/dev/null;; esac
+  done | sort -u)
+  for v in "${vs[@]}"; do
+    for t in "" $topics nosuch; do
+      printf '>>> notes %s --project %s %s\n' "$t" "$p" "$v"
+      case $v in
+        env) QARGI_LEAD_RUNTIME=codex "$DA" provider notes $t --project "$p" 2>&1; printf 'exit %s\n' "$?";;
+        *) "$DA" provider notes $t --project "$p" $v 2>&1; printf 'exit %s\n' "$?";;
+      esac
+    done
+  done
+}
+for f in project project-command; do
+  jq '.project = "demo"' "$FIX/$f.json" > "$T/c/projects/demo.json"
+  if [ -n "${NOTES_RECORD:-}" ]; then notes_dump demo > "$FIX/notes-$f.golden"; ok "recorded notes-$f.golden"; continue; fi
+  notes_dump demo > "$T/notes-$f.out"
+  cmp -s "$T/notes-$f.out" "$FIX/notes-$f.golden" && ok "no extras: provider notes of $f.json answers every topic as recorded" || no "no extras: notes of $f.json changed: $(diff "$FIX/notes-$f.golden" "$T/notes-$f.out" | head -5)"
+done
+rm -f "$T/c/projects/demo.json"
+
+# a project with extra runtimes: --runtime NAME and --run RUN name the runtime whose notes about its members are asked for. The runtime must be
+# enabled (its own, or one of models.extra_runtimes.local); the topics about the lead's own session stay with the lead runtime, or with the
+# project's own runtime when none is named. cx1 and cx2 are command runtimes (the shipped codex under other names) whose every note names its runtime.
+for r in cx1 cx2; do
+  fake_command_runtime "$SRC" "$TOOL" $r ".notes |= with_entries(.value = (.key + \" of $r\"))"
+  mkdir -p "$HOME/.$r-members"; echo '{}' > "$HOME/.$r-members/auth.json"
+done
+mkx() { # NAME PROVIDER-JSON EXTRAS-JSON: a stored project whose models.extra_runtimes.local is EXTRAS
+  mkproj "$1" "$2"
+  jq --argjson ex "$3" '.models.extra_runtimes = {local: $ex}' "$T/c/projects/$1.json" > "$T/x" && mv "$T/x" "$T/c/projects/$1.json"
+}
+CCP='{"local":"claude-code","cloud":"claude-platform"}'
+mkx withx "$CCP" '["cx1"]'
+mkx withxx "$CCP" '["cx1","cx2"]'
+mkx cmdx '{"local":"cx1"}' '["cx2"]'
+mkproj plainx "$CCP"
+mkx cloudx '{"cloud":"claude-platform"}' '["cx1"]'
+CCT="commands exploration identity session-model skills-dir"             # the notes of claude-code about the lead's own session
+CXM="message spawn"                                                         # and of the shipped codex (and so of cx1) about its members
+
+# no option, or the project's own runtime named: the answer is the one a project without extras gives
+same=1
+for a in "" "spawn" "identity" "nosuch"; do
+  run $a --project plainx; want="$rc|$out|$err"
+  for opt in "--project withx" "--project withx --runtime claude-code" "--project withxx --runtime claude-code"; do
+    run $a $opt; [ "$rc|$out|$err" = "$want" ] || { same=0; no "project with extras, '$a' $opt: rc=$rc out=$out err=$err"; }
+  done
+done
+[ $same = 1 ] && ok "notes-own-runtime: with no option, or the project's own runtime named, a project with extras answers as one without" || no "notes-own-runtime"
+
+# --runtime NAME: the notes about its members from that runtime, those about the lead's own session from the project's own runtime
+run --project withx --runtime cx1
+{ [ $rc = 0 ] && [ "$out" = "$(tr ' ' '\n' <<<"$CCT $CXM" | sort)" ] && [ -z "$err" ]; } && ok "notes-runtime-list: the topics are the lead's (claude-code) and the members' (cx1)" || no "runtime list: rc=$rc out=$out err=$err"
+run spawn --project withx --runtime cx1
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx1" ] && [ -z "$err" ]; } && ok "notes-runtime-spawn: a member of cx1 is started as cx1's note says (not the session's tool)" || no "runtime spawn: rc=$rc out=$out err=$err"
+run message --project withx --runtime cx1
+{ [ $rc = 0 ] && [ "$out" = "message of cx1" ]; } && ok "a note about the members' sessions is cx1's" || no "runtime message: rc=$rc out=$out err=$err"
+run identity --project withx --runtime cx1
+want=$("$DA" provider notes identity --project plainx 2>&1)
+{ [ $rc = 0 ] && [ "$out" = "$want" ] && ! grep -q 'of cx1' <<<"$out"; } && ok "notes-runtime-lead-topics: identity is the lead's, from the project's own runtime, not cx1's" || no "runtime identity: rc=$rc out=$out err=$err"
+run spawn --project withxx --runtime cx2
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx2" ]; } && ok "each enabled extra answers for itself" || no "cx2 spawn: rc=$rc out=$out err=$err"
+run spawn --project withxx --runtime claude-code
+want=$("$DA" provider notes spawn --project plainx 2>&1)
+{ [ $rc = 0 ] && [ "$out" = "$want" ] && grep -q 'subagent_type' <<<"$out"; } && ok "the project's own runtime keeps the session's tool" || no "own spawn: rc=$rc out=$out err=$err"
+run gamma --project withx --runtime cx1
+{ [ $rc = 1 ] && [ -z "$out" ] && grep -q "the runtime cx1 has no notes topic 'gamma' about its members (its topics: message, spawn) and the lead runtime claude-code has none about the lead's session" <<<"$err"; } \
+  && ok "an unknown topic is exit 1 naming both runtimes" || no "runtime unknown topic: rc=$rc out=$out err=$err"
+run spawn --runtime cx1 --project cmdx
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx1" ]; } && ok "the project's own runtime named" || no "cmdx own: rc=$rc out=$out err=$err"
+run spawn --runtime cx2 --project cmdx
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx2" ]; } && ok "a project on a command runtime asks an extra the same way" || no "cmdx extra: rc=$rc out=$out err=$err"
+run identity --runtime cx2 --project cmdx
+want=$("$DA" provider notes identity --project cmdx 2>&1)
+{ [ $rc = 0 ] && [ "$out" = "$want" ] && [ "$out" = "identity of cx1" ]; } && ok "and the lead's topics are the project's own runtime's" || no "cmdx identity: rc=$rc out=$out err=$err"
+run --project withx --runtime cx1 --lead-runtime nosuch
+{ [ $rc = 3 ] && [ -z "$out" ] && grep -q "unsupported lead runtime 'nosuch'" <<<"$err"; } && ok "a lead runtime that is no runtime is exit 3 whatever runtime is asked" || no "nosuch lead: rc=$rc out=$out err=$err"
+run identity --project withx --runtime cx1 --lead-runtime cx2
+{ [ $rc = 0 ] && [ "$out" = "identity of cx2" ]; } && ok "with a lead runtime named, the lead's topics are its" || no "lead cx2: rc=$rc out=$out err=$err"
+run spawn --project withx --runtime cx1 --lead-runtime cx2
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx1" ]; } && ok "and the members' are the asked runtime's, not the lead's" || no "lead cx2 spawn: rc=$rc out=$out err=$err"
+out=$(QARGI_LEAD_RUNTIME=cx2 "$DA" provider notes identity --project withx --runtime cx1 2>&1)
+[ "$out" = "identity of cx2" ] && ok "QARGI_LEAD_RUNTIME names the lead runtime as it does without --runtime" || no "env lead: $out"
+out=$(QARGI_LEAD_RUNTIME=cx2 "$DA" provider notes identity --project withx --runtime cx1 --lead-runtime cx1 2>&1)
+[ "$out" = "identity of cx1" ] && ok "and the option wins" || no "env and option: $out"
+# the rule of 0.3.4 holds for the runtime named: one that starts a member inside the lead's session is answered only to a lead on it
+run spawn --project withx --runtime claude-code --lead-runtime cx1
+{ [ $rc = 3 ] && [ -z "$out" ] && grep -q "members of this project cannot be started from this lead" <<<"$err"; } \
+  && ok "notes-in-session-rule: the in-session own runtime named is refused to a lead on another runtime, as without --runtime" || no "in-session rule: rc=$rc out=$out err=$err"
+
+# a runtime the project has not enabled, or that is no runtime: exit 2, nothing answered
+for bad in cx2 codex nosuch 'Not A Name' schema-2; do
+  run spawn --project withx --runtime "$bad"
+  { [ $rc = 2 ] && [ -z "$out" ] && grep -q "enabled\|not a runtime name" <<<"$err"; } && ok "notes-not-enabled: --runtime '$bad' is refused" || no "runtime '$bad': rc=$rc out=$out err=$err"
+done
+run spawn --project withx --runtime cx2
+{ [ $rc = 2 ] && grep -q "the runtime cx2 is not enabled for project withx: its runtimes are claude-code, cx1 (qargi provider enable withx --runtime cx2)" <<<"$err"; } \
+  && ok "the refusal lists the runtimes the project has and the way to enable one" || no "enabled list: $err"
+run spawn --project plainx --runtime cx1
+{ [ $rc = 2 ] && grep -q "its runtimes are claude-code (" <<<"$err"; } && ok "a project without extras refuses every other runtime" || no "plainx cx1: rc=$rc err=$err"
+run spawn --project cloudx --runtime cx1
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "no local provider" <<<"$err"; } && ok "a project with no local runtime has none to ask" || no "cloudx: rc=$rc out=$out err=$err"
+run spawn --project nosuch --runtime cx1
+{ [ $rc = 2 ] && grep -q "no such project 'nosuch'" <<<"$err"; } && ok "an unknown project is exit 2" || no "no project: rc=$rc err=$err"
+run spawn --runtime cx1
+{ [ $rc = 2 ] && grep -q "no project" <<<"$err"; } && ok "with no project in effect it is exit 2 and says so" || no "no project in effect: rc=$rc err=$err"
+out=$(cd "$T/repo-withx" && "$DA" provider notes spawn --runtime cx1 2>&1)
+[ "$out" = "spawn of cx1" ] && ok "inside the project's repository the project is the one in effect" || no "in effect: $out"
+run spawn --project withx --runtime cx1 --surface cloud
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "local surface" <<<"$err"; } && ok "the cloud surface has no extra runtimes: --runtime with it is refused" || no "cloud surface: rc=$rc out=$out err=$err"
+run spawn --project withx --runtime cx1 --surface local
+[ "$out" = "spawn of cx1" ] && ok "the local surface may be named" || no "local surface: rc=$rc out=$out err=$err"
+
+# the usage: the two options exclude each other, each once, each with a value
+USAGE="usage: qargi provider notes \[TOPIC\] \[--project P\] \[--surface local|cloud\] \[--lead-runtime NAME\] \[--runtime NAME | --run RUN\]"
+for args in "--runtime cx1 --run /x" "--runtime cx1 --runtime cx1" "--run /x --run /x" "--runtime" "--run" "spawn another --runtime cx1"; do
+  run --project withx $args
+  { [ $rc = 2 ] && [ -z "$out" ] && grep -q "^$USAGE\$" <<<"$err"; } && ok "notes-usage: '$args' is a usage error" || no "usage '$args': rc=$rc out=$out err=$err"
+done
+
+# --run RUN: the runtime of the registry's line for the run directory (the project's own when the line has none)
+REG=$T/s/local-runs.jsonl
+line() { jq -nc --arg r "$T/runs/$1" --arg p "$2" --arg rt "${3-}" '{lifecycle:1,run:$r,slug:"a",ability:"build",base:"main",started:"2026-11-20T10:00:00Z"}
+  + (if $p == "" then {} else {project:$p} end) + (if $rt == "" then {} else {runtime:$rt} end)' >> "$REG"; }
+line qargi.aaaaaa withx cx1
+line qargi.bbbbbb withx
+line qargi.cccccc withx cx2
+line qargi.dddddd withxx cx2
+line qargi.eeeeee '' cx1
+line qargi.ffffff withx claude-code
+jq -nc --arg r "$T/runs/qargi.gggggg" '{run:$r,project:"withx",runtime:7}' >> "$REG"
+jq -nc --arg r "$T/runs/qargi.hhhhhh" '{run:$r,project:"withx",runtime:"Not A Name"}' >> "$REG"
+printf '{ not json\n' >> "$REG"
+line qargi.iiiiii withxx cx1
+line qargi.iiiiii withxx cx2
+run spawn --run "$T/runs/qargi.aaaaaa"
+{ [ $rc = 0 ] && [ "$out" = "spawn of cx1" ] && [ -z "$err" ]; } && ok "notes-run: a run on cx1 is started as cx1's note says, the project is the line's" || no "run aaaaaa: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.aaaaaa" --project withx
+[ "$out" = "spawn of cx1" ] && ok "a project that agrees with the line's is accepted" || no "run with project: rc=$rc out=$out err=$err"
+run --run "$T/runs/qargi.aaaaaa"
+{ [ $rc = 0 ] && [ "$out" = "$(tr ' ' '\n' <<<"$CCT $CXM" | sort)" ]; } && ok "the topic list of a run on cx1 is the lead's and cx1's" || no "run list: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.bbbbbb"
+want=$("$DA" provider notes spawn --project plainx 2>&1)
+{ [ $rc = 0 ] && [ "$out" = "$want" ] && grep -q subagent_type <<<"$out"; } && ok "notes-run-primary: a line without a runtime is the project's own runtime" || no "run bbbbbb: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.ffffff"
+{ [ $rc = 0 ] && [ "$out" = "$want" ]; } && ok "a line that names the project's own runtime is too" || no "run ffffff: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.dddddd"
+[ "$out" = "spawn of cx2" ] && ok "the project of the line may have several extras" || no "run dddddd: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.iiiiii"
+[ "$out" = "spawn of cx2" ] && ok "the last line of a run holds" || no "run iiiiii: rc=$rc out=$out err=$err"
+out=$(QARGI_PROJECT=withx "$DA" provider notes spawn --run "$T/runs/qargi.eeeeee" 2>&1)
+[ "$out" = "spawn of cx1" ] && ok "a line with no project takes the one in effect" || no "run eeeeee: $out"
+run spawn --run "$T/runs/qargi.eeeeee"
+{ [ $rc = 2 ] && grep -q "no project" <<<"$err"; } && ok "and with none in effect is exit 2" || no "run eeeeee no project: rc=$rc err=$err"
+out=$(cd "$T" && "$DA" provider notes spawn --run "runs/qargi.aaaaaa" 2>&1)
+[ "$out" = "spawn of cx1" ] && ok "the run directory may be given relative to where the verb runs" || no "relative run: $out"
+run spawn --run "$T/runs/qargi.cccccc"
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "the runtime cx2 is not enabled for project withx" <<<"$err" && grep -q "the registry records it for the run $T/runs/qargi.cccccc" <<<"$err"; } \
+  && ok "notes-run-disabled: a run whose runtime the project no longer enables is refused, saying whose run it is" || no "run cccccc: rc=$rc out=$out err=$err"
+run spawn --run "$T/runs/qargi.dddddd" --project withx
+{ [ $rc = 2 ] && grep -q "was made for project withxx, not withx" <<<"$err"; } && ok "a project that is not the line's is refused" || no "run other project: rc=$rc err=$err"
+for g in gggggg hhhhhh; do
+  run spawn --run "$T/runs/qargi.$g"
+  { [ $rc = 2 ] && [ -z "$out" ] && grep -q "is not a runtime name" <<<"$err"; } && ok "notes-run-bad-record: a recorded runtime that is no name ($g) is refused" || no "run $g: rc=$rc out=$out err=$err"
+done
+run spawn --run "$T/runs/qargi.zzzzzz"
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "names no run $T/runs/qargi.zzzzzz" <<<"$err"; } && ok "notes-run-unknown: a run the registry does not name is refused" || no "run zzzzzz: rc=$rc out=$out err=$err"
+mkdir -p "$T/runs/qargi.jjjjjj/clone"; echo '{"runtime":"cx1","project":"withx"}' > "$T/runs/qargi.jjjjjj/record.json"
+run spawn --run "$T/runs/qargi.jjjjjj"
+{ [ $rc = 2 ] && [ -z "$out" ]; } && ok "a file in the run directory is no record: only the registry is believed" || no "run jjjjjj: rc=$rc out=$out err=$err"
+mv "$REG" "$T/reg.saved"
+run spawn --run "$T/runs/qargi.aaaaaa" --project withx
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "names no run" <<<"$err"; } && ok "a lead with no registry has no run to read" || no "no registry: rc=$rc out=$out err=$err"
+mv "$T/reg.saved" "$REG"
+run spawn --run "$T/runs/qargi.aaaaaa" --surface cloud
+{ [ $rc = 2 ] && grep -q "local surface" <<<"$err"; } && ok "--run is for the local surface too" || no "run cloud: rc=$rc err=$err"
+run identity --run "$T/runs/qargi.aaaaaa" --lead-runtime cx2
+[ "$out" = "identity of cx2" ] && ok "--run takes a lead runtime as --runtime does" || no "run lead: rc=$rc out=$out err=$err"
+# the run's own directory is not read for it: removing it changes nothing, and the registry is the lead's
+rm -rf "$T/runs"
+run spawn --run "$T/runs/qargi.aaaaaa"
+[ "$out" = "spawn of cx1" ] && ok "a run directory that is gone (cleaned, or a reboot) still names its runtime" || no "gone run: rc=$rc out=$out err=$err"
+
+# the verb still changes nothing
+before=$(tree)
+run spawn --project withx --runtime cx1; run --project withxx --runtime cx2; run spawn --run "$T/runs/qargi.aaaaaa"; run spawn --project withx --runtime cx2
+run identity --project withx --runtime cx1 --lead-runtime cx2; run spawn --project withx --runtime claude-code --lead-runtime cx1
+[ "$before" = "$(tree)" ] && ok "notes-readonly: --runtime and --run store and rewrite nothing (answers, definitions, state, home), answered or refused" || no "--runtime or --run changed a file"
 
 exit $fail

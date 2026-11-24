@@ -10,7 +10,7 @@ A command runtime is a headless CLI: there is no member file, so nothing to spaw
 
 The command is built from the definition as an array, without a shell, in a scrubbed environment (only what the pack's `env_pass` lists, which the review shows), with the member's prompt and the task block composed into one prompt; its output goes to `OUT/transcript`.
 
-A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one (`qargi provider accept`). The runtime runs as the user; its qualified contract defines sandbox and guard protection, so `qargi local verify` remains necessary. An in-session runtime is refused by `local run`, and a member's guard refuses it. A runtime whose sandbox hides a place from the member (`dispatch.hidden_paths`) refuses a run there: `prepare` names the path and the fix, usually `--scratch` on disk.
+A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one (`qargi provider accept`). The runtime runs as the user; its qualified contract defines sandbox and guard protection, so `qargi local verify` remains necessary. An in-session runtime is refused by `local run`, and a member's guard refuses it. A runtime whose sandbox hides a place from the member (`dispatch.hidden_paths`) refuses a run there: `prepare` names the path and the fix, usually `--scratch` on disk. `local run` uses the runtime `prepare` recorded and refuses `runtime-drift` when it is no longer enabled or changed: prepare again. A read-only member only reads: put the diff and the test output on disk first.
 
 Then continue with step 3 of the local flow.
 
