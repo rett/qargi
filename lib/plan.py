@@ -3,13 +3,14 @@
 
 It changes nothing: no file is made or removed (an expired record stays, the store prunes), no audit line, no lock; it works under QARGI_DRY=1. The directory and the
 file are opened without following a link, and the file must be a regular file of one link and mode 600. Before anything is printed the record is checked: its schema, its
-form, the hash of its lines against input_sha256, the token against that hash and against the name of the file. A record that fails is not shown:
+form, the hash of its lines against input_sha256, the token against that hash and against the name of the file. The hash binds the lines and input_newline only; the verb, the
+target, the context, the labels, the kinds and the times are checked for their form (expires must be created plus seven days), not signed. A record that fails is not shown:
 
   plan-unknown          not 12 hex digits, no such file, or a file of before the schema (no `schema` key)
-  plan-record-invalid   a link, a file of the wrong kind or mode, damaged JSON, an unknown schema, a malformed record, or lines that do not hash to the token
+  plan-record-invalid   a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, an unknown schema, a malformed record, or lines that do not hash to the token
   plan-expired          `expires` is past (QARGI_PLAN_NOW, a time like 2026-11-22T10:00:00Z, stands for the clock in tests)
 
-Text: the verb, the target, the labelled lines, created and expires. --json: the record as it was stored, and "state": "valid". Exit 0, 1 for a refusal, 2 for a
+Text: the verb, the target, the labelled lines, created and expires; a control character in a value is printed as \\xNN. --json: the record as it was stored, and "state": "valid". Exit 0, 1 for a refusal, 2 for a
 usage error. Standard library only; the checks are lib/refusal.py's (plan_read)."""
 import json
 import os
@@ -21,11 +22,16 @@ import refusal  # noqa: E402
 USAGE = "usage: qargi plan show TOKEN [--json]"
 
 
+def esc(value):
+    """The value with each control character (C0, DEL, C1) written as \\xNN: a value is text the lead chose, and a terminal must not act on it."""
+    return "".join("\\x%02x" % ord(c) if ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f else c for c in value)
+
+
 def text_of(rec):
     out = ["plan %s: %s (%s)" % (rec["token"], rec["verb"], rec["context"]),
-           "target: %s %s" % (rec["target"]["project"], rec["target"]["object"])]
+           "target: %s %s" % (rec["target"]["project"], esc(rec["target"]["object"]))]
     width = max([len(x["label"]) for x in rec["lines"]] or [0])
-    out += ["  %s  %s" % (x["label"].ljust(width), x["value"]) for x in rec["lines"]]
+    out += ["  %s  %s" % (x["label"].ljust(width), esc(x["value"])) for x in rec["lines"]]
     out += ["created: " + rec["created"], "expires: " + rec["expires"]]
     return "\n".join(out) + "\n"
 
