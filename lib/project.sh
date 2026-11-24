@@ -752,7 +752,7 @@ verify_env_gate() {
   oid=$(venv_py id "$VENV_OLD"); nid=$(venv_py id "$VENV_NEW")
   tok=$(printf '%s\n%s\n%s\n' "$1" "$oid" "$nid" | plan_token --basis "project:name old-declaration:sha new-declaration:sha" --verb "project $verb" --target "$1:$2")
   why=$(sed 1d <<<"$why" | paste -sd, | sed 's/,/, /g')
-  if [ -n "$APPROVED" ] && [ "${PLAN_ARG:-}" = "$tok" ]; then
+  if [ -n "$APPROVED" ] && [ -n "$tok" ] && [ "${PLAN_ARG:-}" = "$tok" ]; then   # an empty token is no plan: it never equals an empty --plan
     VENV_LOOSE="${oid:-off} -> ${nid:-off}: $why"
     return 0
   fi
@@ -831,7 +831,7 @@ print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
 PY
     ) || exit 1
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" \
-          | plan_token --basis "directory:path methodology:name url:name deployment:name provider:name provider-local:name provider-cloud:name files:name" --verb "project new" --target "$n:${dir:0:200}")
+          | plan_token --basis "directory:path methodology:name url:name deployment:name provider:name provider-local:name provider-cloud:name files:name" --verb "project new" --target "$n:$(printf '%s' "${dir//[[:cntrl:]]/?}" | cut -c1-200)")
     echo "new project $n with the $meth methodology at $dir"
     echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
     echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"
@@ -1185,7 +1185,7 @@ PY
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
     fi
-    [ -n "$tok" ] && need_plan "$tok"
+    need_plan "$tok"
     audit_log "project:$verb" "$n ${res:-all} $tok"
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"

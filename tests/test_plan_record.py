@@ -55,6 +55,15 @@ def keep(text, labels, verb="release start", target="acme:0.4.0", **env):
     return rc, out.strip(), err
 
 
+def defect_keeps_the_token(case, text, labels, **kw):
+    """A plan the record refuses (a bad label, verb or target) is a defect on standard error, and still prints the token of its input and exits 0: the record never decides a token."""
+    rc, tok, err = keep(text, labels, **kw)
+    case.assertEqual(rc, 0, err)
+    case.assertEqual(tok, hashlib.sha256(text.encode()).hexdigest()[:12])
+    case.assertIn("qargi: defect:", err)
+    case.assertFalse(os.path.exists(os.path.join(plans_dir(), tok + ".json")), "a refused plan keeps no record")
+
+
 def stored(token):
     with open(os.path.join(plans_dir(), token + ".json"), encoding="utf-8") as f:
         return json.load(f)
@@ -132,11 +141,10 @@ class TheRecord(Scratch):
     def test_a_label_without_a_kind_is_a_name_and_a_kind_that_is_not_one_is_a_defect(self):
         _, tok, _ = keep("a\nb\n", "plain other:count")
         self.assertEqual([x["kind"] for x in stored(tok)["lines"]], ["name", "count"])
-        rc, out, err = keep("a\n", "x:secret")
-        self.assertEqual(rc, 70, err)
+        defect_keeps_the_token(self, "a\n", "x:secret")
         for bad in ("x:", "X:name", "x:name:ref"):
             with self.subTest(labels=bad):
-                self.assertEqual(keep("a\n", bad)[0], 70)
+                defect_keeps_the_token(self, "a\n", bad)
 
     def test_the_verb_and_the_target_are_the_call_sites_to_say_and_a_bad_one_is_a_defect(self):
         rc, out, err = sh('echo x | plan_token --basis "line"')
@@ -148,7 +156,7 @@ class TheRecord(Scratch):
         self.assertEqual(rc, 2)
         for verb, target in (("Release Start", "acme:0.4.0"), ("release start", "acme"), ("release start", "Acme:x"), ("release start", ":x"), ("release start", "acme:")):
             with self.subTest(verb=verb, target=target):
-                self.assertEqual(keep("a\n", "x", verb=verb, target=target)[0], 70)
+                defect_keeps_the_token(self, "a\n", "x", verb=verb, target=target)
         _, tok, _ = keep("a\n", "x", target="acme:a:b c")
         self.assertEqual(stored(tok)["target"], {"project": "acme", "object": "a:b c"}, "the object is what follows the first colon")
 

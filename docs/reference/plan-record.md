@@ -6,7 +6,7 @@ A verb that prints a plan token can keep the plan it hashed, so that a reader (a
 
 ## Which verbs keep it
 
-The plans whose hashed input is plain lines, or one line of words, keep it. Each is listed with its verb, its target (`PROJECT:OBJECT`) and its labels in order; a label written once for several lines is `label*`.
+The plans listed here keep it: the ones whose hashed input is plain lines or one line of words, and that a slice has reached (some plans of plain lines keep none yet: see [Plans that keep no record yet](#plans-that-keep-no-record-yet)). Each is listed with its verb, its target (`PROJECT:OBJECT`) and its labels in order; a label written once for several lines is `label*`.
 
 | Verb | Target object | Labels, in the order of the lines |
 | --- | --- | --- |
@@ -21,15 +21,19 @@ The plans whose hashed input is plain lines, or one line of words, keep it. Each
 | `release publish` | the version | `project version tag notes title asset* signature` |
 | `release site` | the version | `project version tag site-branch site-head tree` |
 | `feature verify`, `release verify` (the waiver of a `verify.environment` part, `--waive-environment`) | the feature or the version | `project branch head environment part* waiver` |
-| `project new` | the directory | `directory methodology url deployment provider provider-local provider-cloud files` |
-| `project set`, `project unset` (a loosening of `verify.environment`) | `verify.environment` | `project old-declaration new-declaration` |
+| `project new` | the directory, as given (a control character is shown as `?`; at most 200 characters) | `directory methodology url deployment provider provider-local provider-cloud files` |
+| `project set`, `project unset` (a loosening of `verify.environment`) | the path as given to the verb: `verify`, `verify.environment` or a path below it | `project old-declaration new-declaration` |
 | `provider accept` | the runtime and the surface | `runtime surface project reason` |
 | `instances init` (a change of the agent's model), `instances normalize`, `instances refresh-prompt` | the agent, or the instance | `agent`, `renames`, `prompt` |
 | `credential setup` | the repository (`owner/name`) | `grant` |
 | `skill accept`, `skill unaccept` | the skill | `accept`, `unaccept` |
-| `marshal key`, `marshal enable`, `marshal signers`, `marshal resign`, `marshal forget`, `marshal disable` | `marshal key`: the principal, under the project `machine`; the others: the remote, the signer, the feature, the feature, `shared-refs` | `words` |
+| `marshal key`, `marshal enable`, `marshal signers`, `marshal resign`, `marshal forget`, `marshal disable` | `marshal key`: the principal (control characters removed, at most 200 characters), under the project `machine`; the others: the remote, the signer, the feature, the feature, `shared-refs` | `words` |
 
-The other plans keep nothing yet (see [Plans that keep no record yet](#plans-that-keep-no-record-yet)): `qargi plan show` of their tokens is `plan-unknown`. Nothing is kept in a dry run (`QARGI_DRY=1`).
+The plans not listed keep nothing yet (see [Plans that keep no record yet](#plans-that-keep-no-record-yet)): `qargi plan show` of their tokens is `plan-unknown`. Nothing is kept in a dry run (`QARGI_DRY=1`).
+
+**Two names that are not projects.** A target is `PROJECT:OBJECT`, and two plans have no project to name. `machine` is the project of `marshal key init`: the signing key belongs to this machine, not to a project, so the target is `machine:PRINCIPAL`. `cloud` is the project of `instances init` when the name of the deployment gives no valid project name (the plan is made before the instance is named, so the target is `cloud:AGENT-ID`). No project of either name is made by these verbs.
+
+**The record never decides a token.** The token is the first 12 digits of the sha256 of the hashed text, whatever happens to its record. When the record cannot be kept (no temporary file can be made, the target or the clock is refused by `lib/refusal.py`, the state cannot be written), the plan still prints its token, with a note on standard error, and the record is simply not there (`plan show` says `plan-unknown`). No gate accepts an empty token: `need_plan` stops with an internal error when the verb gives it none, so an apply that was given no `--plan` is never taken for the plan of a record that failed. The text a user chose for a target (a directory of `project new`, a principal of `marshal key init`) is cleaned for the target only (control characters removed or shown as `?`, cut to 200 characters); the hashed text keeps it as given.
 
 **One line of words.** The record's lines are the hashed text split on a newline, so a plan that is one `printf` of words, or of fields joined by `|` (the marshal verbs, `instances init` and `normalize`, `credential setup`, `skill accept` and `unaccept`) is one line with one label (`words`, `agent`, `renames`, `grant`, `accept`, `unaccept`): the words cannot be split into a label each without changing the bytes, so the token. `instances refresh-prompt` hashes `VERSION|PROMPT|MEMBERS`: its lines are the rendered system prompt, one entry for each line, with `VERSION|` in front of the first and `|MEMBERS` after the last, all under the label `prompt`; the record holds the prompt in clear, as the cloud agent will hold it. The `project new` record holds the files it would create as one line of JSON (`jq -S -c`), as the plan hashed it. A label that covers a variable number of lines, in the middle of a plan (the assets of `release publish`, the parts of a waiver), is given once for each line by the call site; the basis (`basis moved`) groups them.
 
@@ -83,7 +87,7 @@ The `problem` of a `plan-record-invalid` is one of these words:
 
 ## Plans that keep no record yet
 
-These plans call `plan_token` with no `--basis`, so `qargi plan show` of their tokens is `plan-unknown`. Each is left on purpose: what it hashes is a JSON document, the content of files, or a text that the verb builds for itself, not the plan a person reads, so a record of its lines would show nothing to approve. A decision for each is open (slice 3).
+These plans call `plan_token` with no `--basis`, so `qargi plan show` of their tokens is `plan-unknown`. Most are left on purpose: what they hash is a JSON document, the content of files, or a text that the verb builds for itself, not the plan a person reads, so a record of its lines would show nothing to approve. The plans of plain lines (`packs seed`, `provider enable` and `disable`, `local clean --orphans`) are left only because no slice has reached them. A decision for each is open (slice 3).
 
 | Where | Verb | What is hashed | Why it keeps nothing |
 | --- | --- | --- | --- |
@@ -94,6 +98,10 @@ These plans call `plan_token` with no `--basis`, so `qargi plan show` of their t
 | `lib/project.sh` | `project attach`, `project adopt` | `jq -S -c` of the answers, or of the plan's `basis` | a JSON document |
 | `lib/provision.sh` | `provision plan`, `provision apply` | the bytes of every rendered file, then one line of store ids, budget, name and environment | the content of files |
 | `lib/env_apply.py`, `lib/backlog.py` | `env plan`, `env apply`, `backlog done` | a JSON document (the dry run's output, its command, the host), and the parts of a backlog item joined by newlines | Python's own `plan_token`, over a JSON document or the item's text |
+| `lib/packs.sh` (`seed`) | `packs seed` | the sorted plan lines, as printed | plain lines that no slice has reached yet: a record would be one label for every line |
+| `lib/provider.sh` | `provider enable`, `provider disable` | the plan's own lines, as printed | plain lines that no slice has reached yet |
+| `lib/local.sh` | `local clean --orphans` | the directories it would remove, one to a line | plain lines that no slice has reached yet |
+| `lib/upgrade.sh` | `qargi upgrade` | the installed root and the two commits, hashed with `sha256sum`, not with `plan_token` | no lines: a hash of three values |
+| `lib/project_link.py` | `project link`, `project unlink` | the verb and the facts of each link, as JSON, hashed in Python | a token of JSON facts, made in Python |
+| `lib/linker.py`, `lib/packs_link.py` | `packs link`, `packs unlink` | the facts of the link, as JSON, hashed in Python | a token of JSON facts, made in Python |
 | `lib/gitflow.sh` (`SE_KEY`) | none | the project, the branch, the head and the declaration | no plan: it names the files that count the waivers of a head and is never shown to an owner (the waiver token, `suite_env_token`, keeps a record) |
-
-Three more hash lines, and are left only because they were not in the list slice 2 was given: `packs seed` (`lib/packs.sh`, the sorted plan lines as printed), `provider enable` and `provider disable` (`lib/provider.sh`, the plan's own lines as printed), and `local clean --orphans` (`lib/local.sh`, the directories it would remove, one to a line). A record of each would be one label for every line.
