@@ -750,7 +750,7 @@ verify_env_gate() {
     *) echo "qargi: verify.environment could not be compared with the approved declaration; nothing changed" >&2; return 1;;
   esac
   oid=$(venv_py id "$VENV_OLD"); nid=$(venv_py id "$VENV_NEW")
-  tok=$(printf '%s\n%s\n%s\n' "$1" "$oid" "$nid" | plan_token)
+  tok=$(printf '%s\n%s\n%s\n' "$1" "$oid" "$nid" | plan_token --basis "project:name old-declaration:sha new-declaration:sha" --verb "project $verb" --target "$1:$2")
   why=$(sed 1d <<<"$why" | paste -sd, | sed 's/,/, /g')
   if [ -n "$APPROVED" ] && [ "${PLAN_ARG:-}" = "$tok" ]; then
     VENV_LOOSE="${oid:-off} -> ${nid:-off}: $why"
@@ -830,7 +830,8 @@ import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
 PY
     ) || exit 1
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" \
+          | plan_token --basis "directory:path methodology:name url:name deployment:name provider:name provider-local:name provider-cloud:name files:name" --verb "project new" --target "$n:${dir:0:200}")
     echo "new project $n with the $meth methodology at $dir"
     echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
     echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"

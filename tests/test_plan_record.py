@@ -108,6 +108,19 @@ class TheRecord(Scratch):
         self.assertEqual([(x["label"], x["kind"], x["value"]) for x in stored(tok)["lines"]],
                          [("project", "name", "p"), ("remote", "count", "r"), ("branches", "ref", "b1"), ("branches", "ref", "b2"), ("branches", "ref", "b3")])
 
+    def test_a_label_given_again_for_the_next_line_covers_both_and_the_basis_groups_them(self):
+        # a list in the middle of a plan (the assets of a publish, the parts of a waiver) has as many words as it has lines: the basis key that plan-stale reads
+        # keeps one entry for the label, with the lines of all its words, so that `moved` names the label once and sees a change of any of its lines
+        text = "p\nv\nx1\nx2\nx3\nsig\n"
+        rc, tok, err = keep(text, "project:name version:name part:label part:label part:label sig:sha")
+        self.assertEqual((rc, err), (0, ""))
+        rec = stored(tok)
+        self.assertEqual([x["label"] for x in rec["lines"]], ["project", "version", "part", "part", "part", "sig"])
+        self.assertEqual(rec["basis"], [{"label": "project", "lines": ["p"]}, {"label": "version", "lines": ["v"]}, {"label": "part", "lines": ["x1", "x2", "x3"]}, {"label": "sig", "lines": ["sig"]}])
+        self.assertEqual(rebuild(rec), text)
+        _, tok2, _ = keep("p\nv\nx1\nx2\nCHANGED\nsig\n", "project:name version:name part:label part:label part:label sig:sha")
+        self.assertEqual(R.basis_moved(tok, tok2, self.state), ["part"])
+
     def test_a_label_list_longer_than_the_input_has_entries_only_for_the_lines_and_a_shorter_one_takes_the_rest(self):
         _, tok, _ = keep("a\nb\n", "one:sha two:sha three:sha four:sha")
         rec = stored(tok)

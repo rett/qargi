@@ -54,7 +54,7 @@ slug() { printf '%s' "$1" | tr '[:upper:] _' '[:lower:]--' | tr -cd 'a-z0-9-' | 
 init_cloud() {
   need_asked; ant_ok
   [ -n "$DEP" ] || usage_die "init --location cloud needs --deployment ID"
-  local d name rec run sid
+  local d name rec run sid pj
   d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot read deployment $DEP"
   [ "$(jq -r '.archived_at' <<<"$d")" = null ] || die "deployment is archived"
   local ag aid aver cur_m cur_e new_m new_e
@@ -71,7 +71,8 @@ init_cloud() {
   new_m=${MODEL:-$cur_m}; new_e=${EFFORT:-$cur_e}
   if [ "$new_m" != "$cur_m" ] || { [ -n "$EFFORT" ] && [ "$new_e" != "$cur_e" ]; }; then
     echo "PLAN: agent $aid v$aver: model $cur_m -> $new_m, effort $cur_e -> $new_e (creates a new agent version and re-points the deployment)"
-    ptok=$(printf '%s' "$aid|$aver|$new_m|$new_e" | plan_token)
+    pj=${NAME:-$(slug "$(jq -r .name <<<"$d")")}; pj=${pj%%-*}; valid_project "$pj" || pj=cloud   # the project of the instance this makes (its name is checked below, after the plan)
+    ptok=$(printf '%s' "$aid|$aver|$new_m|$new_e" | plan_token --basis "agent:name" --verb "instances init" --target "$pj:$aid")
     [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
     need_plan "$ptok"; audit_log agent-update "$aid $cur_m->$new_m $cur_e->$new_e"
     ant beta:agents update --agent-id "$aid" --version "$aver" --model "{id: $new_m$([ "$new_e" = default ] || printf ', effort: %s' "$new_e")}" >/dev/null 2>&1 || die "agent update failed"
@@ -213,7 +214,7 @@ normalize() {
   show deployment "$(jq -r .name <<<"$dep")" "$(res_name deployment)"
   [ "${2:-}" != plan ] || return 0
   [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
-  local ntok; ntok=$(printf '%s|%s' "$n" "$plan_text" | plan_token)
+  local ntok; ntok=$(printf '%s|%s' "$n" "$plan_text" | plan_token --basis "renames:name" --verb "instances normalize" --target "$PROJECT:$n")
   [ -n "$APPROVED" ] || { echo "plan token: $ntok   (re-run with --plan $ntok --approved \"<the user's go-ahead>\" to rename; nothing changed)"; return 0; }
   need_plan "$ntok"; audit_log normalize "$n"
   if [ "$(jq -r .name <<<"$ag")" != "$(res_name agent)" ]; then
@@ -292,7 +293,7 @@ refresh_prompt() {
     jq -r --argjson old "$members" '.[] | . as $m | ($old[] | select(.id == $m.id) | .version) as $o | select($o != $m.version) | "  \(.id): v\($o) -> v\(.version)"' <<<"$newm"
     mflag=(--multiagent "$(jq -nc --arg t "$(jq -r '.multiagent.type // "coordinator"' <<<"$ag")" --argjson m "$newm" '{type:$t,agents:($m|map({type:"agent",id:.id,version:.version}))}')")
   fi
-  ptok=$(printf '%s|%s|%s' "$aver" "$new" "$newm" | plan_token)
+  ptok=$(printf '%s|%s|%s' "$aver" "$new" "$newm" | plan_token --basis "prompt:name" --verb "instances refresh-prompt" --target "$PROJECT:$n")
   [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
   need_plan "$ptok"; audit_log refresh-prompt "$n $aid v$aver"
   ant beta:agents update --agent-id "$aid" --version "$aver" --system "$new" ${mflag[@]+"${mflag[@]}"} </dev/null >/dev/null 2>&1 || die "agent update failed"

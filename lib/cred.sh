@@ -101,7 +101,7 @@ case $verb in
     if [ "$nw" -gt 0 ] && [ -z "$MORE" ]; then die "the token can also write to:$writable. Limit it to $slug (or accept this knowingly with --allow-more-repos)"; fi
     dest=$DA_CONF/credentials/$PROJECT-lead-push
     echo "plan: store the token in $dest (mode 600); create the vault $PROJECT-vault-lead with a bearer credential for the GitHub tool; attach it to the lead's deployment; record it in the project answers (lead.push)"
-    tok_plan=$(printf '%s|%s|%s' "$PROJECT" "$slug" "$dest" | plan_token)
+    tok_plan=$(printf '%s|%s|%s' "$PROJECT" "$slug" "$dest" | plan_token --basis "grant:name" --verb "credential setup" --target "$PROJECT:$slug")
     if [ -z "$APPROVED" ]; then echo "plan token: $tok_plan   (apply with: --plan $tok_plan --approved \"<the user's go-ahead>\" --asked \"...\"; nothing was changed)"; exit 0; fi
     need_asked; ant_ok; need_plan "$tok_plan"; audit_log credential-setup "$PROJECT lead-push $slug"
     mkdir -p "$(dirname "$dest")"; chmod 700 "$(dirname "$dest")"

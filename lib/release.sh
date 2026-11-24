@@ -516,7 +516,7 @@ release_finish_resume() {
   s0=$(jq -r '.refs[1].local_old' "$f"); rs0=$(jq -r '.refs[1].origin_old' "$f"); ns=$(jq -r '.refs[1].new' "$f"); tagsha=$(jq -r '.refs[2].new' "$f")
   h=$(jq -r '.ctx.head' "$f"); second=$(jq -r '.ctx.second' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); IGNORED=$(jq -r '.ctx.ignored' "$f"); IGNORE_CHECKS=$(jq -r '.ctx.ignore_checks' "$f")
   rb0=$(jq -r '.ctx.rb0' "$f"); k1=$(jq -r '.ctx.k1' "$f"); k2=$(jq -r '.ctx.k2' "$f"); PUSHED=''; [ "$(jq -r '.pushed' "$f")" != true ] || PUSHED=1
-  tok=$(jq -S -c 'del(.done)' "$f" | plan_token)
+  tok=$(jq -S -c 'del(.done)' "$f" | plan_token --basis "record:name" --verb "release finish" --target "$PROJ:$VER")
   echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
   echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
@@ -1326,7 +1326,7 @@ case $verb in
       fi
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token --basis "project:name branch:ref head:sha second:ref master:sha second-head:sha keep:label ignore-checks:label" --verb "release finish" --target "$PROJ:$VER")
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     # the commits the lead made with git on the branch (a fix, the entries of a hotfix), which the deletion takes into the journal (journal_reach): how
     # many, and from where to where. For origin's branch when it is at the head that is released, as the apply requires (a push by hand is counted there)
@@ -1565,7 +1565,10 @@ case $verb in
         || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
       stok=$(sha256sum < "$SIGNREC")
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" | plan_token)
+    # the lines: project, version, tag commit, notes hash, title, one line for each asset (ahash ends in a newline, so the line it leaves is empty: one more), the signature record's hash
+    alabels=''; an=$(grep -c '' <<<"$ahash"); while [ "$an" -gt 0 ]; do alabels+=' asset:label'; an=$((an - 1)); done
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" \
+          | plan_token --basis "project:name version:name tag:sha notes:sha title:name${alabels} signature:sha" --verb "release publish" --target "$PROJ:$VER")
     echo "publish the GitHub release of tag $VER of $PROJ: tag at ${tc:0:7} ($(g log -1 --format=%s "$tc"))"
     echo "notes ($nsrc):"
     sed 's/^/  | /' "$notes"
@@ -1623,7 +1626,7 @@ case $verb in
     git -C "$WT" add -A -- "$SITE_CONF"
     if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
     tree=$(git -C "$WT" write-tree)
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token --basis "project:name version:name tag:sha site-branch:ref site-head:sha tree:sha" --verb "release site" --target "$PROJ:$VER")
     echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
     echo "commit it on $SITE_BR: $SITE_CONF records release $VER; the build only checks the site, _site/ is not committed (and one an earlier build committed is removed); nothing is pushed"
     printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'

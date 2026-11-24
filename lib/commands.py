@@ -1416,7 +1416,7 @@ COMMANDS = {
     "plan": {
         "summary": "The stored record of a plan, as a verb kept it when it printed its token",
         "desc": ("A verb that prints a plan token keeps the plan it hashed in STATE/plans/TOKEN.json (mode 600, seven days; nothing in a dry run), so that a stale token can name what moved "
-                 "and a reader can show the plan again. Five verbs keep the record so far: branch prune, feature finish, release plan, release start and release push; the plans of the others are not kept yet."),
+                 "and a reader can show the plan again. The plans whose input is plain lines or one line of words keep it (docs/reference/plan-record.md lists them); the plans of a JSON document or a digest are not kept yet."),
         "scripts": ["plan.py"],
         "verbs": {
             "show": verb("Print the stored record of a plan token: the verb, what it acts on, the labelled lines that were hashed, when it was made and when its seven days end", [("TOKEN", "none")],
@@ -2086,7 +2086,7 @@ TOPICS = {
         "with a null token. A verb that describes a --json option of its own keeps it.",
         "A plan that a verb printed is kept so that it can be shown again: qargi plan show TOKEN (--json for the record) prints the verb, what it acts on and the labelled lines that were hashed, "
         "with the values in clear and a kind for each (ref, path, name, sha, label or count), from STATE/plans/TOKEN.json (mode 600, seven days, nothing in a dry run). It changes nothing and works in a dry run. "
-        "Five verbs keep it so far (branch prune, feature finish, release plan, release start and release push); a token of another verb is not known to it (plan-unknown). The record is a draft, schema qargi.plan/0, and "
+        "The plans whose input is plain lines or one line of words keep it (docs/reference/plan-record.md lists them); a token of a plan that keeps none is not known to it (plan-unknown). The record is a draft, schema qargi.plan/0, and "
         "the token stays the first 12 hex digits of its input_sha256: a record whose lines (or input_newline) were edited no longer hashes to its token and is not shown (plan-record-invalid), and one past its seven days is not shown either (plan-expired). The hash binds the lines only: the verb, the target, the context, the labels, the kinds and the times are not under it. They are checked for their form, and expires must be created plus seven days, but a hand edit that keeps them well formed (another verb, say) is shown as it stands: the file belongs to the owner, and the record is a reading aid, not a signature; "
         "applying a plan does not check its age.",
         "start and send require --asked \"your request\" naming the cloud instance. The gate records it in the state directory's "
