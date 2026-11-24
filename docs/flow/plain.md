@@ -15,9 +15,13 @@ comes back as patches, the lead checks them, applies them on a branch of its own
 ## Start a project
 
 ```sh
-qargi project new notes --methodology plain --url https://github.com/me/notes
-qargi project new notes --methodology plain --url https://github.com/me/notes --plan TOKEN --approved "..."
+qargi project new notes --methodology plain --url https://github.com/me/notes --provider PROVIDER
+qargi project new notes --methodology plain --url https://github.com/me/notes --provider PROVIDER --plan TOKEN --approved "..."
 ```
+
+`--provider PROVIDER` names the runtime the project uses (one name for both surfaces; `--provider-local` and `--provider-cloud` set one each). It
+is optional for the project itself, but a review run, which is looked up through the project's provider, needs `models.provider` set first
+(`qargi project set notes models.provider PROVIDER`) when the project was made without it.
 
 The plan lists the branch `main` and five files: `README.md`, `CONTRIBUTING.md`, `AGENTS.md` (with its Development environment section),
 `artifacts/.gitkeep` and `BACKLOG.md`. The documents go under `artifacts/`. With `--url` the answers are stored too: the methodology `plain`,
@@ -50,4 +54,7 @@ branch of a plain project, as they accept one of `develop` and `master` in a git
 A methodology says `"flow": "plain"` in its `methodology.json` (without `flow` it is `gitflow`). `qargi methodology check` then requires exactly one
 long-lived branch and a `task` pattern with `{slug}`, and refuses `branches.feature`, `release`, `hotfix` and `tag`, `after_release`, `release`
 and `versioning`, each with its reason. The shipped `plain` is under `methodologies/plain/`; yours can live beside it under
-`~/.qargi/config/methodologies/NAME/`.
+`~/.qargi/config/methodologies/NAME/`. The optional `work` is a list of steps, each a non-empty line of text. A `flow` that is not one of `gitflow` and
+`plain` (a misspelling, a list, `null`, a `methodology.json` that cannot be read) fails the check, and the flow verbs refuse such a project as they
+refuse a plain one; they never run it as git-flow. A project of a plain methodology has exactly one long-lived branch in `repo.long_lived`, and
+`qargi project validate` says so otherwise.

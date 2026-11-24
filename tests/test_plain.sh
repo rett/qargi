@@ -39,7 +39,11 @@ for c in '.branches.release = "release/{version}"|a plain methodology has no bra
          '.branches.task = "agent/x"|branches.task is a pattern containing {slug}' \
          '.after_release = [{"id":"site","when":"site.enabled","next":"qargi release site {version}"}]|a plain methodology has no after_release' \
          '.versioning = {"file":"VERSION"}|a plain methodology has no versioning' \
-         '.flow = "trunk"|flow is one of gitflow, plain'; do
+         '.flow = "trunk"|flow is one of gitflow, plain' \
+         '.work = "a line"|work is a list of steps, each a line of text' \
+         '.work = ["a step", ""]|work is a list of steps, each a line of text' \
+         '.work = ["a step", 3]|work is a list of steps, each a line of text' \
+         '.work = ["two\nlines"]|work is a list of steps, each a line of text'; do
   f=${c%%|*}; want=${c#*|}
   out=$(variant "$f"); rc=0; $DA methodology check mine >/dev/null 2>&1 || rc=$?
   [ "$rc" = 1 ] && grep -qF -- "mine: " <<<"$out" && grep -qF -- "$want" <<<"$out" && ok "a plain methodology with ($f) fails the check, naming: $want" || no "variant $f: rc=$rc $out"
@@ -84,7 +88,12 @@ jq '.methodology = "mine"' "$T/tp.json" > "$T/tpb.json"
 out=$($DA project validate "$T/tpb.json" 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "^methodology: mine: a plain methodology has no branches.release" <<<"$out" && ok "project validate refuses a methodology that methodology check does not pass, with the reason" || no "validate failing methodology: rc=$rc $out"
 rm -rf "$M"
-jq 'del(.methodology)' "$T/tp.json" > "$T/tpb.json"; $DA project validate "$T/tpb.json" >/dev/null 2>&1 && ok "an answer with no methodology still validates (gitflow)" || no "no methodology answer"
+jq '.repo.long_lived = ["master", "develop"]' "$T/tp.json" > "$T/tpb.json"
+out=$($DA project validate "$T/tpb.json" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "^repo.long_lived: a project of the plain methodology plain has exactly one long-lived branch" <<<"$out" && ok "project validate refuses a plain project with two long-lived branches" || no "validate two long-lived: rc=$rc $out"
+jq '.repo.long_lived = ["develop", "main"]' "$T/tp.json" > "$T/tpb.json"
+$DA project validate "$T/tpb.json" >/dev/null 2>&1 && no "validate accepted two long-lived branches in the other order" || ok "(in either order of the answers)"
+jq 'del(.methodology)' "$T/tp.json" > "$T/tpb.json";$DA project validate "$T/tpb.json" >/dev/null 2>&1 && ok "an answer with no methodology still validates (gitflow)" || no "no methodology answer"
 
 # --- a new plain project, end to end
 R=$T/notes
@@ -125,7 +134,7 @@ refused() { # DESCRIPTION VERB-AS-SAID ARGS... -> the refusal of a flow verb
   local d=$1 v=$2; shift 2
   out=$($DA "$@" --project notes 2>&1); rc=$?
   [ "$rc" = 2 ] && head -n 1 <<<"$out" | grep -Eq "^qargi-refusal/1 \{\"code\":\"methodology-no-flow\",\"exit\":2,\"verb\":\"$v\",\"project\":\"notes\"" \
-    && grep -q "^qargi: refused \[methodology-no-flow\] $v is refused: the project follows the plain methodology, which has no feature, release or hotfix flow$" <<<"$out" \
+    && grep -q "^qargi: refused \[methodology-no-flow\] $v is refused: the project follows the plain methodology, which has no feature, release or hotfix flow (its flow is plain, or cannot be read: qargi methodology check)$" <<<"$out" \
     && grep -q "qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog" <<<"$out" \
     && ok "$d: exit 2, methodology-no-flow, naming the methodology and the verbs that apply" || no "$d: rc=$rc $out"
 }
@@ -143,6 +152,21 @@ refused "changelog renumber" "changelog renumber" changelog renumber
 # a gitflow project is not refused: the same verb runs there
 out=$($DA feature list --project gfp 2>&1); rc=$?
 [ "$rc" = 0 ] && ! grep -q "methodology-no-flow" <<<"$out" && ok "the same verb on a gitflow project is not refused" || no "gitflow feature list: rc=$rc $out"
+
+# a flow that is not a valid value is not run as gitflow: the flow verbs refuse it as they refuse plain (a methodology that is not found keeps the old behaviour)
+jq '.methodology = "mine"' "$T/c/projects/notes.json" > "$T/c/projects/odd.json"
+for v in '"Plain"' '["plain"]' 'null' '7' '""'; do
+  variant ".flow = $v" >/dev/null
+  out=$($DA feature list --project odd 2>&1); rc=$?
+  [ "$rc" = 2 ] && grep -q "^qargi: refused \[methodology-no-flow\] feature list is refused: the project follows the mine methodology" <<<"$out" && ok "a methodology with flow $v is refused by the flow verbs (methodology-no-flow), never run as gitflow" || no "flow $v: rc=$rc $out"
+done
+variant '.' >/dev/null; printf '{"name": "mine", "flow": ' > "$M/methodology.json"
+out=$($DA feature list --project odd 2>&1); rc=$?
+[ "$rc" = 2 ] && grep -q "\[methodology-no-flow\] feature list is refused" <<<"$out" && ok "a methodology.json that cannot be read is refused by the flow verbs too" || no "unreadable: rc=$rc $out"
+rm -rf "$M"; out=$($DA feature list --project odd 2>&1)
+! grep -q "methodology-no-flow" <<<"$out" && ok "a methodology that is not found is not refused by its flow: the verb runs as it did" || no "absent methodology: $out"
+rm -f "$T/c/projects/odd.json"
+[ "$(snap)" = "$before" ] && ok "(and those refusals changed nothing)" || no "the odd-flow refusals changed something"
 
 # --- the verbs that apply, with --base main: backlog, a write run on a document, review check and apply, a review run, a run outside its SCOPE
 $DA backlog add first-note "write the first note" --project notes >/dev/null 2>&1 && grep -qx -- '- \[first-note\] write the first note' "$R/BACKLOG.md" && $DA backlog list --project notes 2>&1 | grep -q "first-note" \
@@ -216,7 +240,31 @@ tip=$(git -C "$R" rev-parse main); git -C "$R" update-ref refs/heads/main "$(git
 out=$($DA local verify "$RUN3" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "branch rewritten (not a fast-forward): refs/heads/main" <<<"$out" && ok "a rewind of main is refused: only a fast-forward of the one long-lived branch is the lead's own move" || no "rewind: rc=$rc $out"
 git -C "$R" update-ref refs/heads/main "$tip"
-$DA local verify "$RUN3" >/dev/null 2>&1 && ok "with main put back the run verifies again" || no "verify after restoring main"
+# the registry's snapshot of the answers holds the methodology of a plain project and nothing of the sort for a gitflow one
+snapof() { jq -c --arg b "$(basename "$1")" 'select((.run | type) == "string" and (.run | endswith("/" + $b))) | .answers' "$T/s/local-runs.jsonl"; }
+[ "$(snapof "$RUN3" | jq -r '.methodology')" = plain ] && ok "the registry's snapshot of a plain project's run has methodology plain" || no "plain snapshot: $(snapof "$RUN3")"
+RUNG=$($DA local prepare --repo "$T/gfp" --base develop --slug gf --task-file "$T/task.txt" --done true --scratch "$T/scr" 2>/dev/null | sed -n 's/^RUN=//p')
+[ -n "$RUNG" ] && [ -n "$(snapof "$RUNG")" ] && [ "$(snapof "$RUNG" | jq 'has("methodology")')" = false ] && [ "$(snapof "$RUNG" | jq -r '.repo.long_lived | join(",")')" = "master,develop" ] \
+  && ok "the snapshot of a gitflow project's run has no methodology key (a gitflow run's record is what it was)" || no "gitflow snapshot: ${RUNG:-no run} $([ -z "$RUNG" ] || snapof "$RUNG")"
+[ -z "$RUNG" ] || $DA local clean "$RUNG" --discard >/dev/null 2>&1
 $DA local clean "$RUN3" --discard >/dev/null 2>&1
+
+# the one long-lived branch is fast-forwarded, never created: with main gone when the run was prepared, a main made after the first passing verify is refused,
+# as the creation of develop or master is in a git-flow project (the run is cut from another branch, agent/first)
+tip=$(git -C "$R" rev-parse main)
+git -C "$R" checkout -q --detach && git -C "$R" branch -q -D main
+RUN4=$($DA local prepare --repo "$R" --base agent/first --slug nomain --task-file "$T/task.txt" --done 'test -s artifacts/d.md' --scope artifacts/ --scratch "$T/scr" 2>/dev/null | sed -n 's/^RUN=//p')
+if [ -n "$RUN4" ]; then
+  member "$RUN4" artifacts/d.md "# Fourth note" "Notes: write the fourth note"
+  $DA local verify "$RUN4" >/dev/null 2>&1 && ok "(setup) a run prepared while main did not exist verifies" || no "(setup) verify of the run prepared without main"
+  git -C "$R" branch main "$tip"
+  out=$($DA local verify "$RUN4" 2>&1); rc=$?
+  [ "$rc" = 2 ] && grep -q "branch created, not an allowed branch: refs/heads/main" <<<"$out" && ok "main created after a passing verify is refused: the one long-lived branch is fast-forwarded, never created" || no "created main: rc=$rc $out"
+  $DA local clean "$RUN4" --discard >/dev/null 2>&1
+else
+  no "a run could not be prepared while main did not exist"
+  git -C "$R" branch main "$tip"
+fi
+git -C "$R" checkout -q main
 
 exit $fail

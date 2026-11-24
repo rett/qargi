@@ -464,7 +464,8 @@ compare() {
           echo "branch rewritten (not a fast-forward): $name $old -> $new$why"; bad=1; continue
         fi
         if [ -z "$old" ] && allowed "$name"; then
-          case $name in refs/heads/develop|refs/heads/master) ;; *) ACC[$k]=1; echo "$short created (a lead-side branch after the run's passing verify)" >> "$acc"; continue;; esac
+          # a long-lived branch (develop, master, the plain project's one branch) is fast-forwarded, never created
+          case $name in refs/heads/develop|refs/heads/master) ;; *) if [ -z "$plainm" ] || [ "$name" != "refs/heads/$plainm" ]; then ACC[$k]=1; echo "$short created (a lead-side branch after the run's passing verify)" >> "$acc"; continue; fi;; esac
         fi
         if [ -z "$new" ]; then echo "branch deleted: $name (was $old)$why"
         elif [ -z "$old" ]; then echo "branch created, not an allowed branch: $name $new$why"

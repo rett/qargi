@@ -252,10 +252,10 @@ compares them with that page.
 ### methodology-no-flow
 
 - Rule: A verb of the git-flow shape runs only on a project whose methodology has that flow.
-- Why: the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there.
+- Why: the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there; a methodology whose flow cannot be read is not run as git-flow either, because that would be a guess.
 - Exit 2, live.
 - Fields: `verb` (verb), `methodology` (label).
-- Message: `{verb} is refused: the project follows the {methodology} methodology, which has no feature, release or hotfix flow`
+- Message: `{verb} is refused: the project follows the {methodology} methodology, which has no feature, release or hotfix flow (its flow is plain, or cannot be read: qargi methodology check)`
 - Next, for a lead: work goes on a branch cut from the project's one long-lived branch: qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog; the feature, release and hotfix verbs belong to a methodology of the git-flow shape
 
 ## Class plan

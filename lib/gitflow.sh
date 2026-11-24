@@ -1170,7 +1170,9 @@ backlog_note() {
 # project_load [FLOW_VERB]: PROJ (or inferred) -> af, REPO, TESTCMD, METH. A flow verb (a verb that needs develop and master: feature, release, hotfix, the branch
 # housekeeping, the upstream line, the changelog numbers) passes its own name, as the refusal says it ("release start"): on a project whose methodology has no such
 # flow (methodology.json flow plain) it is refused here, once for all of them, before it reads or changes anything (methodology-no-flow, exit 2). A gitflow project,
-# and the project of a methodology that cannot be read, is never refused, and no other process starts for it. The verbs of the other kinds pass no name.
+# and the project of a methodology that is not found, is never refused, and no other process starts for it. A methodology whose flow is not gitflow (plain, or a
+# flow that cannot be read or is not a valid value: methodology.py flow says unknown) is refused too: the flow verbs fail closed, never run as gitflow. The verbs
+# of the other kinds pass no name.
 project_load() {
   [ -n "$PROJ" ] || PROJ=$(pymod help infer)
   af=$DA_CONF/projects/$PROJ.json
@@ -1179,7 +1181,7 @@ project_load() {
   [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "the answers for $PROJ name no local repository (repo.path)"
   METH=$(jq -r '.methodology // "gitflow"' "$af")
   if [ -n "${1:-}" ] && [ "$METH" != gitflow ] \
-     && [ "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import methodology as M; print(M.flow(sys.argv[2]))' "$QARGI_TOOL/lib" "$METH" 2>/dev/null)" = plain ]; then
+     && [ "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import methodology as M; print(M.flow(sys.argv[2]))' "$QARGI_TOOL/lib" "$METH" 2>/dev/null)" != gitflow ]; then
     local fv=$1 PROJECT=$PROJ   # PROJECT: the project of the contract line of the refusal
     case $fv in *[!a-z0-9\ :-]*|[!a-z]*) fv=${fv%% *};; esac   # a verb the user mistyped is named by its area only: the refusal takes a verb of lower-case words
     refuse methodology-no-flow verb="$fv" methodology="$METH"

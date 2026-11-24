@@ -157,6 +157,10 @@ def problems(name):
         for ph in set(PLACEHOLDER.findall(open(p, encoding="utf-8").read())):
             if ph not in params and ph not in GATE_VARS:
                 bad.append("%s: scaffold/%s uses {{%s}}, which params does not declare" % (name, src, ph))
+    if "work" in m:
+        wk = m["work"]
+        if not (isinstance(wk, list) and all(isinstance(x, str) and x.strip() and not G.has_line_break(x) for x in wk)):
+            bad.append("%s: work is a list of steps, each a line of text" % name)
     ar = m.get("after_release", [])
     if not isinstance(ar, list):
         bad.append("%s: after_release is a list of steps {id, when, next, help}" % name)
@@ -186,16 +190,22 @@ def problems(name):
 
 
 def flow(name):
-    """The flow of the methodology: gitflow (the default) or plain. A methodology that cannot be read counts as gitflow, the default."""
+    """The flow of the methodology: gitflow (the default: no flow key, or no such methodology), plain, or unknown (the file cannot be read, is not an
+    object, or its flow is not one of FLOWS). The flow verbs run on gitflow only, so an unknown flow is never taken for it."""
     f = find(name)
     if not f:
         return "gitflow"
     try:
         with open(os.path.join(f[1], "methodology.json")) as fh:
-            v = json.load(fh).get("flow", "gitflow")
-    except (OSError, ValueError, AttributeError):
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return "unknown"
+    if not isinstance(data, dict):
+        return "unknown"
+    if "flow" not in data:
         return "gitflow"
-    return v if v in FLOWS else "gitflow"
+    v = data["flow"]
+    return v if isinstance(v, str) and v in FLOWS else "unknown"
 
 
 def render(name, given):
