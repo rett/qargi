@@ -22,7 +22,7 @@ A verb that prints a plan token can keep the plan it hashed, so that a reader (a
 - `verb` is the verb as `lib/commands.py` names it, never the command line; `context` is `lead` (the owner's own session is not built).
 - `target` is the project and the one object the verb acts on (a feature, a version, the merged branches). The call site says it: `plan_token --basis LABELS --verb VERB --target PROJECT:OBJECT`; nothing is read off the command line.
 - `lines` holds one entry for each line that was hashed, in order. A label covers one line: where a label took several (the branches of a prune, the files of a start) it is written out for each. The values are in clear, lead-chosen ones included, because a card that showed a digest would ask for an approval blind; the file is the owner's, mode 600, beside `audit.log`. `kind` says what a value is, in the types of the refusal catalogue: `ref`, `path` and `name` are text the lead chose, `sha`, `label` and `count` are qargi's own or of a fixed shape. A consumer that sends the plan off the host digests the lead-chosen kinds itself. A label given without a kind is `name`, the conservative one. Nothing of a plan goes into a refusal line, a seat note or a result.
-- `input_sha256` and `input_newline` bind the record to the exact bytes that were hashed: `"\n".join(values)`, plus a final newline when `input_newline` is true, hashes to `input_sha256`, and its first 12 digits are `token`. A card is bound to `input_sha256`, not to the 48-bit token.
+- `input_sha256` and `input_newline` bind the record to the exact bytes that were hashed: `"\n".join(values)`, plus a final newline when `input_newline` is true, hashes to `input_sha256`, and its first 12 digits are `token`. A card is bound to `input_sha256`, not to the 48-bit token. **The hash covers the lines and `input_newline` only.** The verb, target, context, labels, kinds and times are not under it: `plan show` checks them for their form (the types of the refusal catalogue; `expires` must be exactly `created` plus seven days), but a hand edit that keeps them well formed, another verb or target for instance, is shown as it stands. The record is a reading aid in the file of the owner, not a signature.
 - `created` and `expires` are UTC; `expires` is `created` plus seven days. Expiry is not checked when a plan is applied.
 - `basis` is the older key that `basis moved` and `plan-stale moved=` read: the lines grouped by label. It is not part of the canonical record.
 
@@ -51,7 +51,7 @@ The `problem` of a `plan-record-invalid` is one of these words:
 | `too-large` | the file is larger than 1 MiB |
 | `bad-json` | the text is not JSON, not UTF-8, or nested too deeply to parse |
 | `unknown-schema` | the `schema` is not `qargi.plan/0` |
-| `bad-form` | a key is missing or extra, a value is of the wrong type or form, or the token is not the file's and the hash's |
+| `bad-form` | a key is missing or extra, a value is of the wrong type or form (the verb, target, context, label or kind among them), `expires` is not exactly `created` plus seven days, or the token is not the file's and the hash's |
 | `hash-mismatch` | the lines and `input_newline` do not hash to `input_sha256` |
 
 `QARGI_PLAN_NOW` (a UTC time such as `2026-11-22T10:00:00Z`) stands for the clock of the records in tests.

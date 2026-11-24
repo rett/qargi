@@ -328,7 +328,7 @@
     },
     "plan-record-invalid": {
       "rule": "A stored plan is shown only when its file is whole",
-      "why": "the file lies in the state of the owner, and a plan that is shown must be the one that was hashed: a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown",
+      "why": "the file lies in the state of the owner, and a plan that is shown must have the lines that were hashed (the hash binds the lines only, not the verb, the target, the labels or the times, which are checked for their form): a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown",
       "class": "plan",
       "exit": 1,
       "status": "live",

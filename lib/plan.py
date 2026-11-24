@@ -3,7 +3,8 @@
 
 It changes nothing: no file is made or removed (an expired record stays, the store prunes), no audit line, no lock; it works under QARGI_DRY=1. The directory and the
 file are opened without following a link, and the file must be a regular file of one link and mode 600. Before anything is printed the record is checked: its schema, its
-form, the hash of its lines against input_sha256, the token against that hash and against the name of the file. A record that fails is not shown:
+form, the hash of its lines against input_sha256, the token against that hash and against the name of the file. The hash binds the lines and input_newline only; the verb, the
+target, the context, the labels, the kinds and the times are checked for their form (expires must be created plus seven days), not signed. A record that fails is not shown:
 
   plan-unknown          not 12 hex digits, no such file, or a file of before the schema (no `schema` key)
   plan-record-invalid   a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, an unknown schema, a malformed record, or lines that do not hash to the token

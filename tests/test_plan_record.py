@@ -266,6 +266,11 @@ class ThePlanShow(Scratch):
         cases["lines"] = dict(base, lines="x")
         cases["time"] = dict(base, expires="tomorrow")
         cases["newline"] = dict(base, input_newline="yes")
+        cases["a verb of 81 characters"] = dict(base, verb="a" * 81)
+        cases["a label that is too long"] = dict(base, lines=[dict(x, label="a" * 42) for x in base["lines"]])
+        cases["a project that is not one"] = dict(base, target={"project": "Acme", "object": "0.4.0"})
+        cases["an object with a control character"] = dict(base, target={"project": "acme", "object": "0.4\x01"})
+        cases["a context of the wrong type"] = dict(base, context=["lead"])
         for name, rec in cases.items():
             with self.subTest(name):
                 self.rewrite(rec)
@@ -279,6 +284,27 @@ class ThePlanShow(Scratch):
                     self.assertIn("problem=bad-form", self.refused(self.tok, "plan-record-invalid")[0]["detail"])
                 else:
                     self.assertIn("problem=bad-json", self.refused(self.tok, "plan-record-invalid")[0]["detail"])
+
+    def test_a_record_that_does_not_live_seven_days_is_not_shown(self):
+        # the hash does not cover the times, so the form does: expires is exactly created plus seven days
+        for expires in ("2026-11-30T10:00:00Z", "2026-11-28T10:00:00Z", "2026-11-29T10:00:01Z", "2099-01-01T00:00:00Z", "2026-11-22T10:00:00Z"):
+            with self.subTest(expires=expires):
+                self.rewrite(dict(stored(self.tok), expires=expires))
+                self.assertIn("problem=bad-form", self.refused(self.tok, "plan-record-invalid", QARGI_PLAN_NOW="2026-11-23T10:00:00Z")[0]["detail"])
+        self.rewrite(dict(stored(self.tok), created="2026-11-22T10:00:01Z", expires="2026-11-29T10:00:01Z"))
+        self.assertEqual(qargi("plan", "show", self.tok, QARGI_PLAN_NOW="2026-11-23T10:00:00Z")[0], 0, "a record made at another time is whole")
+
+    def test_the_hash_binds_the_lines_only_so_an_edited_verb_target_or_label_is_still_shown(self):
+        # documents a limit of qargi.plan/0: a hand edit that keeps the verb, the target, the labels and the kinds well formed is not detected. The file is the owner's.
+        rec = stored(self.tok)
+        rec.update(verb="release push", target={"project": "other", "object": "9.9.9"})
+        rec["lines"] = [dict(x, label="renamed", kind="ref") for x in rec["lines"]]
+        self.rewrite(rec)
+        rc, out, err = qargi("plan", "show", self.tok, QARGI_PLAN_NOW="2026-11-23T10:00:00Z")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertIn("release push (lead)", out)
+        self.assertIn("target: other 9.9.9", out)
+        self.assertEqual(json.loads(qargi("plan", "show", self.tok, "--json", QARGI_PLAN_NOW="2026-11-23T10:00:00Z")[1])["state"], "valid")
 
     def test_a_file_of_the_wrong_mode_or_kind_is_not_shown(self):
         os.chmod(self.path, 0o644)

@@ -329,7 +329,8 @@ PLAN_KEYS = {"schema", "verb", "context", "target", "lines", "input_sha256", "in
 
 
 def plan_problem(rec, token):
-    """None when rec is a sound record of the token, else a word (a label) for what is wrong."""
+    """None when rec is a sound record of the token, else a word (a label) for what is wrong. The hash (input_sha256) binds the lines and input_newline only; the verb, the
+    target, the context, the labels, the kinds and the times are checked for their form (the types of the catalogue, and expires being created plus PLAN_DAYS days), not signed."""
     if not isinstance(rec, dict) or not PLAN_KEYS <= set(rec) or set(rec) - PLAN_KEYS - {"basis"}:
         return "bad-form"
     if rec["schema"] != PLAN_SCHEMA:
@@ -348,6 +349,8 @@ def plan_problem(rec, token):
     for key in ("created", "expires"):
         if not isinstance(rec[key], str) or not time_of(rec[key]):
             return "bad-form"
+    if time_of(rec["expires"]) != time_of(rec["created"]) + PLAN_DAYS * 86400:
+        return "bad-form"               # the hash does not cover the times: a record is kept seven days from its creation, so another life is an edit
     digest = rec["input_sha256"]
     if not (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) and rec["token"] == token and digest.startswith(token)):
         return "bad-form"
