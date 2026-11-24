@@ -103,7 +103,7 @@ class TheRecord(Scratch):
     def test_a_copy_of_the_plan_that_cannot_be_written_loses_the_record_never_the_token(self):
         """The temporary copy of the plan (a full TMPDIR) fails to write: the token is still the one of the input, not the hash of no bytes, and no record is kept under it."""
         for text in ("one\ntwo\n", "other plan\n"):
-            rc, out, err = sh(''tee() { command tee "$@" 2>/dev/null; return 1; }; cat() { :; }; '
+            rc, out, err = sh('tee() { command tee "$@" 2>/dev/null; return 1; }; cat() { :; }; '
                               'printf "%s" "$PLAN" | plan_token --basis "$LABELS" --verb "release start" --target "acme:0.4.0"', PLAN=text, LABELS="a b")
             self.assertEqual(rc, 0, err)
             self.assertEqual(out.strip(), hashlib.sha256(text.encode()).hexdigest()[:12], "the token of the input, whatever happens to the copy")
