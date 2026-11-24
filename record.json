@@ -4,19 +4,13 @@
  "goal": "0.3.6: rules visible early, runtime per profile, guard gaps, suite budgets, backlog",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-21T06:32:04Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-24T04:14:34Z",
- "finished_at": null,
+ "finished_at": "2026-11-24T04:14:53Z",
  "updated_by": "rett@arc",
- "rev": 27,
- "updated_at": "2026-11-24T04:14:34Z",
+ "rev": 28,
+ "updated_at": "2026-11-24T04:14:53Z",
  "feature": "release-036",
  "project": "qargi"
 }
