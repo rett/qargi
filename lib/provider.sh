@@ -103,7 +103,7 @@ if rec=$(jq -ce --arg s "$SURFACE" '.models.accept_no_barrier[$s] // empty' "$DA
   exit 0
 fi
 
-token=$(printf '%s\n%s\n%s\n%s\n' "$NAME" "$SURFACE" "$PROJ" "$ASKED" | plan_token)
+token=$(printf '%s\n%s\n%s\n%s\n' "$NAME" "$SURFACE" "$PROJ" "$ASKED" | plan_token --basis "runtime:name surface:label project:name reason:name" --verb "provider accept" --target "$PROJ:$NAME $SURFACE")
 if [ -z "$APPROVED" ] || [ -z "$PLAN_ARG" ]; then
   echo "accept: $NAME has no read-only barrier on $SURFACE"
   echo "record in the answers of project $PROJ: models.accept_no_barrier.$SURFACE = {by: $(id -un), at: <now>, reason: \"$ASKED\"}"

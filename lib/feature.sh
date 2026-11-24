@@ -103,7 +103,7 @@ merge_detached() {
   g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
   run_warning "$EXTRA"
   detached_mix "$EXTRA" "$d"
-  tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token)
+  tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token --basis "project:name detached:ref head:sha task:ref task-head:sha" --verb "feature merge" --target "$PROJ:$d")
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
   show_incoming "$d" "$EXTRA"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature merge $d $EXTRA --plan $tok --approved \"...\")"; return 0; fi

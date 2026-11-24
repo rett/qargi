@@ -712,13 +712,25 @@ suite_env_gen() {
   [ "$c" -le "$n" ] || n=$c
   SE_GEN=$n
 }
-# suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next)
+# suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next).
+# SE_KEY (above) is no plan: it only names the files of the claims, so it keeps no record. The token a refusal prints (suite_env_token_line) is the plan the owner approves, and
+# keeps one (`qargi plan show`): the verb and the object are those of the command line to repeat (SE_AGAIN: qargi feature verify NAME, qargi release verify VER), the lines are the
+# project, the branch, the head, the declaration, one line for each part and the number of the waiver. The token is the same with or without the record.
 suite_env_token() {
+  local c=${1//[^,]/} pl='' n _ g v o
+  if [ -n "${3:-}" ]; then
+    for ((n = 0; n <= ${#c}; n++)); do pl+=' part:label'; done
+    read -r _ g v o _ <<<"$SE_AGAIN"
+    { printf '%s\n' "$PROJ" "$SE_BR" "$SE_HEAD" "$SUITE_ENV_ID"; tr , '\n' <<<"$1"; printf 'waiver %s\n' "${2:-$SE_GEN}"; } \
+      | plan_token --basis "project:name branch:ref head:sha environment:sha$pl waiver:label" --verb "$g $v" --target "$PROJ:$o"
+    return
+  fi
   { printf '%s\n' "$PROJ" "$SE_BR" "$SE_HEAD" "$SUITE_ENV_ID"; tr , '\n' <<<"$1"; printf 'waiver %s\n' "${2:-$SE_GEN}"; } | plan_token
 }
 # suite_env_token_line PARTS -> the line that names the token of a refusal of PARTS and the command that waives them once
 suite_env_token_line() {
-  echo "plan token: $(suite_env_token "$1")   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $(suite_env_token "$1") --approved \"<the owner's words>\")"
+  local t; t=$(suite_env_token "$1" '' record)
+  echo "plan token: $t   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $t --approved \"<the owner's words>\")"
 }
 # suite_env_claim PARTS CODES -> called by suite_env_claim_now, when every check of suite_env_prepare and of the verb itself has passed and before the verb makes or
 # touches anything else (the busy mark, the suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses

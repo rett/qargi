@@ -198,5 +198,8 @@ fast | par | 300 | 6 | python3 tests/test_refusals.py | lib/refusals.json lib/re
 # The stored plan record: 23 unit cases measured 8.5s (python) and the five verbs of a scratch repository 20.9s (shell) in a member run (not the reference machine); budgets ceil(8.5 * 1.10) = 10s and ceil(20.9 * 1.10) = 24s.
 fast | par | 300 | 10 | python3 tests/test_plan_record.py | lib/refusal.py lib/plan.py lib/refusals.json lib/lib.sh bin/qargi lib/commands.py
 fast | par | 300 | 24 | bash tests/test_plan_record.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/branch.sh lib/feature.sh lib/release.sh
+# The stored plan record of the verbs of slice 2 (feature merge, upstream sync, release finish, publish and site, the waiver of a verify.environment part, project new, set and unset, provider accept,
+# instances, credential setup, skill accept and unaccept, marshal): 53 cases measured 54s in a member run (not the reference machine); recorded 55s, budget ceil(55 * 1.10) = 61s.
+fast | par | 300 | 61 | bash tests/test_plan_record_sites.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/feature.sh lib/upstream.sh lib/release.sh lib/gitflow.sh lib/project.sh lib/provider.sh lib/registry.sh lib/cred.sh lib/packs.sh lib/marshal.sh
 # Role cards: 40 tests measured 14.5s in a member run (not the reference machine); recorded 15s, budget ceil(15 * 1.10) = 17s.
 fast | par | 300 | 17 | python3 tests/test_rolecard.py | lib/rolecard.py lib/role.py lib/commands.py lib/guard.py lib/refusals.json lib/local.sh lib/hook.sh lib/agent.sh roles/*/ROLE.md agents/member.body.md agents/member.md tests/golden/rolecard/*

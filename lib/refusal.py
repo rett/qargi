@@ -301,7 +301,12 @@ def basis_store(token, specs, text, verb=None, target=None, state=None):
                 os.unlink(p)
         except OSError:
             pass
-    basis = [{"label": label, "lines": lines} for label, lines in basis_lines(text, [x[0] for x in specs])]
+    basis = []
+    for label, lines in basis_lines(text, [x[0] for x in specs]):
+        if basis and basis[-1]["label"] == label:       # a label given once for each of several lines (the parts of a waiver): the basis groups them
+            basis[-1]["lines"] += lines
+        else:
+            basis.append({"label": label, "lines": lines})
     created = now_epoch()
     rec = {"token": token, "basis": basis} if verb is None else {
         "schema": PLAN_SCHEMA, "verb": verb, "context": "lead", "target": {"project": target[0], "object": target[1]},

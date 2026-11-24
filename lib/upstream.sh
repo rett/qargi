@@ -97,7 +97,7 @@ case $verb in
     fi
     [ -z "$H" ] || need_free_wt "$INTO"
     if [ -n "$H" ]; then n=$(g rev-list --count "$INTO..$RT"); else n=$(g rev-list --count "$RT"); fi
-    tok=$(printf '%s\n%s\n%s\n%s\n' "$PROJ" "$INTO" "$H" "$U" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n' "$PROJ" "$INTO" "$H" "$U" | plan_token --basis "project:name into:ref head:sha upstream:sha" --verb "upstream sync" --target "$PROJ:$INTO")
     if [ -n "$H" ]; then
       echo "fast-forward $INTO from ${H:0:7} to $UREM/$UBR (${U:0:7}): $n commit(s), local only (nothing is pushed, nothing is merged into develop)"
       show_incoming "$INTO" "$RT"

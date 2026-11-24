@@ -519,7 +519,8 @@ audit_log() { # verb [detail]
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
 # plan_token [--basis "LABELS" --verb VERB --target PROJECT:OBJECT]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the plan is also kept in
 # STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1) as the record qargi.plan/0 that `qargi plan show TOKEN` prints: line N takes the Nth word
-# of LABELS and the lines after the last word belong to it, so a later need_plan can say which labels moved. A word is `label` or `label:kind` (ref, path, name, sha, label or count;
+# of LABELS and the lines after the last word belong to it, so a later need_plan can say which labels moved (a word given again for the next lines, as for a list that is in the
+# middle of a plan, is one label to need_plan). A plan that is one printf of words, or of `|` fields, is one line with one word: the record splits the hashed text on a newline only. A word is `label` or `label:kind` (ref, path, name, sha, label or count;
 # none is name, the conservative kind: a lead-chosen text). VERB is the verb as lib/commands.py names it (`release start`); the target is the project and the one object the verb
 # acts on (a feature, a version, a branch): the call site says both, nothing is read off the command line. The token is the same with or without --basis.
 plan_token() {
