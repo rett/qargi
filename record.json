@@ -1,0 +1,22 @@
+{
+ "purpose": "0.3.7: the plan record (qargi.plan/0, plan show --json), then the plain methodology, the Codex image opt-in and the contract hook stub",
+ "started": "2026-11-24T04:15:02Z",
+ "goal": "0.3.7: the plan record (qargi.plan/0, plan show --json), then the plain methodology, the Codex image opt-in and the contract hook stub",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-24T04:15:02Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-24T04:15:02Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-24T04:15:02Z",
+ "feature": "release-037",
+ "project": "qargi"
+}
