@@ -1425,11 +1425,11 @@ COMMANDS = {
                                "The state directory's plans directory and the file are opened without following a link, and the file must be a regular file of one link and mode 600. Before it prints, it checks the "
                                "record: the schema (qargi.plan/0, a draft that may change without notice until a consumer publishes it), the form, the SHA-256 of the lines (input_sha256, from the lines and input_newline) and the token "
                                "against that hash and the name of the file. The text shows the verb, the target (the project and the one object the verb acts on), each line that was hashed with its label, "
-                               "and the times created and expires (created plus seven days). The lines hold the values in clear, lead-chosen ones (a branch, a path, a name) included, each with a kind (ref, path, name, sha, label or count): "
+                               "and the times created and expires (created plus seven days); a control character in a value is printed as \\xNN. The lines hold the values in clear, lead-chosen ones (a branch, a path, a name) included, each with a kind (ref, path, name, sha, label or count): "
                                "the file is the owner's, as the audit log is, and a card that showed a digest would ask for an approval blind. --json prints the record as stored (schema, verb, context, target, lines, "
                                "input_sha256, input_newline, token, created, expires and the basis qargi plan-stale reads) and adds \"state\": \"valid\". "
                                "Exit status: 0; 1 for a refusal: plan-unknown (the token is not 12 hex digits, no such file, or a file of before the schema), plan-expired (expires is past; QARGI_PLAN_NOW stands for the clock in tests) "
-                               "or plan-record-invalid (a link, a file of the wrong kind or mode, bad JSON, an unknown schema, a record that is malformed or whose lines do not hash to the token); 2 for a usage error. "
+                               "or plan-record-invalid (a link, a file of the wrong kind or mode, one that cannot be read, bad JSON, an unknown schema, a record that is malformed or whose lines do not hash to the token); 2 for a usage error. "
                                "The token is the first 12 hex digits of input_sha256: a card is bound to input_sha256, not to the token. Expiry is not checked when a plan is applied."),
                          examples=["qargi plan show 1a2b3c4d5e6f", "qargi plan show 1a2b3c4d5e6f --json"]),
         },

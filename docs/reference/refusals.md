@@ -291,7 +291,7 @@ compares them with that page.
 ### plan-record-invalid
 
 - Rule: A stored plan is shown only when its file is whole.
-- Why: the file lies in the state of the owner, and a plan that is shown must be the one that was hashed: a link, a file of the wrong kind or mode, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown.
+- Why: the file lies in the state of the owner, and a plan that is shown must be the one that was hashed: a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown.
 - Exit 1, live.
 - Fields: `token` (token), `problem` (label), `context` (enum:lead,host).
 - Message: `the stored plan {token} cannot be trusted ({problem}) and is not shown`

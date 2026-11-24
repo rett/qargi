@@ -19,8 +19,8 @@ cd "$T" || exit 1   # not below the checkout: when that is a member's run direct
 REL="$DA release"; F="$DA feature"; B="$DA branch"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.log"\ncase "$*" in *"pr create"*) echo https://example.net/acme/x/pull/1;; esac\n' "$T" > "$T/gh"; chmod +x "$T/gh"; export QARGI_GH=$T/gh
 PLANS=$T/s/plans
-# plan_show ARGS: qargi plan show through bin/qargi once it routes the command (`plan) exec`), until then lib/plan.py itself: the same program
-if grep -q 'plan) exec' "$DA"; then plan_show() { "$DA" plan show "$@"; }; else plan_show() { python3 -I "$(dirname "$DA")/../lib/plan.py" show "$@"; }; fi
+# plan_show ARGS: qargi plan show, always through bin/qargi (the route to lib/plan.py is part of what is tested)
+plan_show() { "$DA" plan show "$@"; }
 
 mkproj() { # NAME: a repository with master, develop and a bare origin, the project's answers, the main checkout parked
   R=$T/$1; O=$T/$1-origin.git; git init -q -b master "$R"; echo 0.1.0 > "$R/VERSION"

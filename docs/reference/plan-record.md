@@ -30,12 +30,28 @@ A verb that prints a plan token can keep the plan it hashed, so that a reader (a
 
 Read only, open to a member (class `read` of the seat). It changes nothing: no file is made or removed, no audit line, no lock; it works under `QARGI_DRY=1`. The plans directory and the file are opened without following a link, and the file must be a regular file of one link and mode 600. It recomputes `input_sha256` from the lines and `input_newline`, and checks the token against that hash and against the name of the file, before it prints anything.
 
-The text gives the verb, the target, the labelled lines, `created` and `expires`. `--json` prints the record as stored and adds `"state": "valid"`.
+The text gives the verb, the target, the labelled lines, `created` and `expires`; a control character in a value (the lead chose it) is printed as `\xNN`, so that a terminal does not act on it. `--json` prints the record as stored and adds `"state": "valid"`.
 
 | Refusal | When |
 | --- | --- |
 | [`plan-unknown`](refusals.md#plan-unknown) | the argument is not 12 hex digits, no such file, or a file of before the schema (no `schema` key) |
 | [`plan-expired`](refusals.md#plan-expired) | `expires` is past; the file is left where it is, the store prunes it |
-| [`plan-record-invalid`](refusals.md#plan-record-invalid) | a link, a file of the wrong kind, mode or link count, damaged JSON, an unknown schema, a malformed record, or lines that do not hash to the token |
+| [`plan-record-invalid`](refusals.md#plan-record-invalid) | a link, a file of the wrong kind, mode or link count, one that cannot be read, damaged JSON, an unknown schema, a malformed record, or lines that do not hash to the token |
+
+The `problem` of a `plan-record-invalid` is one of these words:
+
+| `problem` | The record |
+| --- | --- |
+| `bad-directory` | the `plans` directory is a link or not a directory |
+| `link` | the file is a link (it is not followed) |
+| `unreadable` | the directory or the file cannot be opened or read for another reason (its mode 000, say) |
+| `not-a-file` | the file is a directory, a pipe or another thing that is not a regular file |
+| `links` | the file has more than one link |
+| `wrong-mode` | the mode is not 600 |
+| `too-large` | the file is larger than 1 MiB |
+| `bad-json` | the text is not JSON, not UTF-8, or nested too deeply to parse |
+| `unknown-schema` | the `schema` is not `qargi.plan/0` |
+| `bad-form` | a key is missing or extra, a value is of the wrong type or form, or the token is not the file's and the hash's |
+| `hash-mismatch` | the lines and `input_newline` do not hash to `input_sha256` |
 
 `QARGI_PLAN_NOW` (a UTC time such as `2026-11-22T10:00:00Z`) stands for the clock of the records in tests.

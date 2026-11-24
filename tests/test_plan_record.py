@@ -6,13 +6,11 @@ plan-unknown, plan-expired or plan-record-invalid, each leaving the plans direct
 Offline; a scratch home. Run: python3 tests/test_plan_record.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import hashlib, json, os, shutil, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIB = os.path.join(ROOT, "lib")
 QARGI = os.path.join(ROOT, "bin", "qargi")
-PLAN = os.path.join(LIB, "plan.py")
-with open(QARGI, encoding="utf-8") as _f:
-    ROUTED = "plan) exec" in _f.read()      # bin/qargi sends `qargi plan ...` to lib/plan.py (one line of the case; until it does, the script is run itself)
 sys.path.insert(0, LIB)
 import refusal as R  # noqa: E402
 
@@ -25,8 +23,8 @@ def sh(script, **env):
 
 
 def qargi(*args, **env):
-    """`qargi plan ...` through bin/qargi once it routes the command, else lib/plan.py itself (the same program)."""
-    r = subprocess.run([QARGI] + list(args) if ROUTED else [sys.executable, "-B", "-I", PLAN] + list(args[1:]), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=dict(os.environ, **env))
+    """`qargi plan ...`, always through bin/qargi (which routes the command to lib/plan.py): the route is part of what is tested."""
+    r = subprocess.run([QARGI] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=dict(os.environ, **env))
     return r.returncode, r.stdout, r.stderr
 
 
@@ -325,12 +323,64 @@ class ThePlanShow(Scratch):
             f.write('{"pad":"%s"}' % ("x" * (R.PLAN_MAX + 1)))
         self.assertIn("problem=too-large", self.refused(self.tok, "plan-record-invalid")[0]["detail"])
 
-    @unittest.skipUnless(ROUTED, "bin/qargi does not route `plan` to lib/plan.py yet")
     def test_the_command_is_reached_through_bin_qargi(self):
-        r = subprocess.run([QARGI, "plan", "show", self.tok], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-                           env=dict(os.environ, QARGI_PLAN_NOW="2026-11-23T10:00:00Z"))
-        self.assertEqual((r.returncode, r.stderr), (0, ""))
-        self.assertIn("release start", r.stdout)
+        rc, out, err = qargi("plan", "show", self.tok, QARGI_PLAN_NOW="2026-11-23T10:00:00Z")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertIn("release start", out)
+
+    def test_a_record_nested_deeper_than_the_parser_goes_is_bad_json_and_not_a_traceback(self):
+        for text in ("[" * 100000, '{"a":' * 100000 + "1"):
+            with self.subTest(text=text[:6]):
+                with open(self.path, "w") as f:
+                    f.write(text)
+                os.chmod(self.path, 0o600)
+                obj, err = self.refused(self.tok, "plan-record-invalid")
+                self.assertIn("problem=bad-json", obj["detail"])
+                self.assertNotIn("Traceback", err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root opens a file of mode 000")
+    def test_a_file_or_a_directory_that_cannot_be_opened_is_unreadable_and_not_a_link(self):
+        os.chmod(self.path, 0)
+        obj, err = self.refused(self.tok, "plan-record-invalid")
+        self.assertIn("problem=unreadable", obj["detail"])
+        self.assertNotIn("problem=link", err)
+        os.chmod(self.path, 0o600)
+        os.chmod(plans_dir(), 0)
+        try:
+            self.assertIn("problem=unreadable", self.refused(self.tok, "plan-record-invalid")[0]["detail"])
+        finally:
+            os.chmod(plans_dir(), 0o700)
+        self.assertEqual(qargi("plan", "show", self.tok, QARGI_PLAN_NOW="2026-11-23T10:00:00Z")[0], 0)
+
+    def test_the_text_prints_a_control_character_of_a_value_as_xnn(self):
+        lines = ["acme", "release", "0.4.0", "bad\x1b[31mred\x07\x7f\x85\ttab\rcr", "plain \\x41 café ✓"]
+        rec = stored(self.tok)
+        rec.update(lines=[dict(label="v", kind="name", value=v) for v in lines], input_newline=True)
+        rec["input_sha256"] = hashlib.sha256(rebuild(rec).encode()).hexdigest()
+        rec["token"] = tok = rec["input_sha256"][:12]
+        self.path = os.path.join(plans_dir(), tok + ".json")
+        self.rewrite(rec)
+        rc, out, err = qargi("plan", "show", tok, QARGI_PLAN_NOW="2026-11-23T10:00:00Z")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertIn("  v  bad\\x1b[31mred\\x07\\x7f\\x85\\x09tab\\x0dcr\n", out)
+        self.assertIn("  v  plain \\x41 café ✓\n", out, "a backslash and other characters are printed as they are")
+        self.assertNotRegex(out.replace("\n", ""), r"[\x00-\x1f\x7f-\x9f]")
+        rc, out, err = qargi("plan", "show", tok, "--json", QARGI_PLAN_NOW="2026-11-23T10:00:00Z")
+        self.assertEqual(json.loads(out)["lines"][3]["value"], lines[3], "--json is the record as stored")
+
+    def test_the_record_is_exactly_mode_600_whatever_a_leftover_temporary_file_had(self):
+        tok = hashlib.sha256(b"a\nb\n").hexdigest()[:12]
+        tmp = os.path.join(plans_dir(), tok + ".json.tmp.4242")
+        with open(tmp, "w") as f:
+            f.write("old")
+        os.chmod(tmp, 0o666)
+        old = os.umask(0)
+        try:
+            with mock.patch("os.getpid", return_value=4242):
+                R.basis_store(tok, [("x", "name"), ("y", "name")], "a\nb\n", verb="release start", target=("acme", "0.4.0"), state=self.state)
+        finally:
+            os.umask(old)
+        self.assertEqual(os.stat(os.path.join(plans_dir(), tok + ".json")).st_mode & 0o777, 0o600)
 
     def test_the_arguments_are_checked_before_the_state_is_read(self):
         for args in ((), ("show",), ("show", self.tok, "extra"), ("show", "--bad"), ("list",)):

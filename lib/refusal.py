@@ -26,6 +26,7 @@ and a `next` for a lead and for the owner's own session (`host`). A message and 
 
 The environment names the state directory (QARGI_STATE, else the layout of lib/paths.py). Library use: load, render, check, page_text."""
 import calendar
+import errno
 import glob
 import hashlib
 import json
@@ -309,6 +310,7 @@ def basis_store(token, specs, text, verb=None, target=None, state=None):
     path = os.path.join(d, token + ".json")
     tmp = path + ".tmp.%d" % os.getpid()
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)                # exactly 600: a leftover temporary file of another mode (O_TRUNC keeps it) or a umask is not the record's mode
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(rec, f, separators=(",", ":"))
         f.write("\n")
@@ -383,15 +385,15 @@ def plan_read(token, state=None):
             pfd = os.open("plans", flags | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=sfd)
         except FileNotFoundError:
             raise unknown()
-        except OSError:                 # a link, or not a directory
-            raise invalid("bad-directory")
+        except OSError as e:            # a link or not a directory, or one that cannot be opened
+            raise invalid("bad-directory" if e.errno in (errno.ELOOP, errno.ENOTDIR) else "unreadable")
         try:
             try:
                 fd = os.open(token + ".json", flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=pfd)
             except FileNotFoundError:
                 raise unknown()
-            except OSError:
-                raise invalid("link")
+            except OSError as e:
+                raise invalid("link" if e.errno == errno.ELOOP else "unreadable")
             try:
                 st = os.fstat(fd)
                 if not stat.S_ISREG(st.st_mode):
@@ -406,6 +408,8 @@ def plan_read(token, state=None):
                     if not chunk:
                         break
                     data += chunk
+            except OSError:
+                raise invalid("unreadable")
             finally:
                 os.close(fd)
         finally:
@@ -416,7 +420,7 @@ def plan_read(token, state=None):
         raise invalid("too-large")
     try:
         rec = json.loads(data.decode("utf-8"))
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):      # RecursionError: a file of brackets nested deeper than the parser goes
         raise invalid("bad-json")
     if isinstance(rec, dict) and "schema" not in rec:
         raise unknown()                 # a record of before this schema: {token, at, basis}
