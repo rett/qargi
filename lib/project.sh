@@ -211,6 +211,8 @@ if "methodology" in c:
         import methodology as _meth
         for _p in _meth.problems(mth):
             bad.append("methodology: %s (qargi methodology check %s says so)" % (_p, mth))
+        if _meth.flow(mth) == "plain" and isinstance(ll, list) and len(ll) != 1:
+            bad.append("repo.long_lived: a project of the plain methodology %s has exactly one long-lived branch" % mth)
 # repo.detached: long-lived branches that never meet develop, master, release, hotfix or feature branches (a documentation site, say).
 # Names only: qargi refuses the merges between them and the git-flow branches (lib/gitflow.sh detached_mix)
 def branch_name(x):
