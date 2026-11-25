@@ -265,6 +265,20 @@ COMMANDS = {
                                "A real directory in the way is moved to NAME.qargi-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. "
                                "A member's guard refuses it.")),
             "unlink": verb("Undo project link in this work tree and restore the backups", [("PROJECT", "project", True)], [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED]),
+            "remove": verb("Retire a project: remove its stored answers and its members, behind a plan", [("NAME", "project")], [PLAN, APPROVED],
+                           desc=("Without --approved it prints the plan and a token and changes nothing. The plan lists exactly what the apply removes: the stored answers (~/.qargi/config/projects/NAME.json), "
+                                 "the members of the project (what qargi agent remove takes away for each: the member file, the copy of its render under ~/.qargi/config/agents/NAME and its entry in agents.json), "
+                                 "and the approved verify.environment declaration the state keeps for the project (verify-env.json), so that a project made again under the name is not compared with it. "
+                                 "With --plan TOKEN and --approved WORDS it removes them and writes the audit line project:remove with the words. It touches nothing in the repository and runs no git command that changes anything: "
+                                 "no branch, no checkout, no file of the work tree. The marshal records, the audit log, the project's memory, the rendered packs and member render, and the stored plans stay. "
+                                 "The token covers the project, the hash of the answers file, the approved declaration and each member, and nothing that could hold the removal back, so it stays good after a refusal. "
+                                 "Refused (exit 2, nothing changed, with a plan or with an apply) when the project has no stored answers (project-remove-unknown) and while something names it that the removal would strand, each refusal "
+                                 "naming the one command that clears it: an open feature (project-remove-feature; qargi feature finish), an open run of the project (project-remove-run; qargi local clean), "
+                                 "a live marshal lease (project-remove-lease; qargi marshal release), an open release cut (project-remove-release; qargi release finish), a work tree of the repository where project link left a link "
+                                 "(project-remove-linked; qargi project unlink, run in it), a cloud binding (project-remove-cloud; qargi cloud unset) and a registered instance (project-remove-instances; qargi instances remove). "
+                                 "When several hold it the first of those is the refusal and a note names the rest. A member never runs it: the guard refuses it, and so does the verb in a member's run directory or with the member mark in the environment. "
+                                 "A coordinator session (QARGI_ACTOR) may not run it."),
+                           examples=["qargi project remove acme", 'qargi project remove acme --plan TOKEN --approved "retire acme"']),
         },
     },
     "agent": {
@@ -2114,7 +2128,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "These best-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link, unlink, member-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link, unlink, member-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, remove, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "

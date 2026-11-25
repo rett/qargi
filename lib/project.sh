@@ -44,6 +44,12 @@
 #   project.sh profile check [NAME] [--profile FILE]   read only: the repository's profile (CONFIG/profiles/<repository>.md, or FILE): exit 1 when it still
 #                                         carries the shipped template header; a gate command the repository's instruction files and Makefile targets do not
 #                                         know is a warning (exit 0). project validate prints the header finding as a WARN line
+#   project.sh remove NAME [--plan T --approved W]
+#                                         retire a project: remove its stored answers and its members (what `agent remove` takes away for each) and forget its
+#                                         approved verify.environment declaration, behind a plan and a token; never a git operation that changes anything,
+#                                         never the repository, a branch or the checkout. Refused (exit 2, nothing changed) for an unknown project, in a member
+#                                         run, and while the project has an open feature, an open run, a live marshal lease, an open release cut, a linked work
+#                                         tree, a cloud binding or a registered instance (lib/project_remove.py; the refusals project-remove-*)
 #   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
 #                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
 #                                         status, so storing and the flows after it work as before)
@@ -1278,6 +1284,76 @@ PY
     need_plan "$tok"
     audit_log "project:$verb" "$n ${res:-all} $tok"
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
+  remove)
+    # retire a project: its stored answers and its members, behind a plan; nothing of the repository, never a branch or the checkout. Refused while an open
+    # feature, an open run, a live lease, an open release cut, a linked work tree, a cloud binding or a registered instance names the project (lib/project_remove.py)
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "remove needs a project name (lower-case letters and digits)"
+    PLAN_ARG='' APPROVED=''
+    while [ $# -gt 0 ]; do
+      case $1 in --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) usage_die "unknown option $1";; esac
+    done
+    export PLAN_ARG   # need_plan reads it
+    # shellcheck disable=SC2034  # refuse (lib/lib.sh) names the verb and the project of its contract line from these
+    QARGI_VERB="project remove" PROJECT=$n
+    # a member never runs it (its guard may not name the verb, so the check is made here as well: from the run directory or the marked environment); an unknown caller is refused
+    mrc=0; python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 3)' "$(dirname "$(readlink -f "$0")")" || mrc=$?
+    case $mrc in
+      3) ;;
+      0) refuse member-lead-verb;;
+      *) echo "qargi: project remove could not tell whether this is a member run (the check failed with status $mrc); refused: it removes the answers of a project the lead runs on" >&2; exit 2;;
+    esac
+    [ -f "$PROJ_DIR/$n.json" ] || refuse project-remove-unknown name="$n"
+    members_shape_ok || fail "$MEMBERS_FILE is not in the current shape (qargi upgrade); nothing was planned or removed"
+    scan=$(python3 -I "$(dirname "$(readlink -f "$0")")/project_remove.py" scan "$n") || exit 1
+    if [ "$(jq -r '.held | length' <<<"$scan")" != 0 ]; then
+      # the first thing that holds the project is the refusal; the others are named beside it, so one run says what to clear
+      [ "$(jq -r '.held | length' <<<"$scan")" = 1 ] || echo "qargi: note: also held: $(jq -r '[.held[1:][].code | sub("^project-remove-"; "")] | join(", ")' <<<"$scan")" >&2
+      held=$(jq -r '.held[0].code' <<<"$scan")
+      hv() { jq -r --arg k "$1" '.held[0].values[$k] // ""' <<<"$scan"; }   # the values the scan names for the refusal, one text for each field (a list is joined by commas)
+      [ "$held" != project-remove-feature ] || refuse project-remove-feature name="$n" features="$(hv features)"
+      [ "$held" != project-remove-run ] || refuse project-remove-run name="$n" runs="$(hv runs)"
+      [ "$held" != project-remove-lease ] || refuse project-remove-lease name="$n" features="$(hv features)"
+      [ "$held" != project-remove-release ] || refuse project-remove-release name="$n" versions="$(hv versions)"
+      [ "$held" != project-remove-linked ] || refuse project-remove-linked name="$n" trees="$(hv trees)"
+      [ "$held" != project-remove-cloud ] || refuse project-remove-cloud name="$n"
+      [ "$held" != project-remove-instances ] || refuse project-remove-instances name="$n" instances="$(hv instances)"
+      fail "project remove: the scan named a hold this verb does not know ($held); nothing was changed"
+    fi
+    # the token covers the answers (their hash), the approved declaration and each member: it does not depend on what could hold the removal, so a token stays good after a refusal
+    tok=$({ printf '%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$scan")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$scan")"
+            jq -r '.members[] | [.name, (.roles | join(",")), .file, .copy] | join("|")' <<<"$scan"; } \
+          | plan_token --basis "project answers approved member" --verb "project remove" --target "$n:answers")
+    echo "remove project $n"
+    echo "  the stored answers, removed: $(jq -r .answers <<<"$scan")"
+    if [ "$(jq -r '.members | length' <<<"$scan")" = 0 ]; then echo "  members: none"; else
+      echo "  members of $n, removed as qargi agent remove removes each (the member file, the copy of its render, the entry in agents.json):"
+      jq -r '.members[] | "    \(.name) (\(.roles | join(","))): \(if .file == "" then "no file recorded" else .file + (if .file_exists then "" else " (not there)" end) end); copy \(if .copy == "" then "none" else .copy + (if .copy_exists then "" else " (not there)" end) end)"' <<<"$scan"
+    fi
+    jq -r 'if .approved == null then empty else "  the approved verify.environment declaration of the project" + (if .approved == "" then " (it declares none)" else " (id " + .approved + ")" end) + " is forgotten with it (verify-env.json)" end' <<<"$scan"
+    echo "  not touched: the repository, its branches and the checkout (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
+    echo "  nothing holds it back: no open feature, run, live lease or release cut, no linked work tree, cloud binding or registered instance names $n"
+    echo
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (remove with: qargi project remove $n --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    need_plan "$tok"
+    verify_env_lock   # a change of verify.environment that is going on meanwhile finishes before the declaration is forgotten, and the removal before the next begins
+    nm=0
+    while IFS= read -r m; do
+      mf=$(jq -r '.value.file // ""' <<<"$m"); rp=$(jq -r '.value.render.path // ""' <<<"$m")
+      [ -z "$mf" ] || [ ! -f "$mf" ] || rm -f "$mf"
+      case $rp in ''|/*|..|../*|*/..|*/../*) ;; *) rm -f "$DA_CONF/agents/$n/$rp";; esac
+      nm=$((nm + 1))
+    done < <(jq -c --arg p "$n" '.projects[$p] // {} | to_entries[]' "$MEMBERS_FILE")
+    rmdir "$DA_CONF/agents/$n" 2>/dev/null || true
+    [ "$(jq -r --arg p "$n" '.projects | has($p)' "$MEMBERS_FILE")" != true ] || json_update "$MEMBERS_FILE" 'del(.projects[$p])' --arg p "$n"
+    frc=0; venv_py approved forget "$n" --state "$DA_STATE" >/dev/null || frc=$?
+    case $frc in 0|1) ;; *) fail "the answers of $n are still stored: the approved declarations could not be read, so none was forgotten (verify-env.json); the members were removed";; esac
+    audit_log "project:remove" "$n ($nm member(s))"
+    rm -f "$PROJ_DIR/$n.json"
+    echo "removed project $n: its stored answers and $nm member(s)"
+    echo "approved: $APPROVED; nothing in the repository was touched (no branch, no checkout, no git operation that changes anything)";;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"
     # the answers stay the JSON on standard output (it is piped); the declared gates, which replace test_command, are named on standard error
     gates_lines "$PROJ_DIR/$n.json" >&2;;
@@ -1295,5 +1371,5 @@ PY
     af=''
     if [ -n "$n" ]; then af=$PROJ_DIR/$n.json; [ -f "$af" ] || die "no project named '$n' (see: project list)"; fi
     exec python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" check "$DA_CONF" "$af" "${pf/#\~/$HOME}";;
-  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|unset|link|unlink|show|list|validate|profile ...";;
+  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|unset|link|unlink|remove|show|list|validate|profile ...";;
 esac
