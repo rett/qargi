@@ -985,7 +985,7 @@ class Schema2(unittest.TestCase):
     def test_the_options_of_a_run_file_only_flip_settings_of_the_baseline_for_the_classes_the_definition_names(self):
         mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
                "tool_lists": {"allow": "/enabled_tools"}}
-        base = {"ask": "never", "features": {"img": False, "apps": False}, "n": 3}
+        base = {"ask": "never", "features": {"img": False, "apps": False, "on": True}, "n": 3, "roots": ["a"], "net": {"mode": "off"}}
         opt = {"set": {"features": {"img": True}}, "classes": ["write"], "outside_sandbox": True, "spends": "unknown", "writes": "the files the member saves",
                "phrase": "hosted images run outside the sandbox", "verified_on": None, "source": "offline", "note": "a hosted tool"}
 
@@ -1004,10 +1004,23 @@ class Schema2(unittest.TestCase):
         bad({"img": dict(opt, set={"extra": True})}, "extra is not a key of the baseline")
         bad({"img": dict(opt, set={"servers": {"x": {"url": "u"}}})}, "servers is where the MCP servers of the run go")  # never a server
         bad({"img": dict(opt, set={"servers": True})}, "an option never sets a server")
-        bad({"img": dict(opt, set={"ask": 1})}, "an option sets a value of the same type")                    # not the type of the baseline's value
-        bad({"img": dict(opt, set={"features": True})}, "an option sets a value of the same type")
+        only = "an option only turns on a setting the baseline holds false"
+        bad({"img": dict(opt, set={"ask": 1})}, "ask is 1 where the baseline holds 'never': " + only)      # a number over a string
+        bad({"img": dict(opt, set={"ask": "on-request"})}, "ask is 'on-request' where the baseline holds 'never': " + only)   # another string
+        bad({"img": dict(opt, set={"n": 4})}, "n is 4 where the baseline holds 3: " + only)               # another number
+        bad({"img": dict(opt, set={"n": True})}, "n is true where the baseline holds 3: " + only)         # true over a number
+        bad({"img": dict(opt, set={"features": {"on": False}})}, "features/on is false where the baseline holds true: " + only)   # true to false
+        bad({"img": dict(opt, set={"features": {"on": True}})}, "features/on is true where the baseline holds true: " + only)     # true to true
+        bad({"img": dict(opt, set={"features": {"img": False}})}, "features/img is false where the baseline holds false: " + only)  # false to false
+        bad({"img": dict(opt, set={"features": {"img": 1}})}, "features/img is 1 where the baseline holds false: " + only)         # a number over false
+        bad({"img": dict(opt, set={"features": {"img": "yes"}})}, "features/img is 'yes' where the baseline holds false: " + only)  # a string over false
+        bad({"img": dict(opt, set={"features": {"img": ["x"]}})}, 'features/img is ["x"] where the baseline holds false: ' + only)  # a list over false
+        bad({"img": dict(opt, set={"roots": ["b"]})}, 'roots is ["b"] where the baseline holds ["a"]: ' + only)         # a list over a list
+        bad({"img": dict(opt, set={"roots": True})}, 'roots is true where the baseline holds ["a"]: ' + only)
+        bad({"img": dict(opt, set={"net": {"mode": "on"}})}, "net/mode is 'on' where the baseline holds 'off': " + only)   # a nested table, a string leaf
+        bad({"img": dict(opt, set={"net": {"mode": {"x": True}}})}, "net/mode is an object where the baseline holds 'off'")
+        bad({"img": dict(opt, set={"features": True})}, "features is true where the baseline holds {")   # a leaf over a table
         bad({"img": dict(opt, set={"n": {"a": 1}})}, "is an object where the baseline holds 3")
-        bad({"img": dict(opt, set={"features": {"img": False}})}, "which is what the baseline holds already")
         bad({"img": dict(opt, set={})}, "img.set: {} is not a non-empty object of settings")
         bad({"img": {k: v for k, v in opt.items() if k != "phrase"}}, "img: missing required property 'phrase'")      # no phrase
         bad({"img": dict(opt, phrase="Hosted Images")}, "img.phrase: 'Hosted Images' is not words in lower case")

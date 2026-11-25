@@ -104,7 +104,13 @@ def refusal_text(stderr):
 
 
 def prepare(project, runtime, role, cls, selector=None):
-    """Resolve and bind before prepare creates RUN/TMP/clone artifacts.
+    """The prepared request (see _prepare)."""
+    return _prepare(project, runtime, role, cls, selector)[0]
+
+
+def _prepare(project, runtime, role, cls, selector=None):
+    """(request, chosen, declared): resolve and bind before prepare creates RUN/TMP/clone artifacts; chosen and declared are the run options the digests of the
+    request were made from (run_options), so whoever acts on them acts on what the request binds and not on a second read of the answers.
 
     The profile is resolved in RUNTIME, which agent for is told when the project has extra runtimes or RUNTIME is not its own: the option beats the
     runtime a profile names. The request of the project's own runtime is the one it was without extras: the answer of agent for is digested without
@@ -138,7 +144,7 @@ def prepare(project, runtime, role, cls, selector=None):
         policy["enabled_extra"] = runtime
     # the run options bind only when there are some (the options the project enabled for the runtime and the ones the profile selects), so a project with none
     # keeps the request it always had and no run prepared before is stale
-    chosen, enabled, _declared = run_options(project, runtime, selection["profile"], cls, comp)
+    chosen, enabled, declared = run_options(project, runtime, selection["profile"], cls, comp)
     if chosen or enabled:
         policy["run_options"] = {"enabled": enabled, "selected": chosen}
     profiles = (P.project_answers(project) or {}).get("profiles")
@@ -149,19 +155,21 @@ def prepare(project, runtime, role, cls, selector=None):
     request["binding"] = dict(runtime=P.definition_hash(runtime), catalog=digest(models),
                               composition=digest(comp), selection=digest([{k: v for k, v in selection.items() if k != "runtime"}, selected_input, defaults]),
                               policy=digest(policy))
-    return validate(request)
+    return validate(request), chosen, declared
 
 
 def current(request, project, runtime, cls):
-    """Fail closed on drift; never bless changed inputs or update private state."""
+    """Fail closed on drift; never bless changed inputs or update private state. Returns (chosen, declared), the run options the fresh prepare computed and the
+    request was held equal to (run_options): the run's configuration file is planned from these and from no second read of the answers."""
     validate(request)
     need((project, runtime, cls) == (request["project"], request["runtime"], request["class"]),
          "prepared command request project/runtime/class drift" + GUIDANCE)
     try:
-        fresh = prepare(project, runtime, request["role"], cls, request["selector"])
+        fresh, chosen, declared = _prepare(project, runtime, request["role"], cls, request["selector"])
     except (Invalid, P.ProviderError, subprocess.SubprocessError, OSError) as e:
         raise Invalid("prepared command request cannot be resolved: %s%s" % (e, GUIDANCE)) from e
     need(fresh == request, "prepared command request runtime/mode/catalog/profile/policy drift" + GUIDANCE)
+    return chosen, declared
 
 
 def values(request, model, effort):
@@ -203,18 +211,19 @@ def main(argv):
             need(dispatch is None or isinstance(dispatch, dict), "invalid runtime dispatch data")
             print((dispatch or {}).get("mode", ""))
             return 0
-        if len(argv) == 5 and argv[0] == "run-options":      # a project name has no hyphen, so no project is taken for this word
-            # run-options PROJECT RUNTIME PROFILE CLASS: the words of the RUN_OPTIONS= line of a run of that profile, nothing when it carries no option
-            chosen, _enabled, declared = run_options(argv[1], argv[2], argv[3], argv[4])
-            if chosen:
-                print(options_text(declared, chosen))
+        if argv and argv[0] == "with-options":               # a project name has no hyphen, so no project is taken for this word
+            # with-options PROJECT RUNTIME ROLE CLASS [PROFILE]: {"request": the request, "options": the words of the RUN_OPTIONS= line, "" when the run carries none},
+            # both from the one prepare, so the line says what the request binds
+            need(len(argv) in (5, 6), "prepared request requires with-options PROJECT RUNTIME ROLE CLASS [PROFILE]")
+            request, chosen, declared = _prepare(*argv[1:5], selector=argv[5] if len(argv) == 6 else None)
+            print(json.dumps({"request": request, "options": options_text(declared, chosen) if chosen else ""}, sort_keys=True))
             return 0
         need(len(argv) in (4, 5), "prepared request requires PROJECT RUNTIME ROLE CLASS [PROFILE]")
         print(json.dumps(prepare(*argv[:4], selector=argv[4] if len(argv) == 5 else None), sort_keys=True))
         return 0
     except OptionClass as e:
         import refusal
-        return refusal.refuse("runtime-option-class", [("name", e.runtime), ("option", e.option)], verb="local prepare", project=argv[1] if argv[0] == "run-options" else argv[0])
+        return refusal.refuse("runtime-option-class", [("name", e.runtime), ("option", e.option)], verb="local prepare", project=argv[1] if argv[0] == "with-options" else argv[0])
     except (Invalid, P.ProviderError, subprocess.SubprocessError, OSError) as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 2
