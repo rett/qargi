@@ -8,6 +8,7 @@ How a project whose own local runtime is `claude-code` sends chosen tasks to `co
 - [3. Choose it for one task](#3-choose-it-for-one-task)
 - [4. Run, take in, review](#4-run-take-in-review)
 - [5. Stop using it](#5-stop-using-it)
+- [6. Turn on an option of the runtime](#6-turn-on-an-option-of-the-runtime)
 - [When something is refused](#when-something-is-refused)
 
 ## Before you start
@@ -57,6 +58,14 @@ The recommended practice: a review on `codex` is advisory and is never the sole 
 
 `qargi provider disable PROJECT --runtime codex` is refused, with no token, while a profile names the runtime: `qargi project unset PROJECT profiles.codex-build.runtime` first (the unset is plain, hyphen included). Then disable with its own plan and token; it asks for no phrase. Runs prepared for it and not yet started are refused at `local run` (`runtime-drift`: prepare again). Finished runs are taken in as before, because verify, review, apply, close and clean ask for no runtime.
 
+## 6. Turn on an option of the runtime
+
+A runtime's definition may declare **options**: opt-in changes to the file every run of it gets (`dispatch.run_config.options`). `codex` declares one, `image_generation`, a hosted tool that runs outside its sandbox and may spend; the baseline keeps it off. Nothing here is on until you approve it, and then only for the profiles you choose ([the option and what is not verified](codex.md#image-generation-an-opt-in-off-by-default)).
+
+1. Enable it for the project: `qargi provider enable PROJECT --runtime codex --option image_generation` prints the plan and a token. `codex` must be the project's own runtime or one you enabled in step 1 (else `runtime-not-enabled`). Approve with your own words, which must carry the phrase of the plan, `hosted image generation runs outside the sandbox`: `--plan TOKEN --approved "yes, hosted image generation runs outside the sandbox"`. Without it the refusal is `runtime-option-unacknowledged` and the token stays good.
+2. Select it in a profile of a worker base: `qargi project set PROJECT profiles.codex-images '{"base":"worker","tier":"balanced","effort":"high","runtime":"codex","options":["image_generation"]}'`. It is a plain `project set` that only selects among what you enabled; `qargi project validate` refuses an option that is not enabled and a profile on the `reviewer` base.
+3. To stop: take the option out of the profile (`qargi project set PROJECT profiles.codex-images.options '[]'`), then `qargi provider disable PROJECT --runtime codex --option image_generation` (its own plan and token, no phrase); disabling the runtime itself (step 5) is refused while an option of it is enabled. A run prepared with the option before a change of the project's list, the profile or the definition is refused at `local run` with a request to prepare again.
+
 ## When something is refused
 
 | Code | Meaning | What to do |
@@ -64,6 +73,7 @@ The recommended practice: a review on `codex` is advisory and is never the sole 
 | `runtime-not-enabled` | the runtime is not the project's own or an enabled one | `qargi provider runtimes PROJECT`, then the owner's `provider enable --runtime` |
 | `runtime-unusable` | the runtime is not sealed, not local, not started by a command, or is the project's own | `qargi provider check NAME`, or choose a command runtime |
 | `runtime-reads-unacknowledged` | the approval words lack the phrase | approve again with the same token and words that carry `reads are not confined` |
+| `runtime-option-unacknowledged` | the approval words of an option lack its phrase | approve again with the same token and words that carry the phrase the plan printed |
 | `runtime-profile-model` | a profile's `model` is not one the runtime offers | give the profile a tier |
 | `runtime-barrier-missing` | a read-only role on a runtime that has no barrier (the acceptance of the own runtime does not count) | use a runtime with a barrier |
 | `runtime-drift` | the run was prepared for a runtime that is no longer enabled, usable or unchanged | `qargi local prepare` again |

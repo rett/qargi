@@ -95,6 +95,13 @@ Usage: provider.py list
                                          approval; a runtime that does not confine reads needs approval words that carry "reads are not confined"
        provider.py runtime-info PROJECT NAME enable|disable
                                          the plan of that verb as one JSON object (what provider.sh reads)
+       provider.py enable|disable PROJECT --runtime NAME --option OPT [--asked W] [--plan T --approved W]
+                                         a run option of a runtime the project has enabled (models.run_options.local.NAME of its answers): lib/provider.sh
+                                         makes the plan (option_plan: the settings it adds to the run's file, that the tool outside the sandbox may spend,
+                                         the reads warning, whether it is verified, the profiles that could select it), the token and the approval, whose
+                                         words must contain the phrase of the option's definition
+       provider.py option-info PROJECT NAME OPT enable|disable
+                                         the plan of that verb as one JSON object (what provider.sh reads)
        provider.py reads-warning NAME    the line that says what members on the local runtime NAME can read, when its definition does not confine
                                          reads (dispatch.reads); nothing for a runtime that confines them or works in the session
        provider.py runtimes PROJECT
@@ -2865,6 +2872,102 @@ def runtime_plan(project, name, verb, conf=None, root=None, library=None):
     return out
 
 
+def _option_effective_runtime(profile_entry, own):
+    """The runtime a profile of the answers runs on: its own `runtime` key, else the project's own."""
+    rt = profile_entry.get("runtime") if isinstance(profile_entry, dict) else None
+    return rt if isinstance(rt, str) and rt else own
+
+
+def option_plan(project, name, option, verb, conf=None, root=None, library=None):
+    """The plan of `qargi provider enable|disable PROJECT --runtime NAME --option OPTION`: {not_enabled, lines, refusal, nothing, new, needs_phrase, phrase}. lines are the plan,
+    one per element (the token is made over them); refusal is a message (exit 2); nothing says the project is already as asked; not_enabled is true when NAME is not a runtime
+    the project has enabled (its own or an extra one), which is a refusal of the shell; new is what models.run_options.local.NAME would become. An enable of an option the
+    definition does not declare is a refusal with no plan: an option that is not declared does not exist."""
+    conf = conf or _conf()
+    answers = _stored_answers(project, conf)
+    out = {"not_enabled": False, "lines": [], "refusal": None, "nothing": None, "new": None, "needs_phrase": False, "phrase": None}
+    primary, extra = runtimes_from(answers, project, root, library)
+    if name not in [primary] + extra:
+        out["not_enabled"] = True
+        return out
+    cur = run_options_of(answers).get(name, [])
+    doc = composed(name, "local", project, root, library, conf)
+    declared = declared_options(doc)
+    if verb == "disable":
+        if option not in cur:
+            out["nothing"] = "nothing to do: the option %s of %s is not enabled for %s" % (option, name, project)
+            return out
+        out["new"] = [x for x in cur if x != option]
+        profiles = answers.get("profiles") if isinstance(answers.get("profiles"), dict) else {}
+        users = sorted(p for p, pf in profiles.items() if isinstance(pf, dict) and option in profile_options_of(answers, p) and _option_effective_runtime(pf, primary) == name)
+        out["lines"] = ["disable run option %s of runtime %s for project %s (models.run_options.local.%s)" % (option, name, project, name),
+                        "runs prepared with it are refused when they start (runtime-drift: prepare again); finished runs are verified, reviewed, applied and cleaned as before",
+                        "effect: models.run_options.local.%s of project %s becomes %s" % (name, project, json.dumps(out["new"]))]
+        if users:
+            out["refusal"] = "profile%s %s of project %s select%s the option %s: take it out of profiles.NAME.options first (qargi project set %s profiles.%s.options '[]')" % (
+                "s" if len(users) > 1 else "", ", ".join(users), project, "" if len(users) > 1 else "s", option, project, users[0])
+        return out
+    if option in cur:
+        out["nothing"] = "nothing to do: the option %s of %s is enabled for %s already" % (option, name, project)
+        return out
+    if option not in declared:
+        out["refusal"] = "the definition of %s declares %s (dispatch.run_config.options: %s); an option that is not declared does not exist (qargi provider show %s)" % (
+            name, "no option named %s" % option, ", ".join(sorted(declared)) or "none", name)
+        return out
+    o = declared[option]
+    out["new"] = cur + [option]
+    out["needs_phrase"], out["phrase"] = True, o["phrase"]
+    fmt = (_dict(_dict(doc.get("resources")).get("mcp")).get("format")) or "json"
+    try:
+        import packs_render
+        added = packs_render.toml_dumps(o["set"]).decode("utf-8").rstrip("\n") if fmt == "toml" else json.dumps(o["set"], indent=2, sort_keys=True)
+    except Exception as e:          # a value the file's writer does not write: provider check says so too
+        added = "(not shown: %s)" % e
+    rc = _dict(_dict(doc.get("dispatch")).get("run_config"))
+    where = "%s of the run home" % rc.get("file") if rc.get("in") == "home" else "RUN/config/%s" % rc.get("file")
+    lines = ["enable run option %s of runtime %s for project %s (models.run_options.local.%s)" % (option, name, project, name),
+             "runtime: %s, enabled for the project (%s)" % (name, "its own" if name == primary else "an extra runtime"),
+             "it adds to the run's %s, over the baseline of the definition (the settings it flips, in that file's format):" % where]
+    lines += ["    " + ln for ln in added.splitlines()]
+    lines.append("for write runs only: %s; a read-only run never gets it" % ", ".join(o["classes"]))
+    if o["outside_sandbox"]:
+        lines.append("outside the sandbox: the tool this opens runs outside the sandbox of %s, so what the sandbox denies a member's shell (the network among it) does not hold it" % name)
+    lines.append("spend: %s" % {"yes": "it spends on the members' sign-in", "unknown": "it may spend on the members' sign-in", "no": "it does not spend"}[o["spends"]]
+                 + ("; qargi does not measure that (cost_report is tokens only)" if o["spends"] != "no" else ""))
+    lines.append("writes: %s" % o["writes"])
+    if o.get("note"):
+        lines.append("note: %s" % o["note"])
+    warn = reads_warning(name, doc)
+    if warn:
+        lines.append("reads: " + warn)
+    if o.get("verified_on"):
+        lines.append("verified: %s (%s)" % (o["verified_on"], o.get("source") or "no source"))
+    else:
+        lines.append("verified: no (verified_on is null): %s" % (o.get("source") or "no source"))
+    profiles = answers.get("profiles") if isinstance(answers.get("profiles"), dict) else {}
+    try:
+        with open(os.path.join(HERE, "model-defaults.json"), encoding="utf-8") as f:
+            md = json.load(f)
+    except (OSError, ValueError):
+        md = {"bases": {}, "profiles": {}}
+    cand = sorted(p for p, pf in profiles.items() if isinstance(pf, dict) and _option_effective_runtime(pf, primary) == name
+                  and md["bases"].get(pf.get("base") or (md["profiles"].get(p) or {}).get("base"), {}).get("class") == "write")
+    lines.append("profiles that could select it now: %s; a profile of base worker selects it with profiles.NAME.options (qargi project set %s profiles.NAME.options '[\"%s\"]'), "
+                 "and only a run of that profile gets it" % (", ".join(cand) if cand else "none yet", project, option))
+    lines.append("the owner's approval words must contain: \"%s\"" % o["phrase"])
+    lines.append("effect: models.run_options.local.%s of project %s becomes %s" % (name, project, json.dumps(out["new"])))
+    out["lines"] = lines
+    return out
+
+
+def cmd_option_info(args):
+    """option-info PROJECT NAME OPTION enable|disable: the plan of provider.sh for a run option as JSON (option_plan)."""
+    if len(args) != 4 or args[3] not in ("enable", "disable") or not OPTION_NAME.match(args[2]):
+        raise Unsupported("usage: provider.py option-info PROJECT NAME OPTION enable|disable")
+    sys.stdout.write(json.dumps(option_plan(args[0], args[1], args[2], args[3])) + "\n")
+    return 0
+
+
 def cmd_runtime_info(args):
     """runtime-info PROJECT NAME enable|disable: the plan of provider.sh as JSON (runtime_plan)."""
     if len(args) != 3 or args[2] not in ("enable", "disable"):
@@ -3601,7 +3704,7 @@ def cmd_of(args, if_set=False):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT | reads-warning NAME | enable|disable PROJECT --runtime NAME")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT | reads-warning NAME | enable|disable PROJECT --runtime NAME [--option OPT]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -3653,6 +3756,8 @@ def main(argv):
             return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
+        if verb == "option-info":
+            return cmd_option_info(rest)
         if verb == "runtime-info":
             return cmd_runtime_info(rest)
         if verb == "reads-warning":

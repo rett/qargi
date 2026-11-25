@@ -62,6 +62,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 RUNTIME_GATE = opt("--runtime", "the extra local runtime to allow or stop for the project (models.extra_runtimes.local), in place of an extension", "NAME")
+OPTION_GATE = opt("--option", "with --runtime: a run option of that runtime's definition (dispatch.run_config.options) to enable or stop for the project (models.run_options.local.RUNTIME), in place of the runtime itself", "OPTION")
 ASKED_WORDS = opt("--asked", "your request, in your words (with --runtime)", "WORDS")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
@@ -214,7 +215,8 @@ COMMANDS = {
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")], [PLAN, APPROVED],
-                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, or a runtime with --runtime) and qargi provider accept. "
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, a runtime with --runtime, or an option of a runtime with --runtime NAME --option OPT) and qargi provider accept. "
+                              "profiles.NAME.options (a list of the options of the profile's runtime that the project enabled with qargi provider enable PROJECT --runtime NAME --option OPT) is a plain set that only selects among them; project validate refuses one that is not enabled and one on a profile of the reviewer base. "
                               "profiles.NAME.runtime (the runtime a profile's members run on: the project's own, or one enabled with qargi provider enable PROJECT --runtime NAME) is a plain set, with a hyphen allowed in the profile's name (profiles.codex-build.runtime), and a member's guard refuses it as it does roles.NAME.tools. "
                               "Setting models.provider.local (or models.provider) to a runtime that does not confine reads prints a warning line: members on NAME can read the real ~/.codex ... reads are not confined; it asks for no phrase. "
                               "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
@@ -1342,7 +1344,7 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
+            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, OPTION_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
                            desc=("An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified. "
                                  "With --runtime NAME (and no extension) it allows an extra runtime: the project may then start members on NAME beside its own local runtime (models.extra_runtimes.local), "
                                  "chosen by a profile (profiles.NAME.runtime) or by one task (qargi local prepare --runtime NAME). NAME is a command runtime of the local surface (a shipped one, or a library pack that is sealed and unchanged) that is not the project's own; "
@@ -1353,11 +1355,18 @@ COMMANDS = {
                                  "the tool packs each role would get on it and that their MCP servers run outside the sandbox; the hidden paths and what the runtime lacks (a guard hook, managed member skills, pack renders). "
                                  "Applied with --plan TOKEN --approved WORDS it writes models.extra_runtimes.local and one audit line (provider:enable). For a runtime that does not confine reads the owner's words must contain reads are not confined "
                                  "(letter case and runs of blanks ignored, matched as words), else the refusal runtime-reads-unacknowledged and the token stays good: the lead passes the owner's words on and never writes the phrase itself. "
+                                 "With --runtime NAME --option OPT, NAME being a runtime the project has enabled (its own or an extra one: else runtime-not-enabled), it enables a run option the definition of NAME declares (dispatch.run_config.options; an option that is not declared does not exist), "
+                                 "for the profiles of the project that select it (profiles.NAME.options): a run of such a profile gets the run's configuration file with the option's settings over the baseline, and nothing else changed; every other run gets the baseline alone. "
+                                 "The plan prints the settings the option adds to the run's file, in that file's format; that the tool it opens runs outside the sandbox, may spend, and that qargi does not measure that; where it may write; the reads warning of the runtime; "
+                                 "whether the option is verified (verified_on of the definition: null is not yet); the profiles that could select it; and the phrase of the option, which the owner's approval words must contain (as words, letter case and runs of blanks ignored), "
+                                 "else the refusal runtime-option-unacknowledged and the token stays good. It is for write runs only. Applied it writes models.run_options.local.NAME and one audit line (provider:enable-option). "
                                  "A lead's verb: the guard refuses it to a member. The project's own runtime, one already enabled and a name that is not a runtime are refused; nothing is changed.")),
-            "disable": verb("Stop a project using a library extension pack, or one extra local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED],
+            "disable": verb("Stop a project using a library extension pack, one extra local runtime (--runtime), or one run option of a runtime (--runtime --option)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, OPTION_GATE, ASKED_WORDS, PLAN, APPROVED],
                             desc=("With --runtime NAME it takes NAME out of models.extra_runtimes.local, with a plan and a token as for enable and no phrase to say. It is refused, with no token, while a profile names the runtime "
                                   "(unset profiles.NAME.runtime first: qargi project unset PROJECT profiles.NAME.runtime). Runs prepared for it are refused when they start (runtime-drift: prepare again); "
-                                  "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime.")),
+                                  "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime. "
+                                  "With --runtime NAME --option OPT it takes OPT out of models.run_options.local.NAME, with its own plan and token and no phrase to say; it is refused, with no token, while a profile selects the option "
+                                  "(take it out of profiles.NAME.options first). Runs prepared with it are refused when they start (prepare again). Disabling the runtime itself is refused, with no token, while an option of it is enabled: disable the options first.")),
             "runtimes": verb("Print the runtimes the project's local surface runs members on", [("PROJECT", "project")],
                              desc=("The line primary NAME (the project's own local runtime, models.provider.local), then a line extra NAME for each runtime of models.extra_runtimes.local, each once. "
                                    "Read-only and open to a member. Exit 2 for a project with no local runtime or no such project.")),
@@ -1823,7 +1832,7 @@ COMMANDS = {
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
                  "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions, "
-                 "models.extra_runtimes or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
+                 "models.extra_runtimes, models.run_options or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
                  "methodology_accepted, review.reject_trailers, backlog.archive and backlog.section (a member's project set is refused them too); an archive may keep or drop "
                  "entries of such a list but not add or change one: the stored value stays, "
                  "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),

@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# A run option of a runtime (dispatch.run_config.options of its definition): an opt-in change to the run's configuration file that the project's owner
+# enables per runtime (`qargi provider enable PROJECT --runtime NAME --option OPT`: a plan, a token and words that carry the phrase of the option) and a profile
+# of the project selects (profiles.NAME.options); a run of that profile then gets the baseline with the option's settings applied, and nothing else changed.
+# Default off: a project and a profile with no option get the run file, the prepare and run output and the plans they always had.
+# Hermetic and offline: a copy of the tool holds fake command runtimes derived from the shipped codex definition (tests/fakeprov.sh), whose stub commits a file;
+# no live runtime is started and nothing is spent. Run: tests/test_run_options.sh
+set -u
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+SRC=$PWD
+T=$(mktemp -d); fail=0
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
+export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
+unset QARGI_PROJECT QARGI_LEAD_RUNTIME
+mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/tmp" "$T/scr"
+trap 'rm -rf "$T" "$HERMETIC"' EXIT
+
+TOOL=$T/tool; mkdir -p "$TOOL"
+copy_tool "$SRC" "$TOOL"
+DA=$TOOL/bin/qargi
+LC="git -c user.name=t -c user.email=t@example.net"
+HID=$T/hidden-by-the-sandbox
+# shellcheck source=fakeprov.sh
+. tests/fakeprov.sh
+NOHIDE='.dispatch.hidden_paths.prefixes = ["'"$HID"'"]'
+export PATH=$TOOL/stubs:$PATH          # a runtime's command is found by name on PATH
+mkfake() { # NAME FILTER: a fake command runtime (the shipped codex definition under another name, with its option), its command a stub by name
+  fake_command_runtime "$SRC" "$TOOL" "$1" ".dispatch.argv[0] = \"$1\" | $NOHIDE | ${2:-.}"
+  mkdir -p "$HOME/.$1-members"; echo '{}' > "$HOME/.$1-members/auth.json"
+}
+OPT=image_generation
+PHRASE='hosted image generation runs outside the sandbox'
+mkfake fakeimg
+mkfake fakeother
+mkfake fakeplain 'del(.dispatch.run_config.options)'
+python3 -I "$TOOL/lib/provider.py" check fakeimg >/dev/null 2>&1 && python3 -I "$TOOL/lib/provider.py" check fakeplain >/dev/null 2>&1 \
+  && ok "the fake runtimes are valid, the first with the option the shipped definition declares and the second with none" || no "the fake runtimes"
+jq -e --arg o "$OPT" '.dispatch.run_config.options[$o].verified_on == null and .dispatch.run_config.baseline.features[$o] == false' "$SRC/lib/providers/codex.json" >/dev/null \
+  && ok "the shipped codex definition declares the option unverified and keeps its baseline off" || no "codex.json: the option"
+
+mkproj() { # NAME PROVIDER-JSON [EXTRAS-JSON [PROFILES-JSON]]: stored answers with a repository of their own
+  local repo=$T/repo-$1
+  git init -q -b main "$repo" && $LC -C "$repo" commit -q --allow-empty -m one
+  jq -n --arg n "$1" --arg p "$repo" --argjson prov "$2" --argjson ex "${3:-null}" --argjson pr "${4:-null}" \
+    '{schema:1,project:$n,repo:{url:("https://github.com/example/" + $n),path:$p,long_lived:["main"]},
+      roles:{build:{base:"main",push:{mode:"none"},effort:"medium"},review:{base:"main",push:{mode:"none"},effort:"medium"}}, profiles:($pr // {}),
+      models:({provider:$prov} + (if $ex == null then {} else {extra_runtimes:{local:$ex}} end)),
+      memory:{},budget_cents:500}' > "$T/c/projects/$1.json"
+}
+EN() { "$DA" provider enable "$@"; }
+DIS() { "$DA" provider disable "$@"; }
+tokof_() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$1"; }
+opts_of() { jq -c '.models.run_options // "none"' "$T/c/projects/$1.json"; }
+nlines() { local n; n=$(grep -c "provider:$1" "$T/s/audit.log" 2>/dev/null); echo "${n:-0}"; }
+refusal_code() { sed -n 's/^qargi-refusal\/1 .*"code":"\([a-z-]*\)".*/\1/p' <<<"$1"; }
+own='{"local":"fakeimg"}'
+PROFILES='{"imgs":{"base":"worker","tier":"balanced","effort":"high","options":["image_generation"]},"plain":{"base":"worker","tier":"balanced","effort":"high"}}'
+
+# --- the plan: what the option adds to the run's file, what it opens, what the owner must say; it changes nothing
+mkproj g1 "$own" '["fakeother"]'
+out=$(EN g1 --runtime fakeimg --option "$OPT" 2>&1); rc=$?
+tok=$(tokof_ "$out")
+{ [ "$rc" = 0 ] && [ -n "$tok" ] && [ "$(opts_of g1)" = '"none"' ] && [ "$(nlines enable-option)" = 0 ]; } && ok "plan: without --plan and --approved it prints the plan and a token and changes nothing" || no "plan: rc=$rc $out"
+{ grep -q '^enable run option image_generation of runtime fakeimg for project g1 (models.run_options.local.fakeimg)$' <<<"$out" \
+  && grep -qx '    \[features\]' <<<"$out" && grep -qx '    image_generation = true' <<<"$out" && ! grep -q 'approval_policy' <<<"$out"; } \
+  && ok "plan: the settings the option adds to the run's config.toml, as the TOML lines, and nothing of the baseline" || no "plan settings: $out"
+{ grep -q '^for write runs only: write; a read-only run never gets it' <<<"$out" && grep -q '^outside the sandbox: the tool this opens runs outside the sandbox of fakeimg' <<<"$out" \
+  && grep -q "^spend: it may spend on the members' sign-in; qargi does not measure that" <<<"$out" && grep -q '^writes: the image files the member saves' <<<"$out"; } \
+  && ok "plan: the barrier note: write runs only, outside the sandbox, may spend and is not measured, where it writes" || no "plan barrier: $out"
+{ grep -q '^reads: members on fakeimg can read the real ~/.codex' <<<"$out" && grep -q '^verified: no (verified_on is null): codex-cli 0.171.0' <<<"$out" \
+  && grep -q '^profiles that could select it now: none yet; a profile of base worker selects it with profiles.NAME.options' <<<"$out" \
+  && grep -q "^the owner.s approval words must contain: \"$PHRASE\"$" <<<"$out"; } \
+  && ok "plan: the reads warning of the runtime, that the option is unverified, the profiles that could select it and the phrase" || no "plan tail: $out"
+
+# --- the approval: words that carry the phrase; a wrong token is plan-stale; the token stays good after a refused approval
+EN g1 --runtime fakeimg --option "$OPT" --plan wrong --approved "go ahead, $PHRASE" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"plan-stale"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "a wrong token is plan-stale and stores nothing" || no "wrong token: rc=$rc $(cat "$T/e")"
+EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "go ahead" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && grep -q 'refused \[runtime-option-unacknowledged\] the approval of the option image_generation of the runtime fakeimg does not carry the phrase' "$T/e" \
+  && [ "$(opts_of g1)" = '"none"' ] && [ "$(nlines enable-option)" = 0 ]; } \
+  && ok "unacknowledged: an approval without the phrase is runtime-option-unacknowledged (exit 1), stores nothing and writes no audit line" || no "no phrase: rc=$rc $(cat "$T/e")"
+EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "hosted image generation runs outside the sandboxes" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "unacknowledged-as-words: a word that only starts like the phrase's last one does not carry it" || no "as words: rc=$rc $(cat "$T/e")"
+EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "yes: Hosted  IMAGE
+generation runs outside the sandbox, and it may spend" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 0 ] && [ "$(opts_of g1)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } \
+  && ok "acknowledged: the same token is still good, and words that carry the phrase (other letter case, runs of blanks) store the option at models.run_options.local.fakeimg" || no "phrase: rc=$rc $(cat "$T/e" "$T/o")"
+{ [ "$(nlines enable-option)" = 1 ] && tail -1 "$T/s/audit.log" | jq -e '.verb == "provider:enable-option" and (.approved | test("IMAGE")) and (.detail | test("^g1 runtime fakeimg option image_generation "))' >/dev/null; } \
+  && ok "one audit line, provider:enable-option, keeps the words of the approval" || no "audit: $(tail -2 "$T/s/audit.log")"
+"$DA" project validate g1 >/dev/null 2>&1 && ok "the stored answers stay valid for project validate" || no "validate g1: $("$DA" project validate g1 2>&1)"
+out=$(EN g1 --runtime fakeimg --option "$OPT" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'nothing to do: the option image_generation of fakeimg is enabled for g1 already' <<<"$out" && [ "$(nlines enable-option)" = 1 ]; } && ok "enabling again says so and records nothing more" || no "again: $out"
+
+# --- the refusals of the plan
+out=$(EN g1 --runtime fakeplain --option "$OPT" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-not-enabled ] && grep -q 'name=fakeplain' <<<"$out" && ! grep -q '^plan token' <<<"$out"; } \
+  && ok "a runtime that is not enabled for the project has no option to enable (runtime-not-enabled)" || no "not enabled: rc=$rc $out"
+out=$(EN g1 --runtime fakeother --option "$OPT" 2>&1); tok2=$(tokof_ "$out")
+EN g1 --runtime fakeother --option "$OPT" --plan "$tok2" --approved "$PHRASE" >/dev/null 2>&1
+[ "$(opts_of g1)" = '{"local":{"fakeimg":["image_generation"],"fakeother":["image_generation"]}}' ] && ok "an extra runtime has its own list" || no "extra: $(opts_of g1)"
+mkfake fakeno_opts 'del(.dispatch.run_config.options)'
+out=$(EN g1 --runtime fakeimg --option nosuchopt 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'declares no option named nosuchopt' <<<"$out" && grep -q 'image_generation' <<<"$out" && ! grep -q '^plan token' <<<"$out"; } \
+  && ok "an option the definition does not declare does not exist (exit 2, no token)" || no "undeclared: rc=$rc $out"
+out=$(EN g1 --runtime fakeimg --option 'Bad Name' 2>&1); rc=$?
+[ "$rc" = 2 ] && ok "a bad option name is a usage error (exit 2)" || no "bad name: rc=$rc $out"
+mkproj g2 "$own"
+out=$(EN g2 --runtime claude-code --option "$OPT" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-not-enabled ]; } && ok "nor has a runtime the project never enabled" || no "claude-code: rc=$rc $out"
+
+# the runtime itself cannot be disabled while an option of it is enabled (a runtime that is not enabled has none: the answers would be invalid)
+out=$(DIS g1 --runtime fakeother 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'project g1 has run options enabled for the runtime fakeother (image_generation): disable them first (qargi provider disable g1 --runtime fakeother --option image_generation)' <<<"$out" \
+  && ! grep -q '^plan token' <<<"$out" && [ "$(jq -c '.models.extra_runtimes' "$T/c/projects/g1.json")" = '{"local":["fakeother"]}' ]; } \
+  && ok "disabling a runtime is refused, with no token, while an option of it is enabled" || no "disable runtime with options: rc=$rc $out"
+
+# --- a profile selects among the enabled options; the disable is refused while one does
+"$DA" project set g1 profiles.imgs '{"base":"worker","tier":"balanced","options":["image_generation"]}' >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c .profiles.imgs.options "$T/c/projects/g1.json")" = '["image_generation"]' ]; } && ok "project set: a profile selects an option the project enabled (a plain set)" || no "set profile: rc=$rc $(cat "$T/o")"
+out=$(DIS g1 --runtime fakeimg --option "$OPT" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'profile imgs of project g1 selects the option image_generation: take it out of profiles.NAME.options first' <<<"$out" && ! grep -q '^plan token' <<<"$out" \
+  && [ "$(opts_of g1)" = '{"local":{"fakeimg":["image_generation"],"fakeother":["image_generation"]}}' ]; } \
+  && ok "disable is refused while a profile selects the option, and stores nothing" || no "disable while selected: rc=$rc $out"
+"$DA" project set g1 profiles.imgs.options '[]' >/dev/null 2>&1
+out=$(DIS g1 --runtime fakeimg --option "$OPT" 2>&1); rc=$?; tok=$(tokof_ "$out")
+{ [ "$rc" = 0 ] && [ -n "$tok" ] && grep -q '^disable run option image_generation of runtime fakeimg for project g1 (models.run_options.local.fakeimg)$' <<<"$out" \
+  && grep -q 'becomes \[\]' <<<"$out" && ! grep -q 'approval words must contain' <<<"$out"; } && ok "the disable plan shows what the list becomes and names no phrase" || no "disable plan: rc=$rc $out"
+DIS g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "stop it" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c '.models.run_options.local.fakeimg' "$T/c/projects/g1.json")" = '[]' ] && [ "$(nlines disable-option)" = 1 ]; } \
+  && ok "disable applies with no phrase and leaves one audit line, provider:disable-option" || no "disable: rc=$rc $(cat "$T/e")"
+"$DA" project validate g1 >/dev/null 2>&1 && ok "an empty list stays valid" || no "validate after disable"
+out=$(DIS g1 --runtime fakeimg --option "$OPT" 2>&1)
+grep -q 'nothing to do: the option image_generation of fakeimg is not enabled for g1' <<<"$out" && ok "disabling what is not enabled says so" || no "disable twice: $out"
+
+# --- the answer is gated: no project verb stores it, an archive may drop an entry and never add one, and a member never runs the verb
+mkproj g3 "$own"
+cp "$T/c/projects/g3.json" "$T/before.json"
+"$DA" project set g3 models.run_options.local.fakeimg '["image_generation"]' >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 2 ] && grep -q 'qargi provider enable PROJECT --runtime NAME --option OPTION' "$T/o" && cmp -s "$T/before.json" "$T/c/projects/g3.json"; } && ok "project set refuses models.run_options and names the verb" || no "project set: rc=$rc $(cat "$T/o")"
+"$DA" project set g3 models '{"provider":{"local":"fakeimg"},"run_options":{"local":{"fakeimg":["image_generation"]}}}' >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 2 ] && cmp -s "$T/before.json" "$T/c/projects/g3.json"; } && ok "nor as a key of a whole models object" || no "project set models: rc=$rc $(cat "$T/o")"
+jq '.models.run_options = {local: {fakeimg: ["image_generation"]}}' "$T/before.json" > "$T/new.json"
+"$DA" project init g3 --answers "$T/new.json" --force >"$T/o" 2>&1; rc=$?
+{ [ "$rc" != 0 ] && cmp -s "$T/before.json" "$T/c/projects/g3.json"; } && ok "project init --answers does not add it either" || no "project init: rc=$rc $(cat "$T/o")"
+python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local '{}' --conf "$T/c" >/dev/null 2>&1 && no "gated_answers stored a path it was not given" \
+  || ok "gated_answers stores models.run_options.local.RUNTIME and no other path of it"
+python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ] \
+  && ok "gated_answers stores it for the verb that passed the plan token" || no "gated_answers: $(opts_of g3)"
+"$DA" project unset g3 models.run_options >"$T/o" 2>&1; rc=$?     # a member run is refused before the gate is asked, so the refusal text is either
+{ [ "$rc" = 2 ] && grep -Eq 'not removed with project unset|not available in a member run' "$T/o" && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } && ok "project unset refuses it too" || no "unset: rc=$rc $(cat "$T/o")"
+
+# --- project validate: the shape of the answer, and what a profile may select
+mkproj v1 "$own" null '{"p":{"base":"worker","options":["image_generation"]}}'
+out=$("$DA" project validate v1 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'profiles.p.options: image_generation is not enabled for the runtime fakeimg of this project (qargi provider enable PROJECT --runtime fakeimg --option image_generation)' <<<"$out"; } \
+  && ok "validate: a profile that selects an option the project did not enable is refused" || no "validate not enabled: rc=$rc $out"
+mkproj v2 "$own" null '{"p":{"base":"reviewer","options":["image_generation"]}}'
+jq '.models.run_options = {local: {fakeimg: ["image_generation"]}}' "$T/c/projects/v2.json" > "$T/v2.json" && mv "$T/v2.json" "$T/c/projects/v2.json"
+out=$("$DA" project validate v2 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'profiles.p.options: the profile is on the base reviewer, a read-only run, which never gets a run option' <<<"$out"; } \
+  && ok "validate: a profile whose base is reviewer is refused, though the option is enabled" || no "validate reviewer: rc=$rc $out"
+mkproj v3 "$own" null '{"p":{"base":"worker","options":["image_generation","image_generation"]},"q":{"base":"worker","options":"image_generation"},"r":{"base":"worker","options":["Bad"]},"ok":{"base":"worker","options":[]}}'
+jq '.models.run_options = {local: {fakeimg: ["image_generation"]}}' "$T/c/projects/v3.json" > "$T/v3.json" && mv "$T/v3.json" "$T/c/projects/v3.json"
+out=$("$DA" project validate v3 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'profiles.p.options: a list of distinct option names' <<<"$out" && grep -q 'profiles.q.options: a list of distinct option names' <<<"$out" \
+  && grep -q 'profiles.r.options: a list of distinct option names' <<<"$out" && ! grep -q 'profiles.ok' <<<"$out"; } \
+  && ok "validate: options is a list of distinct option names (an empty one selects none)" || no "validate shape: rc=$rc $out"
+mkproj v4 "$own"
+jq '.models.run_options = {local: {fakecx: ["image_generation"], fakeimg: "image_generation"}, cloud: {x: []}}' "$T/c/projects/v4.json" > "$T/v4.json" && mv "$T/v4.json" "$T/c/projects/v4.json"
+out=$("$DA" project validate v4 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'models.run_options.local.fakecx: fakecx is not enabled for this project' <<<"$out" && grep -q 'models.run_options.local.fakeimg: a list of option names' <<<"$out" \
+  && grep -q 'models.run_options.cloud: not a surface with run options (only local)' <<<"$out"; } && ok "validate: the shape of models.run_options, and the runtime must be enabled for the project" || no "validate run_options: rc=$rc $out"
+mkproj v5 "$own"
+jq '.models.run_options = {local: {fakeimg: ["image_generation", "nosuchopt"]}}' "$T/c/projects/v5.json" > "$T/v5.json" && mv "$T/v5.json" "$T/c/projects/v5.json"
+out=$("$DA" project validate v5 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q "^finding: models.run_options.local.fakeimg 'nosuchopt' is not an option the definition of fakeimg declares" <<<"$out" && ! grep -q "'image_generation'" <<<"$out"; } \
+  && ok "validate: an option the definition no longer declares is a finding, a declared one none" || no "validate finding: rc=$rc $out"
+
+[ "$fail" = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }

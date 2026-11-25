@@ -8,6 +8,7 @@ What this page says was established with codex-cli 0.167.1 on Linux, unless a se
 - [Headless skill marker observations](#headless-skill-marker-observations)
 - [Platform and sandbox](#platform-and-sandbox)
 - [What a member run loads](#what-a-member-run-loads)
+- [Image generation: an opt-in, off by default](#image-generation-an-opt-in-off-by-default)
 - [What a member can reach](#what-a-member-can-reach)
 - [Skills and MCP tools of a member](#skills-and-mcp-tools-of-a-member)
 - [The output of a run](#the-output-of-a-run)
@@ -66,10 +67,24 @@ The baseline is `dispatch.run_config.baseline` of the definition; a run with no 
 - **`sandbox_workspace_write.exclude_slash_tmp`**: Value: `true`; Why: `/tmp` is shared with the rest of the machine; a write member writes temporary files in `TMPDIR`
 - **`sandbox_workspace_write.exclude_tmpdir_env_var`**: Value: `false`; Why: `TMPDIR`, the run's TMP, stays writable (seen with `codex sandbox`: `/tmp` refused, `TMPDIR` written, no network)
 - **`web_search`**: Value: `disabled`; Why: hosted search runs at the vendor, outside the shell sandbox
-- **`features.apps`, `plugins`, `remote_plugin`, `hooks`, `computer_use`, `browser_use`, `in_app_browser`, `image_generation`, `tool_suggest`, `skill_mcp_dependency_install`**: Value: `false`; Why: features that reach outside the shell sandbox, install things or run code Codex did not get from the member's commands (`codex features list` shows them off)
+- **`features.apps`, `plugins`, `remote_plugin`, `hooks`, `computer_use`, `browser_use`, `in_app_browser`, `image_generation`, `tool_suggest`, `skill_mcp_dependency_install`**: Value: `false`; Why: features that reach outside the shell sandbox, install things or run code Codex did not get from the member's commands (`codex features list` shows them off); `image_generation` is off in the baseline of every run and turned on only by the opt-in below
 - **`skills.bundled.enabled`**: Value: `false`; Why: the skills Codex ships (an installer, a creator, image generation) are no part of a member's task (the prompt input lists none, seen offline)
 
 Each key is read by this CLI (a value of the wrong type is refused, naming the key). That every key holds in a real run, and that the hosted tools are gone from a real session, is not verified: the offline prompt input shows no hosted tool either way. The multi-agent tools (`spawn_agent` and its kin) stay listed: no supported switch removed them offline.
+
+## Image generation: an opt-in, off by default
+
+`codex-cli` 0.171.0 lists `image_generation` as a stable feature that is on by default (`codex features list`, scratch `CODEX_HOME`, offline); the baseline above turns it off, and a run gets it only when the project's owner opted in. `image_generation_animation` (under development, off) and video are not declared by the definition, so a project cannot enable them: that would be another option and another approval.
+
+The definition declares the option as data, `dispatch.run_config.options.image_generation`: the setting it flips (`features.image_generation = true`), the classes it is for (write runs only), that the tool runs outside the sandbox, that it may spend (`unknown`), where it may write, the words the owner's approval must contain (`hosted image generation runs outside the sandbox`) and that it is **not verified** (`verified_on` is null; no run has had the feature on). Three layers decide whether a run has it:
+
+1. the definition declares it (an option that is not declared does not exist);
+2. the owner enables it for the project's runtime: `qargi provider enable PROJECT --runtime codex --option image_generation` prints the plan and a token (the TOML lines it adds to the run's `config.toml`, that the hosted tool runs outside the Codex sandbox so the shell's network denial does not hold it, that it may spend on the members' sign-in and that qargi does not measure that, that images reach the clone only if the member saves them there, the reads warning, that it is unverified, the profiles that could select it, and the phrase) and changes nothing; `--plan TOKEN --approved WORDS` stores `models.run_options.local.codex` and writes one audit line (`provider:enable-option`). Words without the phrase are `runtime-option-unacknowledged` and the token stays good. `codex` must already be the project's own runtime or an enabled extra one. `qargi project set` and `project init` refuse the answer, an archive import can drop an entry and never add one, and the guard refuses the verb to a member;
+3. a profile of the project selects it: `qargi project set PROJECT profiles.NAME.options '["image_generation"]'`, a plain set that only chooses among what the owner enabled for the profile's runtime. `qargi project validate` refuses an option that is not enabled and a profile on the `reviewer` base. There is no `--option` on `qargi local prepare`: a task gets the option only through its profile.
+
+`qargi provider disable PROJECT --runtime codex --option image_generation` is refused while a profile selects it, then takes its own plan and token and asks for no phrase.
+
+What qargi does not know: where a generated image lands (the clone, the run home or only the transcript), what events the tool emits, and whether its cost is in the `turn.completed` usage (`cost_report` is tokens only; a ChatGPT sign-in reports no money per run). One live check with a scratch repository, the smallest model and one small image would settle the first two; it spends, so it is asked of the owner first, and it has not been done: the option stays unverified, and the images a run leaves are not yet listed, checked or cleaned by `local list`, `review check` or `local clean`.
 
 ## What a member can reach
 

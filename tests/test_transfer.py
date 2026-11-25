@@ -354,6 +354,43 @@ class Import(Env):
         self.assertNotIn("would add or change", r.stderr)
         self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["extra_runtimes"], {"local": ["fakecx"]})
 
+    def test_the_archive_cannot_add_a_run_option(self):
+        # models.run_options.local.RUNTIME is stored by qargi provider enable|disable --runtime NAME --option OPT only (a plan, a token, the option's phrase, an audit line);
+        # an archive is untrusted data: it may keep or drop an option of a runtime, never add one
+        src = os.path.join(self.conf, "projects", "alpha.json")
+        doc = jd(src)
+        doc["models"] = {"provider": "claude-code", "run_options": {"local": {"fakecx": ["image_generation", "other_option"], "fakecy": ["image_generation"]}}}
+        self.write(src, json.dumps(doc))
+        a = self.export()
+        t, conf, state, fake = self.target()
+        # a machine that stores none: the key is left out, the rest of the answers comes in
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"], {"provider": "claude-code"})
+        self.assertIn("models.run_options", r.stderr)
+        self.assertIn("qargi provider enable|disable|accept", r.stderr)
+        # a machine that stores one option of one runtime: another option, and another runtime, are not added; the stored value stays
+        own = {"project": "alpha", "models": {"provider": "claude-code", "run_options": {"local": {"fakecx": ["image_generation"]}}}, "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["run_options"], {"local": {"fakecx": ["image_generation"]}})
+        self.assertIn("models.run_options", r.stderr)
+        # the same options need no note; dropping one is allowed
+        own["models"]["run_options"] = {"local": {"fakecx": ["image_generation", "other_option"], "fakecy": ["image_generation"]}}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["run_options"], doc["models"]["run_options"])
+        doc["models"]["run_options"] = {"local": {"fakecx": ["image_generation"]}}
+        self.write(src, json.dumps(doc))
+        a2 = self.export("b.tar.gz")
+        r = self.run_import(a2, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["run_options"], {"local": {"fakecx": ["image_generation"]}})
+
     def test_the_archive_cannot_set_the_answers_a_member_may_not_set(self):
         # ci.not_gates, methodology_accepted, review.reject_trailers, backlog.archive and backlog.section are refused to a member by the guard; an archive is untrusted data too
         src = os.path.join(self.conf, "projects", "alpha.json")
