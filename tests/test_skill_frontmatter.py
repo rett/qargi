@@ -4,6 +4,9 @@
 shipped skills use."""
 import glob, json, os, sys, unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
