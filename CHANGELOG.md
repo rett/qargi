@@ -32,6 +32,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The `description` of the shipped `gitflow-member` skill pack named `agent/<slug>`, which the Anthropic skills API reads as an XML tag (`name` and `description` must not contain XML tags): `provision apply` stopped at that skill with a 400. It now says `agent/SLUG`, and `tests/test_skill_frontmatter.py` checks that no shipped pack's name or description holds an XML tag or the words anthropic or claude.
 - A process that exits while its `/proc/PID/stat` is read gave a short or empty read that qargi took for "unknown process liveness: invalid stat", so a cleanup or retry refused with the wrong reason under load. The read is repeated once: a second read proves the process absent, or is the answer, and two bad reads are still a refusal.
 - The `description` of four shipped skill packs (docs-site-member, gitflow-member, qargi-contributing, review-findings) held an unquoted `: `, which a strict YAML reader refuses (`mapping value is not allowed in this context`): the render of a cloud agent's skills failed on it. The values are quoted, and `tests/test_skill_frontmatter.py` checks the frontmatter of every shipped skill.
 
