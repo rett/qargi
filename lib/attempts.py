@@ -298,8 +298,9 @@ def atomic(fd, name, data, tmp=None):
             pass
 
 
-def process(pid):
-    """Linux stat identity, ppid and pgid, or None for a proven absent pid."""
+def process(pid, _again=True):
+    """Linux stat identity, ppid and pgid, or None for a proven absent pid. A stat that does not parse (a process that exits while it is read gives a short or empty
+    read) is read once more: the second read proves the pid absent, or is the answer; a second bad read is a refusal."""
     need(integer(pid, 1, 2**31 - 1) and sys.platform.startswith("linux"), "unknown process liveness")
     try:
         with open("/proc/%d/stat" % pid, "rb") as stream:
@@ -318,7 +319,11 @@ def process(pid):
              "unknown process liveness: invalid stat")
         return {"token": str(int(fields[19])), "ppid": int(fields[1]), "pgid": int(fields[2]),
                 "state": fields[0].decode("ascii")}
-    except (ValueError, IndexError) as e:
+    except (ValueError, IndexError, Refuse) as e:
+        if _again:
+            return process(pid, False)
+        if isinstance(e, Refuse):
+            raise
         raise Refuse("unknown process liveness: invalid stat") from e
 
 

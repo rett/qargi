@@ -1070,6 +1070,17 @@ if sys.argv[3] == 'member':
                 with mock.patch('builtins.open', return_value=stream):
                     self.assertIsNone(A.process(child.pid))
 
+    def test_a_stat_read_that_does_not_parse_is_read_once_more(self):
+        # A process that exits while its stat is read gives a short or empty read: the second read proves it absent; two bad reads are a refusal.
+        pid = 2**31 - 2
+        bad = mock.mock_open(read_data=b'')
+        gone = FileNotFoundError(errno.ENOENT, 'gone')
+        with mock.patch('builtins.open', side_effect=[bad.return_value, gone]):
+            self.assertIsNone(A.process(pid))
+        with mock.patch('builtins.open', side_effect=[bad.return_value, mock.mock_open(read_data=b'').return_value]):
+            with self.assertRaisesRegex(A.Refuse, 'invalid stat'):
+                A.process(pid)
+
     def test_process_stat_esrch_only_counts_as_absence_with_proc_available(self):
         pid = 2**31 - 2
         for operation in ('open', 'read'):

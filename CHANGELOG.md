@@ -92,6 +92,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A process that exits while its `/proc/PID/stat` is read gave a short or empty read that qargi took for "unknown process liveness: invalid stat", so a cleanup or retry refused with the wrong reason under load. The read is repeated once: a second read proves the process absent, or is the answer, and two bad reads are still a refusal.
 - The `description` of four shipped skill packs (docs-site-member, gitflow-member, qargi-contributing, review-findings) held an unquoted `: `, which a strict YAML reader refuses (`mapping value is not allowed in this context`): the render of a cloud agent's skills failed on it. The values are quoted, and `tests/test_skill_frontmatter.py` checks the frontmatter of every shipped skill.
 - `qargi ref record --rewrite` now refuses a branch the project keeps long-lived (`repo.long_lived`, `repo.detached`, the parking branch; a maintenance line such as `release/2.x`, or an `agent/*` name listed there) before it asks origin, as `--deleted` already did: such a branch is never rewritten, with or without an origin.
 - `qargi ref record --deleted` and `ref note` refuse a name that cannot be a branch (`HEAD`, `refs/heads/-x`) as "not a branch name" instead of journaling it or looking it up.
