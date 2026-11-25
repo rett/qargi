@@ -12,11 +12,11 @@
   "since": "2026-11-25T22:46:53Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-25T22:46:53Z",
+ "renewed_at": "2026-11-25T23:33:16Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 1,
- "updated_at": "2026-11-25T22:46:53Z",
+ "rev": 2,
+ "updated_at": "2026-11-25T23:33:16Z",
  "feature": "release-038",
  "project": "qargi"
 }
