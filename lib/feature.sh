@@ -76,7 +76,7 @@ feat_exit() {   # the one EXIT handler: what gitflow.sh cleans up, the temporary
 }
 trap feat_exit EXIT
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
-project_load
+project_load "feature $verb"
 # the declared gates (the answer gates; lib/gates.py) replace test_command in the verbs that read or make the whole-suite record: the feature tier
 case $verb in status|verify|finish) gates_load feature;; esac
 # verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding
@@ -103,7 +103,7 @@ merge_detached() {
   g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
   run_warning "$EXTRA"
   detached_mix "$EXTRA" "$d"
-  tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token)
+  tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token --basis "project:name detached:ref head:sha task:ref task-head:sha" --verb "feature merge" --target "$PROJ:$d")
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
   show_incoming "$d" "$EXTRA"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature merge $d $EXTRA --plan $tok --approved \"...\")"; return 0; fi
@@ -214,7 +214,7 @@ feat_dry_end() {
   if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${labels// /, }"; exit 0; fi
   DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
   [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
-  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" < "$PSF" 2>/dev/null || true
+  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis scratch "$tok" "$labels" < "$PSF" 2>/dev/null || true
   DA_STATE=$DRYTMP need_plan "$tok"
   [ $# = 0 ] || "$@"
   [ "$DRYN" != 0 ] || echo "the plan $tok is the one shown: the apply of finish would go on"
@@ -244,7 +244,7 @@ feature_finish_resume() {
   f=$(intent_file "$key")
   d0=$(jq -r '.refs[0].local_old' "$f"); rd0=$(jq -r '.refs[0].origin_old' "$f"); MERGED=$(jq -r '.refs[0].new' "$f")
   h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
-  tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record")
+  tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record:name" --verb "feature finish" --target "$PROJ:$NAME_ARG")
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
@@ -468,7 +468,7 @@ case $verb in
     if ! g remote get-url origin >/dev/null 2>&1; then pushwhy="the repository has no origin"
     elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
     else pushd=1; fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project branch head develop keep delete-merged origin-branch push")
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha develop:sha keep:label delete-merged:label origin-branch:sha push:label" --verb "feature finish" --target "$PROJ:$NAME_ARG")
     if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"

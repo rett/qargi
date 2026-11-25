@@ -154,6 +154,19 @@
           "skill_mcp_dependency_install": false
         },
         "skills": {"bundled": {"enabled": false}}
+      },
+      "options": {
+        "image_generation": {
+          "set": {"features": {"image_generation": true}},
+          "classes": ["write"],
+          "outside_sandbox": true,
+          "spends": "unknown",
+          "writes": "the image files the member saves; where the hosted tool itself writes is not verified",
+          "phrase": "hosted image generation runs outside the sandbox",
+          "verified_on": null,
+          "source": "codex-cli 0.171.0, codex features list with a scratch CODEX_HOME (offline): image_generation is a stable feature that is on by default, which the baseline turns off; image_generation_animation is under development and off, and no video feature is listed; no run has had the feature on",
+          "note": "the hosted image tool runs outside the Codex sandbox, so the shell's network denial does not hold it; it may spend on the members' sign-in and qargi does not measure that (a ChatGPT sign-in reports no money per run); images reach the clone only if the member saves them there, and where the tool itself writes, which events it emits and whether turn.completed usage counts it are not verified; a read-only run never gets it; the animation feature and video are not declared, so a project cannot enable them"
+        }
       }
     },
     "reads": {"confined": false, "exposes": ["~/.codex"], "note": "sessions, history, sign-in"},

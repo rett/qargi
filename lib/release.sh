@@ -148,7 +148,7 @@ printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || usage_die "'$VER' is
 . "$(dirname "$0")/gitflow.sh"
 PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan of start and push), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
 [ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop and g and ghq pass only what reads
-project_load
+project_load "release $verb"
 read -r REL_PAT HOT_PAT < <(python3 -I - "$(dirname "$0")" "$METH" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 b = M.load(sys.argv[2])[2]["branches"]
@@ -516,7 +516,7 @@ release_finish_resume() {
   s0=$(jq -r '.refs[1].local_old' "$f"); rs0=$(jq -r '.refs[1].origin_old' "$f"); ns=$(jq -r '.refs[1].new' "$f"); tagsha=$(jq -r '.refs[2].new' "$f")
   h=$(jq -r '.ctx.head' "$f"); second=$(jq -r '.ctx.second' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); IGNORED=$(jq -r '.ctx.ignored' "$f"); IGNORE_CHECKS=$(jq -r '.ctx.ignore_checks' "$f")
   rb0=$(jq -r '.ctx.rb0' "$f"); k1=$(jq -r '.ctx.k1' "$f"); k2=$(jq -r '.ctx.k2' "$f"); PUSHED=''; [ "$(jq -r '.pushed' "$f")" != true ] || PUSHED=1
-  tok=$(jq -S -c 'del(.done)' "$f" | plan_token)
+  tok=$(jq -S -c 'del(.done)' "$f" | plan_token --basis "record:name" --verb "release finish" --target "$PROJ:$VER")
   echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
   echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
@@ -894,7 +894,7 @@ dry_after_plan() {
     # names the labels whose lines differ, as it would in the apply
     DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
     [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
-    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$2" "$3" < "$PSF" 2>/dev/null || true
+    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis scratch "$2" "$3" < "$PSF" 2>/dev/null || true
     DA_STATE=$DRYTMP step_gate "$1" "$2"
     echo "the plan $2 is the one shown: the apply of $1 would go on"
   else step_gate "$1" "$2"; fi
@@ -1019,7 +1019,7 @@ case $verb in
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
     steps="start${haspush:+ push} finish${site:+ site}"
     fixp=$(fix_paths_derive); fixd=$(fragments_dir); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
-    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project kind version date keep allow-empty branch base head master second steps start-plan fix-paths")
+    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project:name kind:label version:name date:label keep:label allow-empty:label branch:ref base:ref head:sha master:sha second:ref steps:label start-plan:sha fix-paths:path" --verb "release plan" --target "$PROJ:$VER")
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
     grep -v '^plan token:' <<<"$sout" | sed 's/^/     /'
@@ -1099,7 +1099,7 @@ case $verb in
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
     # before a token does); the token covers them, the date and the head of the base
     bumped=$(git -C "$WT" diff --cached --name-only)
-    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project kind branch base head version date files")
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project:name kind:label branch:ref base:ref head:sha version:name date:label files:path" --verb "release start" --target "$PROJ:$VER")
     echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
@@ -1216,7 +1216,7 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
-    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project branch head join master")
+    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha join:label master:sha" --verb "release push" --target "$PROJ:$VER")
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
@@ -1326,7 +1326,7 @@ case $verb in
       fi
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token --basis "project:name branch:ref head:sha second:ref master:sha second-head:sha keep:label ignore-checks:label" --verb "release finish" --target "$PROJ:$VER")
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     # the commits the lead made with git on the branch (a fix, the entries of a hotfix), which the deletion takes into the journal (journal_reach): how
     # many, and from where to where. For origin's branch when it is at the head that is released, as the apply requires (a push by hand is counted there)
@@ -1565,7 +1565,10 @@ case $verb in
         || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
       stok=$(sha256sum < "$SIGNREC")
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" | plan_token)
+    # the lines: project, version, tag commit, notes hash, title, one line for each asset (ahash ends in a newline, so the line it leaves is empty: one more), the signature record's hash
+    alabels=''; an=$(grep -c '' <<<"$ahash"); while [ "$an" -gt 0 ]; do alabels+=' asset:label'; an=$((an - 1)); done
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" \
+          | plan_token --basis "project:name version:name tag:sha notes:sha title:name${alabels} signature:sha" --verb "release publish" --target "$PROJ:$VER")
     echo "publish the GitHub release of tag $VER of $PROJ: tag at ${tc:0:7} ($(g log -1 --format=%s "$tc"))"
     echo "notes ($nsrc):"
     sed 's/^/  | /' "$notes"
@@ -1623,7 +1626,7 @@ case $verb in
     git -C "$WT" add -A -- "$SITE_CONF"
     if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
     tree=$(git -C "$WT" write-tree)
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token --basis "project:name version:name tag:sha site-branch:ref site-head:sha tree:sha" --verb "release site" --target "$PROJ:$VER")
     echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
     echo "commit it on $SITE_BR: $SITE_CONF records release $VER; the build only checks the site, _site/ is not committed (and one an earlier build committed is removed); nothing is pushed"
     printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'

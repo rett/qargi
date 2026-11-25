@@ -161,7 +161,7 @@ class Shipped(Tree):
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
         # the run's CODEX_HOME/config.toml: the user-level configuration of the member's Codex, with a baseline every run gets, MCP or not
-        self.assertEqual({k: v for k, v in d["run_config"].items() if k != "baseline"}, {"in": "home", "file": "config.toml"})
+        self.assertEqual({k: v for k, v in d["run_config"].items() if k not in ("baseline", "options")}, {"in": "home", "file": "config.toml"})
         base = d["run_config"]["baseline"]
         self.assertEqual((base["approval_policy"], base["web_search"]), ("never", "disabled"))   # never asks (nobody answers), no hosted search
         self.assertEqual(base["sandbox_workspace_write"], {"network_access": False, "exclude_slash_tmp": True, "exclude_tmpdir_env_var": False})  # TMPDIR only
@@ -981,6 +981,75 @@ class Schema2(unittest.TestCase):
                  name="mylocal")
         self.one(d({"a": {"servers": {}}}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a/servers", name="mylocal")
         self.one(d({"a": "text"}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a, where the MCP servers of the run go", name="mylocal")
+
+    def test_the_options_of_a_run_file_only_flip_settings_of_the_baseline_for_the_classes_the_definition_names(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+        base = {"ask": "never", "features": {"img": False, "apps": False, "on": True}, "n": 3, "roots": ["a"], "net": {"mode": "off"}}
+        opt = {"set": {"features": {"img": True}}, "classes": ["write"], "outside_sandbox": True, "spends": "unknown", "writes": "the files the member saves",
+               "phrase": "hosted images run outside the sandbox", "verified_on": None, "source": "offline", "note": "a hosted tool"}
+
+        def d(options, baseline=base):
+            r = runtime(resources={"mcp": mcp})
+            r["dispatch"]["run_config"] = {"in": "run", "file": "c.toml", "baseline": baseline, "options": options}
+            return r
+
+        def bad(options, needle, **kw):
+            self.one(d(options, **kw), needle, name="mylocal")
+        self.assertEqual(fails(d({"img": opt}), "mylocal"), [])                                              # a valid option passes
+        self.assertEqual(fails(d(None), "mylocal"), [])
+        self.assertEqual(fails(d({"img": {k: v for k, v in opt.items() if k not in ("verified_on", "source", "note")}}), "mylocal"), [])   # the first six are all it needs
+        self.assertEqual(fails(d({"img": dict(opt, verified_on="2026-11-20")}), "mylocal"), [])
+        bad({"img": dict(opt, set={"features": {"newthing": True}})}, "features/newthing is not a key of the baseline")   # a key the baseline does not hold
+        bad({"img": dict(opt, set={"extra": True})}, "extra is not a key of the baseline")
+        bad({"img": dict(opt, set={"servers": {"x": {"url": "u"}}})}, "servers is where the MCP servers of the run go")  # never a server
+        bad({"img": dict(opt, set={"servers": True})}, "an option never sets a server")
+        only = "an option only turns on a setting the baseline holds false"
+        bad({"img": dict(opt, set={"ask": 1})}, "ask is 1 where the baseline holds 'never': " + only)      # a number over a string
+        bad({"img": dict(opt, set={"ask": "on-request"})}, "ask is 'on-request' where the baseline holds 'never': " + only)   # another string
+        bad({"img": dict(opt, set={"n": 4})}, "n is 4 where the baseline holds 3: " + only)               # another number
+        bad({"img": dict(opt, set={"n": True})}, "n is true where the baseline holds 3: " + only)         # true over a number
+        bad({"img": dict(opt, set={"features": {"on": False}})}, "features/on is false where the baseline holds true: " + only)   # true to false
+        bad({"img": dict(opt, set={"features": {"on": True}})}, "features/on is true where the baseline holds true: " + only)     # true to true
+        bad({"img": dict(opt, set={"features": {"img": False}})}, "features/img is false where the baseline holds false: " + only)  # false to false
+        bad({"img": dict(opt, set={"features": {"img": 1}})}, "features/img is 1 where the baseline holds false: " + only)         # a number over false
+        bad({"img": dict(opt, set={"features": {"img": "yes"}})}, "features/img is 'yes' where the baseline holds false: " + only)  # a string over false
+        bad({"img": dict(opt, set={"features": {"img": ["x"]}})}, 'features/img is ["x"] where the baseline holds false: ' + only)  # a list over false
+        bad({"img": dict(opt, set={"roots": ["b"]})}, 'roots is ["b"] where the baseline holds ["a"]: ' + only)         # a list over a list
+        bad({"img": dict(opt, set={"roots": True})}, 'roots is true where the baseline holds ["a"]: ' + only)
+        bad({"img": dict(opt, set={"net": {"mode": "on"}})}, "net/mode is 'on' where the baseline holds 'off': " + only)   # a nested table, a string leaf
+        bad({"img": dict(opt, set={"net": {"mode": {"x": True}}})}, "net/mode is an object where the baseline holds 'off'")
+        bad({"img": dict(opt, set={"features": True})}, "features is true where the baseline holds {")   # a leaf over a table
+        bad({"img": dict(opt, set={"n": {"a": 1}})}, "is an object where the baseline holds 3")
+        bad({"img": dict(opt, set={})}, "img.set: {} is not a non-empty object of settings")
+        bad({"img": {k: v for k, v in opt.items() if k != "phrase"}}, "img: missing required property 'phrase'")      # no phrase
+        bad({"img": dict(opt, phrase="Hosted Images")}, "img.phrase: 'Hosted Images' is not words in lower case")
+        bad({"img": dict(opt, phrase="")}, "img.phrase: '' is not words in lower case")
+        bad({"img": dict(opt, classes=["read-only"])}, 'img.classes: ["read-only"] is not a non-empty list of classes drawn from write')   # a class other than write
+        bad({"img": dict(opt, classes=["write", "read-only"])}, "an option is for a write run only")
+        bad({"img": dict(opt, classes=[])}, "img.classes: [] is not a non-empty list")
+        bad({"img": dict(opt, spends="maybe")}, "img.spends: 'maybe' is not one of no, yes, unknown")
+        bad({"img": dict(opt, outside_sandbox="yes")}, "img.outside_sandbox: 'yes' is not true or false")
+        bad({"img": dict(opt, colour="red")}, "img.colour: additional property is not allowed")
+        bad({"img": dict(opt, verified_on="soon")}, "img.verified_on: 'soon' is not a date")
+        bad({"img": dict(opt, verified_on="2026-11-20", source="")}, "img.source: a verified option says from what it was verified")
+        bad({"Img": opt}, "'Img' is not an option name")
+        bad({"img": "yes"}, "img: 'yes' is not an object")
+        bad({}, "dispatch.run_config.options: {} is not a non-empty object of options")
+        bad({"img": opt}, "an option changes the baseline, which the definition does not have", baseline=None)
+        r = d({"img": opt})
+        r["dispatch"]["run_config"]["x"] = 1
+        self.one(r, "dispatch.run_config.x: additional property is not allowed", name="mylocal")
+        # the shipped definition declares its option as data, unverified, for a write run, and keeps the feature off in the baseline
+        cx = P.definition("codex", "local")
+        rc = cx["dispatch"]["run_config"]
+        self.assertEqual(list(rc["options"]), ["image_generation"])
+        o = rc["options"]["image_generation"]
+        self.assertEqual((o["set"], o["classes"], o["outside_sandbox"], o["spends"], o["verified_on"]), ({"features": {"image_generation": True}}, ["write"], True, "unknown", None))
+        self.assertEqual(o["phrase"], "hosted image generation runs outside the sandbox")
+        self.assertIs(rc["baseline"]["features"]["image_generation"], False)
+        self.assertEqual([m for lvl, m in P.validate2(cx, "codex") if lvl == "fail"], [])
+        self.assertEqual(list(P.declared_options(cx)), ["image_generation"])
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):

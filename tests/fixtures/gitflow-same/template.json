@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "project": "acme",
+  "repo": {
+    "url": "https://github.com/OWNER/REPO",
+    "path": "",
+    "credential_file": "",
+    "long_lived": [
+      "master",
+      "develop"
+    ]
+  },
+  "roles": {
+    "build": {
+      "base": "@dispatcher",
+      "push": {
+        "mode": "none"
+      },
+      "model": null,
+      "effort": "high",
+      "apt": [],
+      "tools": [],
+      "skills": []
+    },
+    "write": {
+      "base": "gh-pages",
+      "push": {
+        "mode": "none"
+      },
+      "model": null,
+      "effort": "medium",
+      "apt": [],
+      "tools": [],
+      "skills": [
+        "pdf"
+      ]
+    }
+  },
+  "lead": {
+    "context_window": null
+  },
+  "models": {
+    "provider": ""
+  },
+  "memory": {
+    "memory_store": "",
+    "reference_store": "",
+    "tiers": {}
+  },
+  "budget_cents": 500
+}

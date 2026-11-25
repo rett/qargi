@@ -1,6 +1,6 @@
 ---
 name: review-findings
-description: How a reviewer writes findings: severity high, medium or low, file:line, defect, failure scenario, evidence, a closing verdict line, no patches.
+description: "How a reviewer writes findings: severity high, medium or low, file:line, defect, failure scenario, evidence, a closing verdict line, no patches."
 ---
 # Writing review findings
 

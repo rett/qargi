@@ -155,4 +155,11 @@
 15 python3 tests/test_rolecard.py
 34 bash tests/test_runtime_enable.sh
 17 bash tests/test_runtime_resolve.sh
+65 bash tests/test_run_options.sh
+43 python3 tests/test_run_options.py
 227 bash tests/test_runtime_run.sh
+60 bash tests/test_plan_record_sites.sh
+40 bash tests/test_plain.sh
+20 bash tests/test_plan_record.sh
+12 python3 tests/test_plan_record.py
+2 python3 tests/test_skill_frontmatter.py

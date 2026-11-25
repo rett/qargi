@@ -517,21 +517,37 @@ audit_log() { # verb [detail]
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
-# plan_token [--basis "LABELS"]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the labelled lines are also kept in
-# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1): line N takes the Nth word of LABELS and the lines after the last word
-# belong to it, so a later need_plan can say which labels moved. The token is the same with or without --basis.
+# plan_token [--basis "LABELS" --verb VERB --target PROJECT:OBJECT]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the plan is also kept in
+# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1) as the record qargi.plan/0 that `qargi plan show TOKEN` prints: line N takes the Nth word
+# of LABELS and the lines after the last word belong to it, so a later need_plan can say which labels moved (a word given again for the next lines, as for a list that is in the
+# middle of a plan, is one label to need_plan). A plan that is one printf of words, or of `|` fields, is one line with one word: the record splits the hashed text on a newline only. A word is `label` or `label:kind` (ref, path, name, sha, label or count;
+# none is name, the conservative kind: a lead-chosen text). VERB is the verb as lib/commands.py names it (`release start`); the target is the project and the one object the verb
+# acts on (a feature, a version, a branch): the call site says both, nothing is read off the command line. The token is the same with or without --basis, and it is always printed:
+# a failure to keep the record (no temporary file, a copy that cannot be written, a target the record refuses) is a note on standard error, never a missing or a different token. A call missing its labels, --verb or --target is a usage error (exit 2, no token): every site gives them.
 plan_token() {
   [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
   [ $# -ge 2 ] || usage_die "plan_token --basis needs the labels: one word for each line of the plan"
-  local plan tok rc=0
-  plan=$(mktemp) || fail "plan_token: cannot make a temporary file"
-  cat > "$plan"
-  tok=$(sha256sum < "$plan" | cut -c1-12)
+  local labels=$2 pverb='' ptarget='' plan tok rc=0
+  shift 2
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --verb) [ $# -ge 2 ] || usage_die "plan_token --verb needs a value"; pverb=$2; shift 2;;
+      --target) [ $# -ge 2 ] || usage_die "plan_token --target needs a value"; ptarget=$2; shift 2;;
+      *) usage_die "plan_token: unknown option $1";;
+    esac
+  done
+  [ -n "$pverb" ] && [ -n "$ptarget" ] || usage_die "plan_token --basis needs --verb VERB and --target PROJECT:OBJECT: the record says what the plan is for"
+  if ! plan=$(mktemp 2>/dev/null); then   # the token never depends on the record: with no file to keep it in, the token of the input is still printed
+    echo "qargi: note: no temporary file could be made, so the plan is not kept and a stale token will not say what moved" >&2
+    sha256sum | cut -c1-12
+    return 0
+  fi
+  tok=$(tee "$plan" | sha256sum | cut -c1-12)   # the token is of the input itself: a copy that cannot be written (a full TMPDIR) loses the record, never the token (basis store refuses a file that does not hash to it)
   if [ "${QARGI_DRY:-}" != 1 ]; then
-    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$2" < "$plan" || rc=$?
+    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" --verb "$pverb" --target "$ptarget" < "$plan" || rc=$?
     case $rc in
       0) ;;
-      70) rm -f "$plan"; exit 70;;
+      70) echo "qargi: note: the plan was not kept (the defect above); the token is the same, but a stale token will not say what moved" >&2;;   # the store is a reading aid: its failure never changes or removes the token
       *) echo "qargi: note: the basis of the plan could not be kept, so a stale token will not say what moved" >&2;;
     esac
   fi
@@ -539,6 +555,7 @@ plan_token() {
   printf '%s\n' "$tok"
 }
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
+  [ -n "${1:-}" ] || fail "internal error: no plan token to check; nothing was changed"   # an empty token is never a plan: an empty --plan must not equal it
   [ "${PLAN_ARG:-}" = "$1" ] && return 0
   local tokarg=() moved # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
   [[ $1 =~ ^[0-9a-f]{12}$ ]] && tokarg=("token=$1")

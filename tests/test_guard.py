@@ -1141,7 +1141,11 @@ class Skills(HookCase):
         for form in ("qargi provider enable p --runtime codex", "qargi provider disable p --runtime codex", "/opt/q/bin/qargi provider enable p --runtime codex --plan 0123456789ab --approved go",
                      "sudo qargi provider enable p --runtime codex", "bash -c 'qargi provider enable p --runtime codex'", "env FOO=1 qargi provider disable p --runtime codex",
                      "cd src && qargi provider enable p --runtime codex", "echo $(qargi provider enable p --runtime codex)", "bash lib/provider.sh enable p --runtime codex",
-                     "python3 -I lib/provider.py enable p --runtime codex", "./lib/provider.sh disable p --runtime codex", "python3 -I lib/provider.py runtime-info p codex enable"):
+                     "python3 -I lib/provider.py enable p --runtime codex", "./lib/provider.sh disable p --runtime codex", "python3 -I lib/provider.py runtime-info p codex enable",
+                     # a run option of a runtime (a hosted tool outside the sandbox, say) is the same approval: the verb with --option, the script behind it and the store
+                     "qargi provider enable p --runtime codex --option image_generation", "qargi provider disable p --runtime codex --option image_generation",
+                     "qargi provider enable p --runtime codex --option image_generation --plan 0123456789ab --approved 'hosted image generation runs outside the sandbox'",
+                     "bash lib/provider.sh enable p --runtime codex --option image_generation", "python3 -I lib/provider.py option-info p codex image_generation enable"):
             r = self.bash(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("changes the provider definitions and is not available to an agent", r.stderr, form)

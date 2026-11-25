@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "name": "plain",
+  "version": 1,
+  "flow": "plain",
+  "description": "Plain: for a project whose output is documents. One long-lived branch, main, holds the documents under artifacts/; each task is a branch agent/<slug> cut from main, checked by a command set with the task, reviewed, and merged back with --no-ff. There are no feature, release or hotfix branches, no tags, no version file and no changelog: nothing is released, and the feature, release and hotfix verbs refuse.",
+  "params": {
+    "project": {
+      "required": true,
+      "help": "the project's name"
+    }
+  },
+  "branches": {
+    "long_lived": [
+      "main"
+    ],
+    "task": "agent/{slug}"
+  },
+  "tests": {
+    "task": "the check set with the task, run on the document: it exists, its format parses, its required headings and links are there"
+  },
+  "work": [
+    "a task is a branch agent/<slug> cut from main, for one document or one set of related edits",
+    "the check that says the task is done is set with the task and is mechanical: the file exists, its format parses, its length, headings and links are right",
+    "someone other than the writer reads the change before it is merged; a change outside the paths the task named is refused",
+    "the reviewed branch is merged into main with --no-ff; main holds the documents as they stand"
+  ],
+  "backlog": {
+    "file": "BACKLOG.md"
+  },
+  "roles": {
+    "build": {
+      "base": "@dispatcher"
+    },
+    "write": {
+      "base": "@dispatcher"
+    },
+    "review": {
+      "base": "@dispatcher"
+    },
+    "test": {
+      "base": "@dispatcher"
+    }
+  },
+  "scaffold": [
+    {
+      "src": "README.md",
+      "dest": "README.md"
+    },
+    {
+      "src": "CONTRIBUTING.md",
+      "dest": "CONTRIBUTING.md"
+    },
+    {
+      "src": "AGENTS.md",
+      "dest": "AGENTS.md",
+      "env": "section"
+    },
+    {
+      "src": "artifacts/.gitkeep",
+      "dest": "artifacts/.gitkeep"
+    },
+    {
+      "src": "BACKLOG.md",
+      "dest": "BACKLOG.md"
+    }
+  ],
+  "deployment": {
+    "note": "Where the documents go once they are done differs a lot between projects, so nothing is set up unless you choose it. Each option can be done by hand.",
+    "options": [
+      {
+        "id": "none",
+        "title": "Nothing yet",
+        "automatable": false,
+        "instructions": "The documents under artifacts/ on main are the output. Decide how they reach their readers later."
+      },
+      {
+        "id": "static-site",
+        "title": "A static site built from artifacts/",
+        "automatable": false,
+        "instructions": "Pick a static site generator that reads Markdown, point it at artifacts/, and have a workflow build and publish the site when main changes. Keep any publishing credential as a repository secret, never in the repository."
+      }
+    ]
+  }
+}

@@ -482,7 +482,7 @@ ac_main() { # verb: accept|unaccept
     echo "== review of skill $name at $(printf '%s' "$shown" | tr -d '\000-\037\177')"
     review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
     binding=$(jq -cS .render_binding "$RN_W/target.json")
-    tok=$(printf 'skill-accept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token)
+    tok=$(printf 'skill-accept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token --basis "accept:name" --verb "skill accept" --target "$prj:$name")
   else
     rec=$(python3 -I "$AUPY" acceptance "$ACC" "$scope" "$prj" "$name" ${TARGET:+--target "$TARGET"}) || exit 1
     hash=$(jq -r .sha256 <<<"$rec")
@@ -491,7 +491,7 @@ ac_main() { # verb: accept|unaccept
     echo "  accepted at $(jq -r '.at // "?"' <<<"$rec") from $(jq -r '.path // "?"' <<<"$rec"), approved: $(jq -r '.approved // ""' <<<"$rec")"
     echo "  the skill itself is not touched; qargi lists it as unmanaged again."
     binding=$(jq -r .record_binding <<<"$rec")
-    tok=$(printf 'skill-unaccept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token)
+    tok=$(printf 'skill-unaccept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token --basis "unaccept:name" --verb "skill unaccept" --target "$prj:$name")
   fi
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
   need_token "$tok"
