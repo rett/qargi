@@ -35,6 +35,8 @@ planned without a basis. Nothing is kept in a dry run.
 - `planned`: written down so that it is reviewed early; no verb raises it yet.
 - `withdrawn`: no longer raised; the code is never reused.
 
+No code of this catalogue starts with `pack-`: the lint refuses it, because the codes a provider pack prints are `[pack-...]` and stay apart from qargi's own.
+
 The codes of the classes `seat-gate` and `seat-door` are the lists of R52 and R70 of the [lead seat contract](lead-seat.md); the lint
 compares them with that page.
 

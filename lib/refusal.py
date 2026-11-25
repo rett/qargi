@@ -59,6 +59,7 @@ LEADS = ("lead", "host")            # the two readers of a `next`
 LEAD_CHOSEN = ("ref", "path", "name", "ref-list", "path-list", "name-list")   # text a lead wrote: only a digest of it reaches `detail`
 SEAT_CLASSES = ("seat-gate", "seat-door")
 CODE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
+RESERVED_PREFIX = "pack-"           # a provider pack prints its own codes as `[pack-...]`: none of qargi's may start with it
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 VERB_RE = re.compile(r"^[a-z][a-z0-9:-]*(?: [a-z][a-z0-9:-]*)*$")
@@ -534,6 +535,8 @@ def check_catalogue(cat):
             problems.append("%s: %s" % (code, msg))
         if not CODE_RE.fullmatch(code):
             bad("a code is kebab-case")
+        if code.startswith(RESERVED_PREFIX):
+            bad("the prefix %s is reserved for the codes a pack of a provider prints; no code of the catalogue starts with it" % RESERVED_PREFIX)
         if not isinstance(e, dict):
             bad("an entry is an object")
             continue
@@ -546,7 +549,7 @@ def check_catalogue(cat):
                 bad("%s is a non-empty string" % key)
         if isinstance(e["why"], str) and "{" in e["why"]:
             bad("why is static: no placeholder")
-        if e["exit"] not in EXITS or isinstance(e["exit"], bool):
+        if type(e["exit"]) is not int or e["exit"] not in EXITS:   # not 1.0 (it would print "exit":1.0), not true
             bad("exit is one of %s" % (EXITS,))
         if e["exit"] != {"seat-gate": 77, "guard": 2, "methodology": 2}.get(e["class"], 1):
             bad("a seat-gate code exits 77, a guard or methodology code 2 and every other code 1")
@@ -703,6 +706,7 @@ def page_text(cat):
            "- `live`: a verb of this build raises the code (or, for the `verify.environment` codes and the guard's, prints it at the sites the catalogue lists).",
            "- `planned`: written down so that it is reviewed early; no verb raises it yet.",
            "- `withdrawn`: no longer raised; the code is never reused.", "",
+           "No code of this catalogue starts with `pack-`: the lint refuses it, because the codes a provider pack prints are `[pack-...]` and stay apart from qargi's own.", "",
            "The codes of the classes `seat-gate` and `seat-door` are the lists of R52 and R70 of the [lead seat contract](lead-seat.md); the lint",
            "compares them with that page.", ""]
     by_class = {}

@@ -132,7 +132,13 @@ if not patches:
         print("OK no commits (status %s)%s" % (m0.get("status"), ": " + m0["blocked_reason"] if m0.get("blocked_reason") else ""))
         if warns or notes: print("\n".join(warns + notes))
         sys.exit(0)
-    print("FAIL no patches found in %s, and no report.md (or PREFIXreport.md) with a Findings section" % run); sys.exit(1)
+    print("FAIL no patches found in %s, and no report.md (or PREFIXreport.md) with a Findings section" % run)
+    # a read-only member runs this as its DONE before its final message exists, so a report that is only in that message is not in OUT yet
+    print("If you are a read-only member and your report is not stored yet, this is not a failed review, the check has no report to read yet.\n"
+          "  If your file tool is refused for report.md, write the report text under another name in %s and run: qargi local report %s --from NAME\n"
+          "  and run this check again. If every write is refused, put the whole report in your final message: the lead stores it with `qargi review save RUN`."
+          % (run, os.path.dirname(os.path.abspath(run))))
+    sys.exit(1)
 try:
     man = json.load(open(os.path.join(run, "manifest.json")))
 except Exception as e:

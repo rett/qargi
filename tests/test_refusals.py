@@ -79,6 +79,8 @@ class TheCatalogue(unittest.TestCase):
             "an unknown placeholder": demo(message="{nowhere}"),
             "a why with a placeholder": demo(why="because {verb}"),
             "an exit that no class uses": demo(exit=3),
+            "an exit that is a float": demo(exit=1.0),
+            "an exit that is a boolean": demo(exit=True),
             "a seat-gate code that exits 1": demo(**{"class": "seat-gate"}),
             "a methodology code that exits 1": demo(**{"class": "methodology"}),
             "an unknown status": demo(status="maybe"),
@@ -95,6 +97,10 @@ class TheCatalogue(unittest.TestCase):
                 self.assertTrue(R.check_catalogue(cat), name)
         self.assertTrue(R.check_catalogue({"schema": 2, "codes": {}}))
         self.assertTrue(R.check_catalogue({"schema": 1, "codes": {"Bad_Code": entry()}}))
+        self.assertEqual(R.check_catalogue({"schema": 1, "codes": {"packet-lost": entry()}}), [], "only the prefix pack- is reserved")
+        for code in ("pack-signature", "pack-x"):
+            with self.subTest(code):
+                self.assertTrue(any("reserved" in m for m in R.check_catalogue({"schema": 1, "codes": {code: entry()}})), "a code that starts with pack- is refused")
         self.assertTrue(R.check_catalogue({"schema": 1, "codes": {}, "extra": 1}))
 
     def test_a_code_is_never_reused_so_the_file_lists_each_once(self):
