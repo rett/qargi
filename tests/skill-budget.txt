@@ -48,4 +48,4 @@ skills/qargi-task/SKILL.md 928 # raised: qualify adapter guard and configurable 
 skills/qargi-task/cloud.md 744
 skills/qargi-task/local-run.md 311 # raised: explain command member snapshots, drift, runtime protection qualification and independent client discovery; raised: local run uses the runtime prepare recorded and refuses runtime-drift, and a read-only member of a command runtime only reads, so the diff and the test output go on disk first; for the lead's review
 skills/qargi-team/SKILL.md 882
-skills/qargi-verify/SKILL.md 751 # raised: say that a verified task's feature merge into its own open feature needs no owner approval, so leads stop asking
+skills/qargi-verify/SKILL.md 750 # raised: say that a verified task's feature merge into its own open feature needs no owner approval, so leads stop asking; lowered: the finish refusal sentence of the clean-up section is gone, the Never list says it
