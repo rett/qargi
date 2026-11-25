@@ -39,5 +39,5 @@ After the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It re
 
 - Apply any run before every open run is verified.
 - `qargi local clean` before its merge is confirmed.
-- `qargi feature finish` or a commit while any run is open (a verified task's `qargi feature merge` into its own open feature is allowed: it needs no owner approval; an open run blocks the finish).
+- `qargi feature finish` or a commit while any run is open (open: unverified, unapplied, or applied and not merged; a verified task's `qargi feature merge` into its own open feature is allowed).
 - Go on with a loop over runs past a failure: stop at the first, before any `qargi local clean`.
