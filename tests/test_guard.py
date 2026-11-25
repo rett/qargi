@@ -1358,7 +1358,7 @@ class Skills(HookCase):
     def test_json_changes_nothing_about_what_the_guard_refuses(self):
         """--json (the plan as one JSON object, lib/jsonplan.py) is no way past the guard: a gated verb is refused with it, in every place the flag
         can stand, as it is without; a read-only verb stays open; and the wrapper script is not a way in by itself."""
-        gated = ("packs seed", "skill import x", "feature finish f", "release publish 0.2.3", "upgrade", "marshal enable", "project new p", "branch prune")
+        gated = ("packs seed", "skill import x", "feature finish f", "release publish 0.2.3", "upgrade", "marshal enable", "project new p", "project remove p", "branch prune")
         for v in gated:
             words = v.split()
             for spelling in (words + ["--json"], [words[0], "--json"] + words[1:], words + ["--json", "--plan", "0123456789ab", "--approved", "go"],
@@ -6258,10 +6258,10 @@ class FifthReview(HookCase):
 
     # --- G12: the lead's runs and agents
     def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
-        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "project remove p", "team run t", "task x", "local run RUN"]
         bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
                                                     "timeout 5 qargi %s")]
-        bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]
+        bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN", "./lib/project.sh remove p", "bash lib/project.sh remove p --plan 0123456789ab --approved go"]
         self.assertEqual(self.not_refused(bad), [])
         r = self.call("Bash", {"command": "qargi local clean RUN --discard"})
         self.assertIn("is the lead's", r.stderr)

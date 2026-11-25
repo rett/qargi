@@ -28,11 +28,13 @@ Subcommands (every JSON argument is the text of a JSON value; `null` means the s
   approved get NAME [--state DIR]
   approved set NAME DECL --by VERB [--state DIR]
   approved check NAME DECL [--state DIR]
+  approved forget NAME [--state DIR]
         the declaration qargi last accepted for a project, kept in STATE/verify-env.json (mode 600, replaced atomically under a lock):
         {"declared": NORMALISED-or-null, "decl": HASH, "at": TIME, "by": VERB}. `get` prints the entry, exit 1 when there is none.
         `set` writes it (DECL `null` stores "declared": null). `check` prints {"equal", "answers", "state", "entry"} (the two hashes;
         no entry counts as off, `entry` says whether there is one), exit 0 when equal and 1 when not.
-        A state file that cannot be read (not JSON, no "projects" object) is exit 3 in all three verbs, with a message and nothing on standard
+        `forget` removes the entry (qargi project remove does, with the project's answers): exit 0 when it removed one, 1 when there was none.
+        A state file that cannot be read (not JSON, no "projects" object) is exit 3 in all four verbs, with a message and nothing on standard
         output: a caller that branches on 1 for "no entry" is never told that a damaged file is a first declaration.
 
 Library use: problems(decl), normalise(decl), loosens(old, new), decl_hash(n), suite_env_id(n), cpu_max_ok(text, quota), cgroup_path(text),
@@ -338,6 +340,39 @@ def approved_set(name, decl, by, state=None, now=None):
     finally:
         os.close(lock)
     return entry
+
+
+def approved_forget(name, state=None):
+    """Remove the entry of a project (qargi project remove: the project's answers are gone, so is what vouched for them); True when there was one.
+    The file is replaced atomically under the lock approved_set takes; a project with no entry leaves it untouched."""
+    path = state_file(state)
+    if not os.path.exists(path):
+        return False
+    lock = os.open(path + ".lock", os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = _read_state(path)
+        if name not in data["projects"]:
+            return False
+        del data["projects"][name]
+        fd, tmp = tempfile.mkstemp(prefix=STATE_NAME + ".", dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=1, sort_keys=True)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(lock)
+    return True
 
 
 def approved_check(name, decl, state=None):
@@ -1137,6 +1172,8 @@ def cmd_approved(args):
         print(json.dumps(entry, sort_keys=True))
     elif args.what == "set":
         print(json.dumps(approved_set(args.name, _decl_arg(args.decl), args.by, state), sort_keys=True))
+    elif args.what == "forget":
+        return 0 if approved_forget(args.name, state) else 1
     else:
         res = approved_check(args.name, _decl_arg(args.decl), state)
         print(json.dumps(res, sort_keys=True))
@@ -1165,10 +1202,10 @@ def build_parser():
     p.add_argument("new")
     p = sub.add_parser("approved")
     asub = p.add_subparsers(dest="what", required=True)
-    for what in ("get", "set", "check"):
+    for what in ("get", "set", "check", "forget"):
         q = asub.add_parser(what)
         q.add_argument("name")
-        if what != "get":
+        if what in ("set", "check"):
             q.add_argument("decl")
         if what == "set":
             q.add_argument("--by", required=True)

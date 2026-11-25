@@ -106,6 +106,7 @@ full | par | 300 | 64 | bash tests/test_install.sh | install.sh lib/install_reco
 full | par | 300 | 59 | bash tests/test_install_runtimes.sh | install.sh lib/install_record.py
 fast | par | 300 | 2 | python3 tests/test_install_record.py | lib/install_record.py
 full | par | 408 | 188 | bash tests/test_project.sh | lib/project.sh lib/owned_refs.py
+full | par | 300 | 30 | bash tests/test_project_remove.sh | lib/project.sh lib/project_remove.py lib/project_link.py lib/suite_env.py lib/refusals.json lib/refusal.py lib/guard.py lib/commands.py lib/help.py tests/fixtures.sh tests/handseal.py
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 # The whole-suite verify at 77eac930 stopped it at 564 s under load: it measured 564 s while three steps ran in parallel on a slow host. The timeout is 1500 s; the budget stays at 277 s.
 full | par | 1500 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh

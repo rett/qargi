@@ -54,7 +54,7 @@ PLAN_MAX = 1 << 20                  # a stored plan is read up to this size
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 STATUSES = ("live", "planned", "withdrawn")
-EXITS = (1, 2, 77)                  # a refusal, a guard's deny or a verb that does not apply to the project's methodology, a lead refusal of the seat
+EXITS = (1, 2, 77)                  # a refusal, a guard's deny, a verb that does not apply to the project's methodology or a removal that something holds back, a lead refusal of the seat
 LEADS = ("lead", "host")            # the two readers of a `next`
 LEAD_CHOSEN = ("ref", "path", "name", "ref-list", "path-list", "name-list")   # text a lead wrote: only a digest of it reaches `detail`
 SEAT_CLASSES = ("seat-gate", "seat-door")
@@ -548,8 +548,8 @@ def check_catalogue(cat):
             bad("why is static: no placeholder")
         if e["exit"] not in EXITS or isinstance(e["exit"], bool):
             bad("exit is one of %s" % (EXITS,))
-        if e["exit"] != {"seat-gate": 77, "guard": 2, "methodology": 2}.get(e["class"], 1):
-            bad("a seat-gate code exits 77, a guard or methodology code 2 and every other code 1")
+        if e["exit"] != {"seat-gate": 77, "guard": 2, "methodology": 2, "project-remove": 2}.get(e["class"], 1):
+            bad("a seat-gate code exits 77, a guard, methodology or project-remove code 2 and every other code 1")
         if e["status"] not in STATUSES:
             bad("status is one of %s" % (STATUSES,))
         fields = e["fields"]

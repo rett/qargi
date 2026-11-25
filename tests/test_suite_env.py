@@ -396,6 +396,38 @@ class Approved(Scratch):
         self.assertEqual(SE.approved_get("q", state)["decl"], SE.decl_hash(None))
         self.assertEqual(SE.approved_get("p", state), e)            # the other project's entry is kept
 
+    def test_forget_removes_one_entry_and_keeps_the_others(self):
+        """qargi project remove forgets the approved declaration of the project it removes: that entry only, atomically, mode 600; no entry is exit 1 and no write."""
+        state = self.path("state")
+        self.assertFalse(SE.approved_forget("p", state))             # no file: nothing made
+        self.assertFalse(os.path.exists(os.path.join(state, "verify-env.json")))
+        SE.approved_set("p", {"fds": "ci-like"}, "project-set", state)
+        q = SE.approved_set("q", None, "project-unset", state)
+        path = os.path.join(state, "verify-env.json")
+        before = os.stat(path).st_mtime_ns
+        self.assertFalse(SE.approved_forget("nobody", state))
+        self.assertEqual(os.stat(path).st_mtime_ns, before)
+        self.assertTrue(SE.approved_forget("p", state))
+        self.assertIsNone(SE.approved_get("p", state))
+        self.assertEqual(SE.approved_get("q", state), q)
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        self.assertEqual([n for n in os.listdir(state) if n.startswith("verify-env.json.") and n != "verify-env.json.lock"], [])
+        self.assertFalse(SE.approved_check("p", {"fds": "ci-like"}, state)["entry"])
+
+    def test_forget_on_the_command_line_and_on_a_damaged_file(self):
+        state = self.path("state")
+        SE.approved_set("p", None, "x", state)
+        cmd = [sys.executable, "-I", os.path.join(LIB, "suite_env.py"), "approved", "forget", "p", "--state", state]
+        self.assertEqual(subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode, 0)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual((r.returncode, r.stdout), (1, b""))
+        with open(os.path.join(state, "verify-env.json"), "w") as f:
+            f.write("{not json")
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual((r.returncode, r.stdout), (3, b""))
+        with open(os.path.join(state, "verify-env.json")) as f:
+            self.assertEqual(f.read(), "{not json")
+
     def test_check_compares_with_the_entry_and_no_entry_is_off(self):
         state = self.path("state")
         off = SE.approved_check("p", None, state)

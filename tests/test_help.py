@@ -209,7 +209,7 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 493)
+        self.assertLessEqual(len(text.split()), 494)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution",
                        "Wrapper options", "except for the read-only class's writes, an unknown one is judged with and without the next word", "source -p DIR NAME",
                        "($(, ${ or a backtick; not a plain $NAME)", "The install record is install.json, install.d and install.lock.", "best-effort"):

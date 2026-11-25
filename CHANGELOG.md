@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `qargi project remove NAME` retires a project, behind a plan and a token like `project new|attach|adopt`: without `--approved` it prints the plan (the stored answers, each member with its file and the copy of its render, and the approved `verify.environment` declaration) and a token and changes nothing; with `--plan TOKEN --approved WORDS` it removes the answers, the members of that project (what `qargi agent remove` takes away for each) and its entry in `verify-env.json`, writes the audit line `project:remove` with the words, and leaves every other project, the repository, its branches and the checkout alone (docs/flow/README.md). It is refused (exit 2, nothing changed, with the plan as with the apply) while the project has an open feature (`project-remove-feature`), an open run (`project-remove-run`), a live marshal lease (`project-remove-lease`), an open release cut (`project-remove-release`), a linked work tree (`project-remove-linked`), a cloud binding (`project-remove-cloud`) or a registered instance (`project-remove-instances`), and for a name with no stored answers (`project-remove-unknown`); each refusal names the one command that clears it, and the token is not changed by a refusal. A member's guard and a coordinator label refuse it
+- The refusal class `project-remove` (exit 2) and its eight codes in `lib/refusals.json` and `docs/reference/refusals.md`; `docs/reference/plan-record.md` lists the plan of `project remove` among those that keep a record
+- `lib/suite_env.py approved forget NAME` removes the approved `verify.environment` entry of a project (exit 0 when there was one, 1 when not); `project remove` calls it
+
 ## [0.3.7] - 2026-11-25
 
 ### Added

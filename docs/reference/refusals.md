@@ -61,6 +61,14 @@ compares them with that page.
 | [`plan-unknown`](#plan-unknown) | plan | 1 | live | qargi plan show answers for a plan that this build kept a record of |
 | [`plan-expired`](#plan-expired) | plan | 1 | live | A stored plan is shown for the seven days it is kept |
 | [`plan-record-invalid`](#plan-record-invalid) | plan | 1 | live | A stored plan is shown only when its file is whole |
+| [`project-remove-unknown`](#project-remove-unknown) | project-remove | 2 | live | qargi project remove names a project with stored answers |
+| [`project-remove-feature`](#project-remove-feature) | project-remove | 2 | live | A project with an open feature is not removed |
+| [`project-remove-run`](#project-remove-run) | project-remove | 2 | live | A project with an open run is not removed |
+| [`project-remove-lease`](#project-remove-lease) | project-remove | 2 | live | A project with a live marshal lease is not removed |
+| [`project-remove-release`](#project-remove-release) | project-remove | 2 | live | A project with an open release cut is not removed |
+| [`project-remove-linked`](#project-remove-linked) | project-remove | 2 | live | A project whose work tree is linked is not removed |
+| [`project-remove-cloud`](#project-remove-cloud) | project-remove | 2 | live | A project bound to a cloud workspace is not removed |
+| [`project-remove-instances`](#project-remove-instances) | project-remove | 2 | live | A project with registered instances is not removed |
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
 | [`runtime-option-unacknowledged`](#runtime-option-unacknowledged) | project-rule | 1 | live | The owner's approval of a run option says what it opens |
@@ -311,6 +319,80 @@ compares them with that page.
 - Message: `the stored plan {token} cannot be trusted ({problem}) and is not shown`
 - Next, for a lead: plan again with the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
 - Next, in the owner's own session (`host`): plan again with qargi host and the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
+
+## Class project-remove
+
+### project-remove-unknown
+
+- Rule: qargi project remove names a project with stored answers.
+- Why: there is nothing to remove for a name that has no answers, and a misspelt name must not look like a removal.
+- Exit 2, live.
+- Fields: `name` (name).
+- Message: `project remove is refused: no project named {name} has stored answers`
+- Next, for a lead: see the stored projects with qargi project list
+
+### project-remove-feature
+
+- Rule: A project with an open feature is not removed.
+- Why: an open feature is work the project's answers are still needed to finish, verify and merge.
+- Exit 2, live.
+- Fields: `name` (label), `features` (name-list).
+- Message: `project remove is refused: {name} has open feature(s): {features}`
+- Next, for a lead: finish each open feature with qargi feature finish FEATURE (qargi feature list shows them), then run project remove again
+
+### project-remove-run
+
+- Rule: A project with an open run is not removed.
+- Why: an open run holds patches that are not taken in, and verifying, applying or cleaning it reads the project's answers.
+- Exit 2, live.
+- Fields: `name` (label), `runs` (path-list).
+- Message: `project remove is refused: {name} has open run(s): {runs}`
+- Next, for a lead: close each run: qargi local clean RUN once its work is merged (qargi local list shows the runs), then run project remove again
+
+### project-remove-lease
+
+- Rule: A project with a live marshal lease is not removed.
+- Why: another session may be leading the feature; removing the project's answers under it would strand that lead.
+- Exit 2, live.
+- Fields: `name` (label), `features` (name-list).
+- Message: `project remove is refused: {name} has a live marshal lease on {features}`
+- Next, for a lead: give the lease up with qargi marshal release FEATURE --project NAME (or wait for it to lapse), then run project remove again
+
+### project-remove-release
+
+- Rule: A project with an open release cut is not removed.
+- Why: an open cut is an approved release that has not finished; its steps read the project's answers.
+- Exit 2, live.
+- Fields: `name` (label), `versions` (name-list).
+- Message: `project remove is refused: {name} has an open release cut: {versions}`
+- Next, for a lead: finish the release with qargi release finish VERSION --project NAME, then run project remove again
+
+### project-remove-linked
+
+- Rule: A project whose work tree is linked is not removed.
+- Why: the links in a work tree point into qargi's render, and qargi project unlink needs the project's answers to take them away.
+- Exit 2, live.
+- Fields: `name` (label), `trees` (path-list).
+- Message: `project remove is refused: {name} is linked in {trees}`
+- Next, for a lead: run qargi project unlink NAME inside each linked work tree, then run project remove again
+
+### project-remove-cloud
+
+- Rule: A project bound to a cloud workspace is not removed.
+- Why: the binding is how every cloud call of the project reaches its workspace; it is removed on purpose, not with the answers.
+- Exit 2, live.
+- Fields: `name` (label).
+- Message: `project remove is refused: {name} is bound to a cloud workspace`
+- Next, for a lead: remove the binding with qargi cloud unset NAME, then run project remove again
+
+### project-remove-instances
+
+- Rule: A project with registered instances is not removed.
+- Why: an instance is a cloud agent or a local agent file that is named after the project and that dispatch looks up through it.
+- Exit 2, live.
+- Fields: `name` (label), `instances` (name-list).
+- Message: `project remove is refused: {name} has registered instance(s): {instances}`
+- Next, for a lead: remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again
 
 ## Class project-rule
 

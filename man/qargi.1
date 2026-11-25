@@ -41,7 +41,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 These best\-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link, unlink, member\-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; upstream status, sync; backlog done; ref record; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; team run and task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link, unlink, member\-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, remove, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; upstream status, sync; backlog done; ref record; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; team run and task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal, feature and saved\-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. The install record is install.json, install.d and install.lock. Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), and rsync to a host.
 .PP
@@ -342,6 +342,23 @@ Undo project link in this work tree and restore the backups.
 .BI "\-\-resource " "LIST"
 what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists).
 .RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words.
+.RE
+.RE
+.RS
+.TP
+.BI "remove " "[NAME]"
+Retire a project: remove its stored answers and its members, behind a plan.
+.br
+Without \-\-approved it prints the plan and a token and changes nothing. The plan lists exactly what the apply removes: the stored answers (~/.qargi/config/projects/NAME.json), the members of the project (what qargi agent remove takes away for each: the member file, the copy of its render under ~/.qargi/config/agents/NAME and its entry in agents.json), and the approved verify.environment declaration the state keeps for the project (verify\-env.json), so that a project made again under the name is not compared with it. With \-\-plan TOKEN and \-\-approved WORDS it removes them and writes the audit line project:remove with the words. It touches nothing in the repository and runs no git command that changes anything: no branch, no checkout, no file of the work tree. The marshal records, the audit log, the project's memory, the rendered packs and member render, and the stored plans stay. The token covers the project, the hash of the answers file, the approved declaration and each member, and nothing that could hold the removal back, so it stays good after a refusal. Refused (exit 2, nothing changed, with a plan or with an apply) when the project has no stored answers (project\-remove\-unknown) and while something names it that the removal would strand, each refusal naming the one command that clears it: an open feature (project\-remove\-feature; qargi feature finish), an open run of the project (project\-remove\-run; qargi local clean), a live marshal lease (project\-remove\-lease; qargi marshal release), an open release cut (project\-remove\-release; qargi release finish), a work tree of the repository where project link left a link (project\-remove\-linked; qargi project unlink, run in it), a cloud binding (project\-remove\-cloud; qargi cloud unset) and a registered instance (project\-remove\-instances; qargi instances remove). When several hold it the first of those is the refusal and a note names the rest. A member never runs it: the guard refuses it, and so does the verb in a member's run directory or with the member mark in the environment. A coordinator session (QARGI_ACTOR) may not run it.
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"

@@ -31,7 +31,7 @@ redirection, a command that creates, changes or removes files, or a git command 
 reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
-  - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new,
+  - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new and remove,
     review apply|save, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
@@ -259,7 +259,7 @@ EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site
 PROFILE_RUNTIME_PATH = re.compile(r"profiles|profiles\.[^.]+|profiles\.[^.]+\.runtime(?:\..*)?")   # profiles.<name>.runtime: which runtime a profile's member runs on (it selects among the runtimes the owner approved); a whole profile, or all of them, holds it
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
-PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
+PROJECT_VERBS = ("set", "unset", "init", "link", "unlink", "remove")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads; remove: the answers of a project)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 # The options of the wrappers (WRAP), per wrapper: (the options that take a value, in the next word or stuck to them: -u root, -uroot, --user=root;
@@ -404,7 +404,7 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model", "runtimes", "reads-warning")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
-LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("review", "save"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
+LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("project", "remove"), ("review", "apply"), ("review", "save"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
@@ -3719,6 +3719,8 @@ def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
     if area == "project" and verb == "unset":
         return "qargi project unset removes an answer of the project the lead runs on (the answers qargi project set refuses a member are among them, and unset has no plan token) and is not available to an agent: propose the removal in your report"
+    if area == "project" and verb == "remove":
+        return "qargi project remove retires a project of the lead: it removes its stored answers and its members (a plan token and the owner's words) and is not available to an agent: propose the removal in your report"
     if area == "project" and verb == "init":
         return "qargi project init stores a whole answers file (the models answers that choose the runtime and what counts as a barrier among them) and is not available to an agent"
     if area == "project" and verb == "set":
