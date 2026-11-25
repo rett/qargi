@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
 done
 [ "$verb" = renumber ] || usage_die "$USAGE"
 . "$(dirname "$0")/gitflow.sh"
-project_load
+project_load "changelog $verb"
 top=$(git rev-parse --show-toplevel 2>/dev/null) || die "run this in a work tree of $PROJ (the feature's worktree): $PWD is in no git work tree"
 [ "$(readlink -f "$(git -C "$top" rev-parse --path-format=absolute --git-common-dir)")" = "$(readlink -f "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)")" ] \
   || die "$top is not a work tree of $PROJ ($REPO): run this in one of its work trees"

@@ -58,7 +58,7 @@ class TheCatalogue(unittest.TestCase):
         codes = real()["codes"]
         self.assertTrue(any(e["class"] == "verify-environment" for e in codes.values()))
         for c in ("plan-missing", "plan-stale", "approval-missing", "approval-inside-run", "cut-not-covering", "cut-lead-changed", "cut-branch-moved",
-                  "cut-fix-outside", "release-notes-empty", "release-fragments-unfolded", "feature-runs-open", "ro-write-outside", "ro-second-tree",
+                  "cut-fix-outside", "release-notes-empty", "release-fragments-unfolded", "feature-runs-open", "methodology-no-flow", "ro-write-outside", "ro-second-tree",
                   "ro-env-restricted", "member-push", "member-lead-verb", "member-run-record"):
             self.assertIn(c, codes)
         self.assertTrue(any(e["class"] in R.SEAT_CLASSES for e in codes.values()))
@@ -74,11 +74,13 @@ class TheCatalogue(unittest.TestCase):
 
     def test_the_lint_rejects_what_breaks_a_rule(self):
         self.assertEqual(R.check_catalogue(demo()), [])
+        self.assertEqual(R.check_catalogue(demo(**{"class": "methodology", "exit": 2})), [], "a methodology code exits 2")
         cases = {
             "an unknown placeholder": demo(message="{nowhere}"),
             "a why with a placeholder": demo(why="because {verb}"),
             "an exit that no class uses": demo(exit=3),
             "a seat-gate code that exits 1": demo(**{"class": "seat-gate"}),
+            "a methodology code that exits 1": demo(**{"class": "methodology"}),
             "an unknown status": demo(status="maybe"),
             "an unknown field type": demo(fields={"x": "string"}, message="m", next={"lead": "a", "host": "a"}),
             "a next with no host": demo(next={"lead": "x"}),
@@ -327,9 +329,11 @@ def stored(token):
 class ThePlanBasis(unittest.TestCase):
     PLAN = "head abc\nbase def\nfiles a b\n"
 
+    WHO = ' --verb "feature finish" --target acme:demo'     # what a call site says: the verb and the project and object it acts on
+
     def token(self, text, labels=None, **env):
         """plan_token (with --basis LABELS when given) on the text: (status, token, standard error)."""
-        script = 'printf "%s" "$PLAN" | plan_token' + (' --basis "$LABELS"' if labels is not None else "")
+        script = 'printf "%s" "$PLAN" | plan_token' + (' --basis "$LABELS"' + self.WHO if labels is not None else "")
         rc, out, err = sh(script, PLAN=text, LABELS=labels or "", **env)
         return rc, out.strip(), err
 
@@ -431,12 +435,16 @@ class ThePlanBasis(unittest.TestCase):
 
     def test_labels_that_are_not_words_are_a_defect_and_a_missing_label_list_a_usage_error(self):
         rc, out, err = self.token("x\n", "Bad,Label")
-        self.assertEqual(rc, 70)
+        self.assertEqual((rc, out), (0, hashlib.sha256(b"x\n").hexdigest()[:12]), "the record is refused, the token is not")
+        self.assertIn("qargi: defect:", err)
         rc, out, err = sh('echo x | plan_token --basis')
         self.assertEqual(rc, 2)
         self.assertIn("needs the labels", err)
-        rc, _, err = sh('echo x | plan_token --basis ""')
-        self.assertEqual(rc, 70, err)
+        rc, out, err = sh('echo x | plan_token --basis ""' + self.WHO)
+        self.assertEqual((rc, out.strip()), (0, hashlib.sha256(b"x\n").hexdigest()[:12]), err)
+        self.assertIn("qargi: defect:", err)
+        rc, _, err = sh('echo x | plan_token --basis "line"')
+        self.assertEqual((rc, "needs --verb VERB and --target PROJECT:OBJECT" in err), (2, True), err)
 
     def test_the_stored_plans_are_read_by_token_only(self):
         self.assertIsNone(R.basis_read("../x"))

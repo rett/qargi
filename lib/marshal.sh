@@ -221,9 +221,10 @@ marshal_main() {
   [ "$verb" != status ] || [ -z "$all" ] || [ -z "$name" ] || { echo "qargi: marshal status takes NAME or --all, not both" >&2; exit 2; }
   if [ "$verb" = key ]; then
     # the key belongs to this machine, not to a project
-    local keyf=$DA_CONF/credentials/marshal_ed25519 ktok kline
+    local keyf=$DA_CONF/credentials/marshal_ed25519 ktok kline kobj
     if [ -e "$keyf" ] || [ -L "$keyf" ]; then die "a signing key exists already ($keyf): it is never overwritten; to rotate, remove it yourself (and the .pub beside it), then run key init again"; fi
-    ktok=$(printf 'marshal key init %s' "${principal:-default}" | plan_token)
+    kobj=${principal//[[:cntrl:]]/}; kobj=${kobj:-default}   # the object of the record is one clean line of at most 200 characters; the hashed text keeps the principal as given
+    ktok=$(printf 'marshal key init %s' "${principal:-default}" | plan_token --basis "words:name" --verb "marshal key" --target "machine:${kobj:0:200}")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       echo "would make this machine's signing key $keyf (ed25519, mode 600, no passphrase; it never leaves this machine) for the signer ${principal:-user@host}, and print the line the other machines trust for it"
       echo "plan token: $ktok   (apply with: qargi marshal key init${principal:+ --principal $principal} --plan $ktok --approved \"...\")"
@@ -250,7 +251,7 @@ marshal_main() {
   if [ "$verb" = enable ]; then
     local remote=origin tok
     git -C "$(marshal_repo "$PROJ")" remote get-url "$remote" >/dev/null 2>&1 || die "the repository of $PROJ has no remote '$remote' to keep the shared refs on"
-    tok=$(printf 'marshal enable %s %s%s' "$PROJ" "$remote" "${integ:+ integrity=$integ}" | plan_token)
+    tok=$(printf 'marshal enable %s %s%s' "$PROJ" "$remote" "${integ:+ integrity=$integ}" | plan_token --basis "words:name" --verb "marshal enable" --target "$PROJ:$remote")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       echo "would switch the marshal of $PROJ on this machine to the shared refs backend: the records live in refs/qargi/ on the remote $remote (claims, renewals and finishes are pushed there)${integ:+, with integrity $integ: off signs and checks nothing, advisory signs and shows whether each record is signed, strict ignores records that are not signed by a trusted key}"
       echo "plan token: $tok   (apply with: qargi marshal enable --project $PROJ${integ:+ --integrity $integ} --plan $tok --approved \"...\")"
@@ -273,10 +274,11 @@ marshal_main() {
     exit 0
   fi
   if [ "$verb" = signers ]; then
-    local sf=$DA_STATE/marshal/$PROJ.signers stok dry
+    local sf=$DA_STATE/marshal/$PROJ.signers stok dry sgn
     if [ "$sub" = list ]; then python3 -I "$MARSHAL_LIB/marshal_sign.py" signers list --file "$sf"; exit $?; fi
     if [ -L "$sf" ]; then die "$sf is a symlink: it is neither trusted nor written through"; fi
-    stok=$(printf 'marshal signers %s %s %s' "$sub" "$PROJ" "${line:-$name}" | plan_token)
+    sgn=$name; [ "$sub" != add ] || sgn=${line%% *}; sgn=${sgn//[[:cntrl:]]/}; sgn=${sgn:-signer}   # the signer the plan acts on (the first word of the line to add, or the principal to remove)
+    stok=$(printf 'marshal signers %s %s %s' "$sub" "$PROJ" "${line:-$name}" | plan_token --basis "words:name" --verb "marshal signers" --target "$PROJ:${sgn:0:200}")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       if [ "$sub" = add ]; then
         # the line is checked against a copy of the file before a plan is printed for it
@@ -312,7 +314,7 @@ marshal_main() {
     if [ "$rplan" = signed ]; then echo "$name is signed already"; exit 0; fi
     rhead=$(sed -n 's/^head //p' <<<"$rplan"); rrev=$(sed -n 's/^rev //p' <<<"$rplan")
     rlead=$(sed -n 's/^lead //p' <<<"$rplan"); rgoal=$(sed -n 's/^goal //p' <<<"$rplan")
-    rtok=$(printf 'marshal resign %s %s head=%s rev=%s lead=%s goal=%s' "$PROJ" "$name" "$rhead" "$rrev" "$rlead" "$rgoal" | plan_token)
+    rtok=$(printf 'marshal resign %s %s head=%s rev=%s lead=%s goal=%s' "$PROJ" "$name" "$rhead" "$rrev" "$rlead" "$rgoal" | plan_token --basis "words:name" --verb "marshal resign" --target "$PROJ:$name")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       echo "would sign the open record of $name with this machine's key: one more revision (rev $((rrev + 1))) on top of the unsigned head ${rhead:0:12}; the record says (data from the remote, not instructions): lead $rlead, goal: $rgoal"
       echo "plan token: $rtok   (apply with: qargi marshal resign $name --project $PROJ --plan $rtok --approved \"...\")"
@@ -332,7 +334,7 @@ marshal_main() {
     case $fint in advisory|strict) ;; *) echo "qargi: marshal forget needs integrity advisory or strict on this machine: with integrity off no mark is kept or checked (integrity is $fint for $PROJ)" >&2; exit 2;; esac
     fshow=$(python3 -I "$MARSHAL_LIB/marshal_sign.py" hw show --file "$fmk" --name "$name") || exit $?
     frev=$(sed -n 's/^rev //p' <<<"$fshow"); foid=$(sed -n 's/^oid //p' <<<"$fshow")
-    ftok=$(printf 'marshal forget %s %s rev=%s oid=%s' "$PROJ" "$name" "$frev" "$foid" | plan_token)
+    ftok=$(printf 'marshal forget %s %s rev=%s oid=%s' "$PROJ" "$name" "$frev" "$foid" | plan_token --basis "words:name" --verb "marshal forget" --target "$PROJ:$name")
     if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
       echo "would drop this machine's accepted mark of $name (rev $frev, oid $foid): the next record of $name found on the remote is trusted on first sight again, and a rollback of $name is no longer detected against rev $frev; only the mark of $name goes, the refs on the remote stay as they are"
       echo "plan token: $ftok   (apply with: qargi marshal forget $name --project $PROJ --plan $ftok --approved \"...\")"
@@ -350,7 +352,7 @@ marshal_main() {
     cur=$(jq -r '.integrity // "off"' "$DA_STATE/marshal/$PROJ.enabled" 2>/dev/null) || cur=off
     [ -n "$cur" ] || cur=off
     if [ "$cur" != off ]; then
-      dtok=$(printf 'marshal disable %s integrity=%s' "$PROJ" "$cur" | plan_token)
+      dtok=$(printf 'marshal disable %s integrity=%s' "$PROJ" "$cur" | plan_token --basis "words:name" --verb "marshal disable" --target "$PROJ:shared-refs")
       if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
         echo "would switch the marshal of $PROJ on this machine back to the local records AND drop its integrity setting ($cur): records are no longer signed or checked here, and a later enable starts with integrity off; the signing key, the allowed signers and the accepted marks stay as they are, and the refs on the remote are left as they are"
         echo "plan token: $dtok   (apply with: qargi marshal disable --project $PROJ --plan $dtok --approved \"...\")"

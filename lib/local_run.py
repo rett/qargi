@@ -55,15 +55,18 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        whether the source is still what it was when the run started (its sha256 then, kept in memory, never printed or recorded);
                        you reconcile it yourself. qargi local list and verify name it and qargi local clean removes it. A variable env set in the
                        lead's environment to another directory than the links' sources is a note. provider.home_problems states the rules.
-  dispatch.run_config  {in: home|run, file, baseline}: the configuration file of the run, rendered when the run starts in the format of
-                       resources.mcp: the baseline (the definition's own settings, the same for every run) at its root, and the MCP servers
+  dispatch.run_config  {in: home|run, file, baseline, options}: the configuration file of the run, rendered when the run starts in the format of
+                       resources.mcp: the baseline (the definition's own settings, the same for every run) at its root, with the settings of each
+                       option the run's profile selects applied over it (options: opt-in changes the project's owner enabled; none for a run
+                       whose profile selects none, which gets the baseline alone), and the MCP servers
                        from resources.mcp (lib/packs_render.py run_config) for the run's role, as the lead's registry records it (never a file
                        of the run directory), and the run's class: each server lists the tools a member may call (lib/packs_mcp.py: never an
                        always_ask tool, under the read-only class only a declared read). in home: RUN/home/DIR/FILE, the run home of
                        dispatch.home, which a runtime reads by itself; in run: RUN/config/FILE. {run_config} is its path. Without a baseline it
                        is empty when no tool pack gives the role a tool: then nothing is written and a file of that name left there is removed.
                        It is written without following a link a member may have put in the run directory. --dry-run prints its path, the tool
-                       names and the baseline (RUN_CONFIG=, RUN_CONFIG_TOOLS=, RUN_CONFIG_BASELINE=), never the servers' addresses.
+                       names and the baseline (RUN_CONFIG=, RUN_CONFIG_TOOLS=, RUN_CONFIG_BASELINE=, and RUN_CONFIG_OPTIONS= with the settings of the
+                       run's options when it has any), never the servers' addresses. The run prints RUN_OPTIONS= when it has options.
   dispatch.hidden_paths {prefixes, shown, note}: the places the runtime's sandbox hides from the member's commands (a sandbox that mounts a /dev
                        of its own hides everything under /dev/shm), and, per class, the run paths it shows anyway (the places it binds in,
                        such as the writable directories of a write class). A run path the member of the class works with (provider.MEMBER_NEEDS:
@@ -728,9 +731,21 @@ def config_bytes(mcp, baseline, data):
     return packs_render.toml_dumps(doc) if fmt == "toml" else (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
 
 
-def plan_run_config(disp, doc, run, home, project, cls, runtime):
+def apply_set(doc, add):
+    """Put the settings of an option into doc: each key of add is one doc already has (provider.run_config_problems keeps an option to the baseline's keys), a value
+    that is an object is applied key by key, any other value replaces the one there."""
+    for k, v in add.items():
+        if isinstance(v, dict) and isinstance(doc.get(k), dict):
+            apply_set(doc[k], v)
+        else:
+            doc[k] = v
+
+
+def plan_run_config(disp, doc, run, home, project, cls, runtime, chosen=(), declared=None):
     """None, or the configuration file of the run: {in, file, path, data (bytes or None: no baseline and no tool for the run, the file is removed),
-    tools, servers, role, baseline, note}. The role is the one the lead's registry records for the run; the class is the run's. The rules are
+    tools, servers, role, baseline, options ({name: the settings it applies}, {} for a run with none), note}. The role is the one the lead's registry
+    records for the run; the class is the run's; chosen are the options of the run's profile (prepared_request.run_options), declared what the definition
+    declares. The file is the baseline with each chosen option's settings applied; `baseline` stays the definition's own. The rules are
     provider.run_config_problems. Nothing is written here."""
     rc = disp.get("run_config")
     if rc is None:
@@ -742,7 +757,13 @@ def plan_run_config(disp, doc, run, home, project, cls, runtime):
     mcp = (doc.get("resources") or {}).get("mcp")
     base = rc.get("baseline") or None
     plan = {"in": rc["in"], "file": rc["file"], "path": os.path.join(where, rc["file"]), "data": None, "tools": [], "servers": {}, "role": None,
-            "baseline": base, "note": None}
+            "baseline": base, "options": {n: (declared or {})[n]["set"] for n in chosen}, "note": None}
+    effective = base
+    if plan["options"]:
+        import copy
+        effective = copy.deepcopy(base)
+        for add in plan["options"].values():
+            apply_set(effective, add)
     import packs_mcp
     import packs_render
     role = registry_line(run).get("ability")
@@ -758,7 +779,7 @@ def plan_run_config(disp, doc, run, home, project, cls, runtime):
         if got:
             plan.update(tools=got["tools"], servers=got["servers"])
     try:
-        plan["data"] = config_bytes(mcp, base, got["data"] if got else None)
+        plan["data"] = config_bytes(mcp, effective, got["data"] if got else None)
     except ValueError as e:                                          # a value the writer does not write, or a file that does not read back
         fail("the configuration file of the run (dispatch.run_config of %s) cannot be made: %s" % (runtime, e))
     return plan
@@ -1025,8 +1046,9 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if row is not None and "lifecycle" in row:
         prepared = store.show()["prepared"]
         request = prepared.get("request")
+    chosen, declared = [], {}                                # the options of the profile the run was prepared with, from the prepare that PR.current compares with the request
     if request is not None:
-        PR.current(request, project, runtime, cls)
+        chosen, declared = PR.current(request, project, runtime, cls)
     skills = MS.current(store, prepared, project, runtime) if prepared and request else None
     if prepared and request is None and project:
         MS.need(not MS.enabled(project), 'enabled request has no snapshot; re-prepare')
@@ -1079,7 +1101,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     home = plan_home(disp, run, runtime, doc)
-    rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime)
+    rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime, chosen, declared)
+    options_line = PR.options_text(declared, chosen) if chosen else ""
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
         if state not in ("yes", "partial", "accepted"):      # refused, missing (an extra runtime with no barrier of its own) or anything a later state adds: no member starts
@@ -1170,7 +1193,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "skills": skills, "prepared": prepared, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
-            "final": final, "package": package, "git_watch": watched}
+            "options_line": options_line, "final": final, "package": package, "git_watch": watched}
 
 
 def home_notes(home):
@@ -1208,6 +1231,8 @@ def dry(plan, run):
         print("RUN_CONFIG_TOOLS=" + ",".join(rc["tools"]))
         if rc["baseline"]:                                 # the definition's own settings, the same for every run of the runtime
             print("RUN_CONFIG_BASELINE=" + json.dumps(rc["baseline"], sort_keys=True, separators=(",", ":")))
+        if rc["options"]:                                  # what each option of the run's profile applies over the baseline
+            print("RUN_CONFIG_OPTIONS=" + json.dumps(rc["options"], sort_keys=True, separators=(",", ":")))
     print("PROMPT_VIA=" + plan["via"])
     print("PROMPT_FILE=" + plan["prompt_file"])
     print("TRANSCRIPT=" + os.path.join(run, "out", "transcript"))
@@ -2381,6 +2406,8 @@ def run_started(plan, run, store, dispatch_state, sig):
         rec["run_config"] = {"file": rc["path"] if rc["data"] is not None else None, "role": rc["role"], "tools": rc["tools"]}
         if rc["baseline"]:
             rec["run_config"]["baseline"] = rc["baseline"]
+        if rc["options"]:                                  # the names of the options applied over the baseline, only for a run that has some
+            rec["run_config"]["options"] = list(rc["options"])
     if report:
         rec["report"] = report
     if manifest:
@@ -2395,6 +2422,8 @@ def run_started(plan, run, store, dispatch_state, sig):
     elif error:
         print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
+    if plan["options_line"]:
+        print("RUN_OPTIONS=" + plan["options_line"])
     print("OUTCOME=" + outcome + (" (timed out after %ds%s)" % (plan["timeout_s"], "; " + stopped_text(left) if left else "") if timed_out else "")
           + (" (%s: %s)" % (rec["signal"], stopped_text(left) if proc is not None else "the member was not started")
              if outcome == "interrupted" else "")

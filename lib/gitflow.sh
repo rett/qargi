@@ -712,13 +712,25 @@ suite_env_gen() {
   [ "$c" -le "$n" ] || n=$c
   SE_GEN=$n
 }
-# suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next)
+# suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next).
+# SE_KEY (above) is no plan: it only names the files of the claims, so it keeps no record. The token a refusal prints (suite_env_token_line) is the plan the owner approves, and
+# keeps one (`qargi plan show`): the verb and the object are those of the command line to repeat (SE_AGAIN: qargi feature verify NAME, qargi release verify VER), the lines are the
+# project, the branch, the head, the declaration, one line for each part and the number of the waiver. The token is the same with or without the record.
 suite_env_token() {
+  local c=${1//[^,]/} pl='' n _ g v o
+  if [ -n "${3:-}" ]; then
+    for ((n = 0; n <= ${#c}; n++)); do pl+=' part:label'; done
+    read -r _ g v o _ <<<"$SE_AGAIN"
+    { printf '%s\n' "$PROJ" "$SE_BR" "$SE_HEAD" "$SUITE_ENV_ID"; tr , '\n' <<<"$1"; printf 'waiver %s\n' "${2:-$SE_GEN}"; } \
+      | plan_token --basis "project:name branch:ref head:sha environment:sha$pl waiver:label" --verb "$g $v" --target "$PROJ:$o"
+    return
+  fi
   { printf '%s\n' "$PROJ" "$SE_BR" "$SE_HEAD" "$SUITE_ENV_ID"; tr , '\n' <<<"$1"; printf 'waiver %s\n' "${2:-$SE_GEN}"; } | plan_token
 }
 # suite_env_token_line PARTS -> the line that names the token of a refusal of PARTS and the command that waives them once
 suite_env_token_line() {
-  echo "plan token: $(suite_env_token "$1")   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $(suite_env_token "$1") --approved \"<the owner's words>\")"
+  local t; t=$(suite_env_token "$1" '' record)
+  echo "plan token: $t   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $t --approved \"<the owner's words>\")"
 }
 # suite_env_claim PARTS CODES -> called by suite_env_claim_now, when every check of suite_env_prepare and of the verb itself has passed and before the verb makes or
 # touches anything else (the busy mark, the suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses
@@ -1155,13 +1167,25 @@ backlog_note() {
   ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" ${bs:+--section "$bs"} 2>/dev/null) || return 0
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
-project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
+# project_load [FLOW_VERB]: PROJ (or inferred) -> af, REPO, TESTCMD, METH. A flow verb (a verb that needs develop and master: feature, release, hotfix, the branch
+# housekeeping, the upstream line, the changelog numbers) passes its own name, as the refusal says it ("release start"): on a project whose methodology has no such
+# flow (methodology.json flow plain) it is refused here, once for all of them, before it reads or changes anything (methodology-no-flow, exit 2). A gitflow project,
+# and the project of a methodology that is not found, is never refused, and no other process starts for it. A methodology whose flow is not gitflow (plain, or a
+# flow that cannot be read or is not a valid value: methodology.py flow says unknown) is refused too: the flow verbs fail closed, never run as gitflow. The verbs
+# of the other kinds pass no name.
+project_load() {
   [ -n "$PROJ" ] || PROJ=$(pymod help infer)
   af=$DA_CONF/projects/$PROJ.json
   [ -f "$af" ] || die "no stored answers for '$PROJ': qargi project attach DIR, or --project"
   REPO=$(jq -r '.repo.path // ""' "$af"); REPO=${REPO/#\~/$HOME}
   [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "the answers for $PROJ name no local repository (repo.path)"
   METH=$(jq -r '.methodology // "gitflow"' "$af")
+  if [ -n "${1:-}" ] && [ "$METH" != gitflow ] \
+     && [ "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import methodology as M; print(M.flow(sys.argv[2]))' "$QARGI_TOOL/lib" "$METH" 2>/dev/null)" != gitflow ]; then
+    local fv=$1 PROJECT=$PROJ   # PROJECT: the project of the contract line of the refusal
+    case $fv in *[!a-z0-9\ :-]*|[!a-z]*) fv=${fv%% *};; esac   # a verb the user mistyped is named by its area only: the refusal takes a verb of lower-case words
+    refuse methodology-no-flow verb="$fv" methodology="$METH"
+  fi
   TESTCMD=$(jq -r '.test_command // ""' "$af")
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch

@@ -22,8 +22,9 @@ will apply later.
 
 ## What moved: the basis of a plan
 
-`plan_token --basis "LABELS"` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and
-keeps the labelled lines in `STATE/plans/TOKEN.json` (mode 600, seven days). LABELS are words separated by spaces: line N of the plan is
+`plan_token --basis "LABELS" --verb VERB --target PROJECT:OBJECT` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and
+keeps the plan in `STATE/plans/TOKEN.json` (mode 600, seven days) as the record `qargi.plan/0`, which `qargi plan show TOKEN` prints. LABELS are words separated by spaces,
+each `label` or `label:kind` (`ref`, `path`, `name`, `sha`, `label` or `count`; a label with no kind is `name`): line N of the plan is
 labelled with word N, and the lines after the last word belong to it. When `--plan` names a token that is no longer the plan's,
 `plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was
 planned without a basis. Nothing is kept in a dry run.
@@ -54,10 +55,16 @@ compares them with that page.
 | [`member-push`](#member-push) | guard | 2 | live | A member never pushes |
 | [`member-lead-verb`](#member-lead-verb) | guard | 2 | live | A member does not run the lead's verbs |
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
+| [`methodology-no-flow`](#methodology-no-flow) | methodology | 2 | live | A verb of the git-flow shape runs only on a project whose methodology has that flow |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
+| [`plan-unknown`](#plan-unknown) | plan | 1 | live | qargi plan show answers for a plan that this build kept a record of |
+| [`plan-expired`](#plan-expired) | plan | 1 | live | A stored plan is shown for the seven days it is kept |
+| [`plan-record-invalid`](#plan-record-invalid) | plan | 1 | live | A stored plan is shown only when its file is whole |
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
+| [`runtime-option-unacknowledged`](#runtime-option-unacknowledged) | project-rule | 1 | live | The owner's approval of a run option says what it opens |
+| [`runtime-option-class`](#runtime-option-class) | project-rule | 1 | live | A run option is for the run classes its definition names |
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
 | [`runtime-not-enabled`](#runtime-not-enabled) | project-rule | 1 | live | A run uses a runtime the project enabled |
 | [`runtime-profile-model`](#runtime-profile-model) | project-rule | 1 | live | A profile's model belongs to the runtime the profile is resolved in |
@@ -242,6 +249,17 @@ compares them with that page.
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
 - Printed at 4 sites; `qargi help guard` says what a member's guard refuses.
 
+## Class methodology
+
+### methodology-no-flow
+
+- Rule: A verb of the git-flow shape runs only on a project whose methodology has that flow.
+- Why: the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there; a methodology whose flow cannot be read is not run as git-flow either, because that would be a guess.
+- Exit 2, live.
+- Fields: `verb` (verb), `methodology` (label).
+- Message: `{verb} is refused: the project follows the {methodology} methodology, which has no feature, release or hotfix flow (its flow is plain, or cannot be read: qargi methodology check)`
+- Next, for a lead: work goes on a branch cut from the project's one long-lived branch: qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog; the feature, release and hotfix verbs belong to a methodology of the git-flow shape
+
 ## Class plan
 
 ### plan-missing
@@ -264,6 +282,36 @@ compares them with that page.
 - Next, for a lead: run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}
 - Next, in the owner's own session (`host`): plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)
 
+### plan-unknown
+
+- Rule: qargi plan show answers for a plan that this build kept a record of.
+- Why: a plan that was never kept, was pruned after seven days, was made before the records had a schema, or belongs to a verb that keeps none has nothing to show, and a guess would put words in front of an approver that nobody hashed.
+- Exit 1, live.
+- Fields: `given` (name), `context` (enum:lead,host).
+- Message: `no stored plan has the token {given}`
+- Next, for a lead: plan again with the verb, which keeps its plan, then show it with qargi plan show TOKEN
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb, which keeps its plan, then show it with qargi host plan show TOKEN
+
+### plan-expired
+
+- Rule: A stored plan is shown for the seven days it is kept.
+- Why: a plan shown long after it was made may no longer say what the verb would do, so show says that it is past its days instead of presenting it as current.
+- Exit 1, live.
+- Fields: `token` (token), `context` (enum:lead,host).
+- Message: `the stored plan {token} is past its seven days`
+- Next, for a lead: plan again with the verb: a plan that has not changed has the same token and is kept again for seven days
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb: a plan that has not changed has the same token and is kept again for seven days
+
+### plan-record-invalid
+
+- Rule: A stored plan is shown only when its file is whole.
+- Why: the file lies in the state of the owner, and a plan that is shown must have the lines that were hashed (the hash binds the lines only, not the verb, the target, the labels or the times, which are checked for their form): a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown.
+- Exit 1, live.
+- Fields: `token` (token), `problem` (label), `context` (enum:lead,host).
+- Message: `the stored plan {token} cannot be trusted ({problem}) and is not shown`
+- Next, for a lead: plan again with the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
+- Next, in the owner's own session (`host`): plan again with qargi host and the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again
+
 ## Class project-rule
 
 ### runtime-unusable
@@ -284,6 +332,25 @@ compares them with that page.
 - Message: `the approval of the runtime {name} does not carry the phrase the plan printed: reads are not confined`
 - Next, for a lead: ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase; do not write the phrase for the owner
 - Next, in the owner's own session (`host`): approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed
+
+### runtime-option-unacknowledged
+
+- Rule: The owner's approval of a run option says what it opens.
+- Why: an option of a runtime changes what its members may do for a project (a tool that runs outside the sandbox and may spend, say), and the owner approves that knowingly, in words that carry the phrase the option's definition names.
+- Exit 1, live.
+- Fields: `name` (label), `option` (name), `context` (enum:lead,host).
+- Message: `the approval of the option {option} of the runtime {name} does not carry the phrase the plan printed`
+- Next, for a lead: ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase the plan printed; do not write the phrase for the owner
+- Next, in the owner's own session (`host`): approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed
+
+### runtime-option-class
+
+- Rule: A run option is for the run classes its definition names.
+- Why: an option of a runtime opens a tool outside the member's sandbox, which the read-only barrier of a runtime does not hold, so a read-only run never gets one whatever its profile says.
+- Exit 1, live.
+- Fields: `name` (label), `option` (name).
+- Message: `the option {option} of the runtime {name} is for write runs, and this run is read-only`
+- Next, for a lead: take the option out of the profile of this run (profiles.NAME.options), or prepare the task for a write role
 
 ### runtime-barrier-missing
 

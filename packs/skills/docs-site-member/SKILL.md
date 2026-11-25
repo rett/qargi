@@ -1,6 +1,6 @@
 ---
 name: docs-site-member
-description: Writing to a documentation branch that shares no history with the main branches: base your work on that branch and never merge it.
+description: "Writing to a documentation branch that shares no history with the main branches: base your work on that branch and never merge it."
 ---
 # A site branch
 

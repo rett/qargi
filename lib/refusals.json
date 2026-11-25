@@ -306,6 +306,36 @@
       "message": "the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})",
       "next": {"lead": "run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}
     },
+    "plan-unknown": {
+      "rule": "qargi plan show answers for a plan that this build kept a record of",
+      "why": "a plan that was never kept, was pruned after seven days, was made before the records had a schema, or belongs to a verb that keeps none has nothing to show, and a guess would put words in front of an approver that nobody hashed",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"given": "name", "context": "enum:lead,host"},
+      "message": "no stored plan has the token {given}",
+      "next": {"lead": "plan again with the verb, which keeps its plan, then show it with qargi plan show TOKEN", "host": "plan again with qargi host and the verb, which keeps its plan, then show it with qargi host plan show TOKEN"}
+    },
+    "plan-expired": {
+      "rule": "A stored plan is shown for the seven days it is kept",
+      "why": "a plan shown long after it was made may no longer say what the verb would do, so show says that it is past its days instead of presenting it as current",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"token": "token", "context": "enum:lead,host"},
+      "message": "the stored plan {token} is past its seven days",
+      "next": {"lead": "plan again with the verb: a plan that has not changed has the same token and is kept again for seven days", "host": "plan again with qargi host and the verb: a plan that has not changed has the same token and is kept again for seven days"}
+    },
+    "plan-record-invalid": {
+      "rule": "A stored plan is shown only when its file is whole",
+      "why": "the file lies in the state of the owner, and a plan that is shown must have the lines that were hashed (the hash binds the lines only, not the verb, the target, the labels or the times, which are checked for their form): a link, a file of the wrong kind or mode, one that cannot be read, damaged JSON, a schema this build does not know or lines that no longer hash to the token are not shown",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"token": "token", "problem": "label", "context": "enum:lead,host"},
+      "message": "the stored plan {token} cannot be trusted ({problem}) and is not shown",
+      "next": {"lead": "plan again with the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again", "host": "plan again with qargi host and the verb, which writes the record anew, and check who changed the plans directory of the state if it happens again"}
+    },
     "approval-missing": {
       "rule": "An apply that the owner must approve is given the owner's own words with --approved",
       "why": "the owner's words are the approval: a verb that needs them cannot be told they were given",
@@ -396,6 +426,16 @@
       "message": "{count} run(s) of this feature are still open: {runs}",
       "next": {"lead": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again", "host": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again"}
     },
+    "methodology-no-flow": {
+      "rule": "A verb of the git-flow shape runs only on a project whose methodology has that flow",
+      "why": "the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there; a methodology whose flow cannot be read is not run as git-flow either, because that would be a guess",
+      "class": "methodology",
+      "exit": 2,
+      "status": "live",
+      "fields": {"verb": "verb", "methodology": "label"},
+      "message": "{verb} is refused: the project follows the {methodology} methodology, which has no feature, release or hotfix flow (its flow is plain, or cannot be read: qargi methodology check)",
+      "next": {"lead": "work goes on a branch cut from the project's one long-lived branch: qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog; the feature, release and hotfix verbs belong to a methodology of the git-flow shape", "host": "work goes on a branch cut from the project's one long-lived branch: qargi local prepare, run and verify with --base BRANCH, qargi review check, save and apply, qargi local close and clean, and qargi backlog; the feature, release and hotfix verbs belong to a methodology of the git-flow shape"}
+    },
     "runtime-unusable": {
       "rule": "An extra runtime is sealed, local, started by a command, and not the project's own",
       "why": "qargi local run starts a member of an extra runtime itself, so it must be a definition qargi has reviewed that it can start",
@@ -415,6 +455,26 @@
       "fields": {"verb": "verb", "name": "label", "context": "enum:lead,host"},
       "message": "the approval of the runtime {name} does not carry the phrase the plan printed: reads are not confined",
       "next": {"lead": "ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase; do not write the phrase for the owner", "host": "approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed"}
+    },
+    "runtime-option-unacknowledged": {
+      "rule": "The owner's approval of a run option says what it opens",
+      "why": "an option of a runtime changes what its members may do for a project (a tool that runs outside the sandbox and may spend, say), and the owner approves that knowingly, in words that carry the phrase the option's definition names",
+      "class": "project-rule",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label", "option": "name", "context": "enum:lead,host"},
+      "message": "the approval of the option {option} of the runtime {name} does not carry the phrase the plan printed",
+      "next": {"lead": "ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase the plan printed; do not write the phrase for the owner", "host": "approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed"}
+    },
+    "runtime-option-class": {
+      "rule": "A run option is for the run classes its definition names",
+      "why": "an option of a runtime opens a tool outside the member's sandbox, which the read-only barrier of a runtime does not hold, so a read-only run never gets one whatever its profile says",
+      "class": "project-rule",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label", "option": "name"},
+      "message": "the option {option} of the runtime {name} is for write runs, and this run is read-only",
+      "next": {"lead": "take the option out of the profile of this run (profiles.NAME.options), or prepare the task for a write role", "host": "take the option out of the profile of this run (profiles.NAME.options), or prepare the task for a write role"}
     },
     "runtime-barrier-missing": {
       "rule": "A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count",

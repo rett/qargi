@@ -28,6 +28,8 @@ Ask the user these, in batches, with the stated defaults recommended; do not ass
 9. **Members, once** (an in-session local runtime only). The local workers are agents the user names: ask for their names and roles, suggesting the two base members (`worker`, `reviewer`; the rest are profiles). `qargi agent add` is in `qargi-instances`.
 10. **Profile.** Which profile file holds the repository's gates and review steps (kept under the config directory, per role if the gates differ).
 
+`project new|template --methodology plain` exists, and `validate` refuses a methodology that fails `qargi methodology check`.
+
 To link a work tree (`project link`, in each checkout or worktree) or start from a repository (`project new`, `attach`, `adopt`), load `repository.md`. Or write the answers file and store it:
 
 ```sh

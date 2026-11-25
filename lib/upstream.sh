@@ -33,7 +33,7 @@ export PLAN_ARG   # need_plan reads it
 case $verb in status|review|sync) ;; *) usage_die "$USAGE";; esac
 printf '%s' "$LIMIT" | grep -Eq '^[1-9][0-9]*$' || usage_die "--limit needs a positive number"
 . "$(dirname "$0")/gitflow.sh"
-project_load
+project_load "upstream $verb"
 UREM=$(jq -r '.upstream.remote // ""' "$af"); UBR=$(jq -r '.upstream.branch // ""' "$af"); INTO=$(jq -r '.upstream.into // "upstream"' "$af")
 [ -n "$UREM" ] && [ -n "$UBR" ] || die "no upstream answers for $PROJ: qargi project set $PROJ upstream.remote REMOTE and upstream.branch BRANCH (the remote and the branch the fork follows; upstream.into, default upstream, is the local branch that carries the upstream line)"
 g remote get-url "$UREM" >/dev/null 2>&1 || die "the repository has no remote named $UREM (upstream.remote): git -C $REPO remote add $UREM URL"
@@ -97,7 +97,7 @@ case $verb in
     fi
     [ -z "$H" ] || need_free_wt "$INTO"
     if [ -n "$H" ]; then n=$(g rev-list --count "$INTO..$RT"); else n=$(g rev-list --count "$RT"); fi
-    tok=$(printf '%s\n%s\n%s\n%s\n' "$PROJ" "$INTO" "$H" "$U" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n' "$PROJ" "$INTO" "$H" "$U" | plan_token --basis "project:name into:ref head:sha upstream:sha" --verb "upstream sync" --target "$PROJ:$INTO")
     if [ -n "$H" ]; then
       echo "fast-forward $INTO from ${H:0:7} to $UREM/$UBR (${U:0:7}): $n commit(s), local only (nothing is pushed, nothing is merged into develop)"
       show_incoming "$INTO" "$RT"

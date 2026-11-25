@@ -80,12 +80,12 @@ accepted_lines() {
 provision_reads() {
   case $1 in
     roles.*.push|roles.*.push.*) return 1;;                                     # the push policy is validated, not read: only "none" is implemented
-    profiles.*.tier|profiles.*.model|profiles.*.effort|profiles.*.purpose) return 1;;   # a profile is read for its base and abilities (class_abilities)
+    profiles.*.tier|profiles.*.model|profiles.*.effort|profiles.*.purpose|profiles.*.options) return 1;;   # a profile is read for its base and abilities (class_abilities); its options are read when a run is prepared
     memory.tiers|memory.tiers.*) return 1;;                                     # the memory tiers are read by the memory verbs
     repo|repo.url|repo.long_lived) return 0;;                                   # the lead's teams block names the repository and its branches
     teams|teams.*|roles|roles.*|profiles|profiles.*) return 0;;                 # members, their model, effort, packages, skills, tools, packs, base branch
     budget_cents|memory|memory.memory_store|memory.reference_store) return 0;;  # the budget and the stores to attach
-    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.extra_runtimes|models.extra_runtimes.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
+    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.extra_runtimes|models.extra_runtimes.*|models.run_options|models.run_options.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, its run options, the read-only barrier
     lead|lead.model|lead.effort|lead.push|lead.push.*) return 0;;               # the lead agent, and the push rules in its prompt and tools
     packs|packs.none) return 0;;                                                # skills and tools render by what is linked
     cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
@@ -102,9 +102,10 @@ gated_path() {
              echo "qargi packs member-skills PROJECT --enable|--disable"; return 0; fi;;
     models.extensions|models.extensions.*) echo "qargi provider enable PROJECT EXTENSION (and disable)"; return 0;;
     models.extra_runtimes|models.extra_runtimes.*) echo "qargi provider enable PROJECT --runtime NAME (and disable)"; return 0;;
+    models.run_options|models.run_options.*) echo "qargi provider enable PROJECT --runtime NAME --option OPTION (and disable)"; return 0;;
     models.accept_no_barrier|models.accept_no_barrier.*) echo "qargi provider accept NAME --surface S --no-barrier"; return 0;;
-    models) if jq -e 'type == "object" and (has("extensions") or has("extra_runtimes") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
-              echo "qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME, qargi provider accept NAME --surface S --no-barrier (models.extensions, models.extra_runtimes and models.accept_no_barrier are set by them)"; return 0; fi;;
+    models) if jq -e 'type == "object" and (has("extensions") or has("extra_runtimes") or has("run_options") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
+              echo "qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME [--option OPTION], qargi provider accept NAME --surface S --no-barrier (models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are set by them)"; return 0; fi;;
   esac
   return 1
 }
@@ -180,6 +181,33 @@ if _ex is not None:
             for _i, _x in enumerate(_lst):
                 if _x in _lst[:_i]: bad.append("models.extra_runtimes.local: %s is listed twice" % _x)
                 if _x == _own: bad.append("models.extra_runtimes.local: %s is the project's own runtime, not an extra one (qargi provider disable PROJECT --runtime %s)" % (_x, _x))
+# models.run_options.local.RUNTIME: the options of the runtime's definition (dispatch.run_config.options) the project enabled, a list of option names
+# (qargi provider enable PROJECT --runtime NAME --option OPT). The shape and the runtime being enabled for the project (its own or an extra one) are checked
+# here; whether the definition still declares each option changes outside the answers and is a finding of no_provider
+_ro = _m.get("run_options") if isinstance(_m, dict) else None
+_ro_local = {}
+if _ro is not None:
+    if not isinstance(_ro, dict):
+        bad.append("models.run_options: an object like {local: {RUNTIME: [option names]}} (qargi provider enable PROJECT --runtime NAME --option OPT)")
+    else:
+        bad.extend("models.run_options.%s: not a surface with run options (only local)" % k for k in _ro if k != "local")
+        _rl = _ro.get("local")
+        if _rl is not None and not isinstance(_rl, dict):
+            bad.append("models.run_options.local: an object of runtime names, each with a list of option names (qargi provider enable PROJECT --runtime NAME --option OPT)")
+        elif isinstance(_rl, dict):
+            try: _own_o = provider.resolve_project(c, "local")[0]
+            except provider.ProviderError: _own_o = None
+            _en_o = ([_own_o] if _own_o else []) + [x for x in provider.extra_runtimes_of(c) if x != _own_o]
+            for _rn, _ol in _rl.items():
+                _p = "models.run_options.local.%s" % _rn
+                if not (isinstance(_rn, str) and provider.NAME_RE.match(_rn)):
+                    bad.append("models.run_options.local.%s: a runtime name" % _rn); continue
+                if not (isinstance(_ol, list) and all(isinstance(x, str) and provider.OPTION_NAME.match(x) for x in _ol)):
+                    bad.append("%s: a list of option names, each one the definition of the runtime declares (qargi provider enable PROJECT --runtime %s --option OPT)" % (_p, _rn)); continue
+                bad.extend("%s: %s is listed twice" % (_p, x) for _i, x in enumerate(_ol) if x in _ol[:_i])
+                if _ol and _rn not in _en_o:
+                    bad.append("%s: %s is not enabled for this project, so it has no options (its own runtime or one of models.extra_runtimes.local)" % (_p, _rn))
+                _ro_local[_rn] = [x for x in _ol]
 seen = set(); Ds = [d for d in Ds if not ((d["provider"], d["surface"]) in seen or seen.add((d["provider"], d["surface"])))]
 if Ds:
     _pats = [re.compile(d["model_pattern"]) for d in Ds]
@@ -202,6 +230,17 @@ repo = c.get("repo", {})
 need(isinstance(repo.get("url"), str) and repo["url"] and "OWNER/REPO" not in repo["url"], "repo.url is required (replace the placeholder)")
 ll = repo.get("long_lived", [])
 need(isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll), "repo.long_lived: the branches no agent may ever touch (e.g. master, develop)")
+# methodology: the name of a methodology (qargi methodology list) that passes qargi methodology check; absent means gitflow
+if "methodology" in c:
+    mth = c["methodology"]
+    if not (isinstance(mth, str) and mth):
+        bad.append("methodology: the name of a methodology (qargi methodology list), a string")
+    else:
+        import methodology as _meth
+        for _p in _meth.problems(mth):
+            bad.append("methodology: %s (qargi methodology check %s says so)" % (_p, mth))
+        if _meth.flow(mth) == "plain" and isinstance(ll, list) and len(ll) != 1:
+            bad.append("repo.long_lived: a project of the plain methodology %s has exactly one long-lived branch" % mth)
 # repo.detached: long-lived branches that never meet develop, master, release, hotfix or feature branches (a documentation site, say).
 # Names only: qargi refuses the merges between them and the git-flow branches (lib/gitflow.sh detached_mix)
 def branch_name(x):
@@ -400,8 +439,8 @@ if prof is not None:
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", pn): bad.append("%s: a lower-case name (letters, digits, hyphen; at most 31 characters)" % p); continue
         if not isinstance(pf, dict): bad.append("%s: an object like {base, tier, model, effort, purpose, abilities}" % p); continue
         for k in pf:
-            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime"):
-                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime)" % (p, k))
+            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime", "options"):
+                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime, options)" % (p, k))
         bases = md["bases"]
         b = pf.get("base")
         if b is None and pn in md["profiles"]: b = md["profiles"][pn].get("base")
@@ -432,6 +471,19 @@ if prof is not None:
             if p_effort is not None and pf["effort"] in efforts and p_effort.get(pf["effort"]) is None:
                 bad.append("%s.effort: %s is not an effort level of the runtime %s" % (p, pf["effort"], pf["runtime"]))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
+        # a profile selects among the options the project enabled for the runtime the profile runs on (models.run_options.local.RUNTIME, set by qargi provider
+        # enable PROJECT --runtime NAME --option OPT): a plain list, never a way to enable one. A profile of the reviewer base is a read-only run, which never gets one
+        if "options" in pf:
+            ol = pf["options"]
+            rt_o = pf["runtime"] if isinstance(pf.get("runtime"), str) else _own_local
+            if not (isinstance(ol, list) and all(isinstance(x, str) and provider.OPTION_NAME.match(x) for x in ol) and len(set(ol)) == len(ol)):
+                bad.append("%s.options: a list of distinct option names the project enabled for the runtime of the profile (qargi provider enable PROJECT --runtime NAME --option OPT)" % p)
+            elif ol:
+                if b and md["bases"].get(b, {}).get("class") == "read-only":
+                    bad.append("%s.options: the profile is on the base %s, a read-only run, which never gets a run option" % (p, b))
+                for x in ol:
+                    if x not in _ro_local.get(rt_o, []):
+                        bad.append("%s.options: %s is not enabled for the runtime %s of this project (qargi provider enable PROJECT --runtime %s --option %s)" % (p, x, rt_o or "of the project", rt_o or "NAME", x))
         if "abilities" in pf:
             ab = pf["abilities"]
             if not (isinstance(ab, list) and all(isinstance(x, str) for x in ab)):
@@ -633,6 +685,12 @@ if _extras:
         try: why = P.runtime_problem(x, _own)
         except P.ProviderError as e: out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s" % (x, e)); continue
         if why != "ok" and why != "is-primary": out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s (qargi provider check %s)" % (x, why, x))
+# the run options the project enabled (models.run_options.local) that the definition of the runtime no longer declares: an option that is not declared does not exist
+for _rt, _ol in P.run_options_of(ans).items():
+    try: _declared = P.declared_options(P.definition(_rt, "local"))
+    except P.ProviderError: continue                                   # a runtime that cannot be read is the finding of the extra runtimes above
+    for _o in _ol:
+        if _o not in _declared: out.append("finding: models.run_options.local.%s '%s' is not an option the definition of %s declares (dispatch.run_config.options; qargi provider show %s)" % (_rt, _o, _rt, _rt))
 print("\n".join(out))
 sys.exit(0 if out else 1)
 EOF
@@ -649,20 +707,25 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
   jq -rn --slurpfile n "$1" --slurpfile s "$2" '
     def norm: if . == null or . == [] or . == {} then null else . end;
     def keys_of: if type == "object" and (.models | type) == "object" then .models else {} end;
-    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry
+    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry: a list is narrower when it is a subset (as a set, the
+    # order and repeats do not count), an object when each of its keys is stored and its value is the stored one or narrower (a list of an object of lists too:
+    # models.extra_runtimes.local, models.run_options.local.RUNTIME), as lib/transfer.py _gated_narrower reads an archive
+    def sub($x; $y): (($x - $y) | length) == 0;
+    def nar($x; $y):
+      if $x == $y then true
+      elif ($x | type) == "array" then ($y | type) == "array" and sub($x; $y)
+      elif ($x | type) == "object" then ($y | type) == "object" and ($x | to_entries | all(. as $e | ($y | has($e.key)) and nar($e.value; $y[$e.key])))
+      else false end;
     def narrower($a; $b; $k): ($a[$k] | norm) as $x | ($b[$k] | norm) as $y
-      | if $x == null then true elif $y == null then false
-        elif ($x | type) == "array" then (($x - $y) | length) == 0
-        elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
-        else $x == $y end;
+      | if $x == null then true elif $y == null then false else nar($x; $y) end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
-    | (["extensions", "extra_runtimes", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
+    | (["extensions", "extra_runtimes", "run_options", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
       (select(($n[0].packs | type) == "object" and ($n[0].packs | has("member_skills")))
        | select(($n[0].packs.member_skills // false) != ($s[0].packs.member_skills // false)) | "packs.member_skills")'
 }
 gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
   local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
-  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION or --runtime NAME, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
+  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME, and for a run option of a runtime qargi provider enable PROJECT --runtime NAME --option OPT; qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
 }
 
 # verify.environment (the declaration a whole-suite run is started under, lib/suite_env.py) is changed by the routes that write the answers, and
@@ -750,9 +813,9 @@ verify_env_gate() {
     *) echo "qargi: verify.environment could not be compared with the approved declaration; nothing changed" >&2; return 1;;
   esac
   oid=$(venv_py id "$VENV_OLD"); nid=$(venv_py id "$VENV_NEW")
-  tok=$(printf '%s\n%s\n%s\n' "$1" "$oid" "$nid" | plan_token)
+  tok=$(printf '%s\n%s\n%s\n' "$1" "$oid" "$nid" | plan_token --basis "project:name old-declaration:sha new-declaration:sha" --verb "project $verb" --target "$1:$2")
   why=$(sed 1d <<<"$why" | paste -sd, | sed 's/,/, /g')
-  if [ -n "$APPROVED" ] && [ "${PLAN_ARG:-}" = "$tok" ]; then
+  if [ -n "$APPROVED" ] && [ -n "$tok" ] && [ "${PLAN_ARG:-}" = "$tok" ]; then   # an empty token is no plan: it never equals an empty --plan
     VENV_LOOSE="${oid:-off} -> ${nid:-off}: $why"
     return 0
   fi
@@ -770,9 +833,30 @@ verify_env_record() { # NAME PATH VERB: after the answers are stored, the approv
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || usage_die "template needs a project name (lower-case letters and digits)"
+    shift
+    meth=''
+    while [ $# -gt 0 ]; do
+      case $1 in --methodology) need_val "$1" $#; meth=$2; shift 2;; *) usage_die "unknown option $1 (usage: qargi project template NAME [--methodology M])";; esac
+    done
+    # the long-lived branches and the role bases come from the methodology; the one that ships as the default (gitflow) adds no answer, as before
+    mover='{}'
+    if [ -n "$meth" ] && [ "$meth" != gitflow ]; then
+      mover=$(python3 -I - "$(dirname "$(readlink -f "$0")")" "$meth" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1]); import methodology as M
+bad = M.problems(sys.argv[2])
+if bad:
+    sys.stderr.write("qargi: the methodology %s does not pass qargi methodology check: %s\n" % (sys.argv[2], "; ".join(bad)))
+    sys.exit(1)
+m = M.load(sys.argv[2])[2]
+print(json.dumps({"methodology": sys.argv[2], "long_lived": m["branches"]["long_lived"],
+                  "bases": {r: c["base"] for r, c in (m.get("roles") or {}).items() if isinstance(c, dict) and isinstance(c.get("base"), str)}}))
+PY
+      ) || exit 1
+    fi
     # no model and no provider: the template names no vendor. A role's model is its provider's tier (project set models.provider.local NAME)
     # until you give one; the efforts are the table's, the same for every provider
-    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
+    jq -n --arg n "$n" --argjson mo "$mover" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
     '$d[0].profiles as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
@@ -783,7 +867,11 @@ case $verb in
       lead: {context_window: null},
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
-      budget_cents: 500}';;
+      budget_cents: 500}
+    | if ($mo | has("methodology")) then
+        .methodology = $mo.methodology | .repo.long_lived = $mo.long_lived
+        | reduce ($mo.bases | to_entries[]) as $b (.; if .roles[$b.key] then .roles[$b.key].base = $b.value else . end)
+      else . end';;
   init)
     n=${1:-}; shift || true; valid_project "$n" || usage_die "init needs a project name"
     ans='' force=''
@@ -828,9 +916,12 @@ case $verb in
     long=$(python3 -I - "$lib" "$meth" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
+print(M.flow(sys.argv[2]))
 PY
     ) || exit 1
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" | plan_token)
+    flow=${long#*$'\n'}; long=${long%%$'\n'*}
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" \
+          | plan_token --basis "directory:path methodology:name url:name deployment:name provider:name provider-local:name provider-cloud:name files:name" --verb "project new" --target "$n:$(printf '%s' "${dir//[[:cntrl:]]/?}" | cut -c1-200)")
     echo "new project $n with the $meth methodology at $dir"
     echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
     echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"
@@ -874,7 +965,7 @@ PY
     fi
     if [ -n "$dep" ]; then echo; python3 -I "$lib/methodology.py" deployment "$meth" "$dep"; fi
     echo; echo "next: create the repository on your host and push (git remote add origin URL; git push -u origin ${long// / })"
-    echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
+    [ "$flow" = plain ] || echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
   attach)
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
     dir=. name='' meth=gitflow url='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED=''
@@ -1184,7 +1275,7 @@ PY
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
     fi
-    [ -n "$tok" ] && need_plan "$tok"
+    need_plan "$tok"
     audit_log "project:$verb" "$n ${res:-all} $tok"
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"

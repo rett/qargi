@@ -619,14 +619,15 @@ def build_plan(archive, comps, projects, modes):
     return plan
 
 
-GATED_KEYS = ("models.extensions", "models.accept_no_barrier", "models.extra_runtimes",   # what an agent may run on, a surface accepted with no read-only barrier, and the extra runtimes of the local surface (their own verbs, a plan token and an approval)
+GATED_KEYS = ("models.extensions", "models.accept_no_barrier", "models.extra_runtimes", "models.run_options",   # what an agent may run on, a surface accepted with no read-only barrier, the extra runtimes of the local surface and the options of a runtime's definition the project enabled (their own verbs, a plan token and an approval)
               "ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.archive", "backlog.section")   # the lead's answers, which a member's project set is refused
-PROVIDER_KEYS = ("models.extensions", "models.accept_no_barrier", "models.extra_runtimes")      # the ones above that only the provider verbs store
+PROVIDER_KEYS = ("models.extensions", "models.accept_no_barrier", "models.extra_runtimes", "models.run_options")      # the ones above that only the provider verbs store
 
 
 def _gated_narrower(new, old):
     """True when the imported value only keeps or drops entries of the stored one (none stored: an empty value only). An empty list or object
-    counts as absent. An object keeps its keys with their stored value, except that a list in it (models.extra_runtimes.local) may lose entries too.
+    counts as absent. An object keeps its keys with their stored value, except that a list in it (models.extra_runtimes.local) may lose entries too, and so may
+    a list in an object of objects (models.run_options.local.RUNTIME); an object of plain values (a record) is kept whole or not at all.
     (lib/project.sh gated_keys_changed asks for the stored list as it is there.)"""
     new = None if new in (None, [], {}) else new
     old = None if old in (None, [], {}) else old
@@ -637,13 +638,14 @@ def _gated_narrower(new, old):
     if isinstance(new, list):
         return isinstance(old, list) and all(i in old for i in new)
     if isinstance(new, dict):
-        return isinstance(old, dict) and all(k in old and (old[k] == v or isinstance(v, list) and isinstance(old[k], list) and all(i in old[k] for i in v))
+        return isinstance(old, dict) and all(k in old and (old[k] == v or isinstance(v, list) and isinstance(old[k], list) and all(i in old[k] for i in v)
+                                                           or isinstance(v, dict) and v and all(isinstance(x, (list, dict)) for x in v.values()) and _gated_narrower(v, old[k]))
                                              for k, v in new.items())
     return new == old
 
 
 def gate_answers(archive):
-    """The project answers in the archive may not add or change the keys of GATED_KEYS: models.extensions, models.accept_no_barrier and models.extra_runtimes
+    """The project answers in the archive may not add or change the keys of GATED_KEYS: models.extensions, models.accept_no_barrier, models.extra_runtimes and models.run_options
     have verbs with a plan token and an approval (provider enable|disable|accept), the others are answers a member's project set is refused, and an archive is untrusted
     data. Where the file would, the stored value stays (or the key is left out when none is stored). Returns the paths changed and the keys, for a note."""
     changed = []
@@ -863,7 +865,7 @@ def cmd_import(args):
     if "memories" in comps:
         print("Check the stores with: qargi memory lint STORE_ID")
     if "config" in comps:
-        print("The project answers were imported as they were (apart from models.extensions, models.accept_no_barrier and models.extra_runtimes): check paths and ids with: qargi project show NAME")
+        print("The project answers were imported as they were (apart from models.extensions, models.accept_no_barrier, models.extra_runtimes and models.run_options): check paths and ids with: qargi project show NAME")
     return 0
 
 

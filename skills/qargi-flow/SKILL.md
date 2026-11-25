@@ -29,6 +29,8 @@ With no start hook in the runtime, run `qargi role card lead` first.
 
 `qargi feature status NAME` and `qargi release status VERSION` show where a branch stands and whether the whole-suite run is current. Any merge into a branch, or a change of the test command, makes an earlier run stale: run it again rather than finishing on it.
 
+**Plain methodology.** `qargi project new NAME --methodology plain` makes a documents project with one branch (`main`). The `feature`, `release` and `hotfix` verbs, `branch prune`, `upstream` and `changelog renumber` refuse there with `methodology-no-flow`; use `local prepare --base main`, `review check|save|apply` and `backlog`.
+
 ## When a merge conflicts (exit 3)
 
 Nothing was changed. The message names a worktree under the state directory with the merge in progress and the conflicted files. Resolve there (yourself, or as a build task whose executor returns the resolution), `git add`, `git commit`, then run the same command again with `--resolved`. It uses exactly your merge, refuses one that is not finished or no longer matches the branches, and a rerun without `--resolved` while a resolution waits is refused, not overwritten. A conflict over the version number when merging back is the one the model warns about: keep the release's version. After a resolution the whole-suite run is stale again; sync, verify, finish.

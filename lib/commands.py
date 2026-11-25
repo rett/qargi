@@ -62,6 +62,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 RUNTIME_GATE = opt("--runtime", "the extra local runtime to allow or stop for the project (models.extra_runtimes.local), in place of an extension", "NAME")
+OPTION_GATE = opt("--option", "with --runtime: a run option of that runtime's definition (dispatch.run_config.options) to enable or stop for the project (models.run_options.local.RUNTIME), in place of the runtime itself", "OPTION")
 ASKED_WORDS = opt("--asked", "your request, in your words (with --runtime)", "WORDS")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
@@ -140,7 +141,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -157,12 +158,14 @@ COMMANDS = {
                  "is none for members: they are instructed to return patches without pushing. The lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
-            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
+            "template": verb("Print an answers file with defaults", [("NAME", "none")], [opt("--methodology", "the methodology the answers follow (default gitflow, which adds no methodology answer)", "NAME", "methodology")],
+                             desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set. With --methodology the answers carry its name, its long-lived branches (plain: main only, not master and develop) and the bases of its roles; a methodology that does not pass qargi methodology check is refused. project validate refuses a methodology answer that does not pass it either.",
+                             examples=["qargi project template notes --methodology plain > notes.json"]),
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
             "new": verb("Start a new project: its directory, a git repository on the methodology's branches and generic files", [("NAME", "none")],
-                        [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
+                        [opt("--methodology", "the methodology (default gitflow; plain for a project whose output is documents)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command; gates=JSON declares gates, which are stored in the answers too when --url is given", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
                          opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
@@ -172,8 +175,8 @@ COMMANDS = {
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. With --url (the answers are stored) a --provider or --provider-local runtime that does not confine reads (a command runtime whose definition has no dispatch.reads that confines them) adds the warning line members on NAME can read ... reads are not confined to the plan; it asks for no phrase. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
-                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
-                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
+                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment. With --methodology plain the repository has the one branch main and holds README.md, CONTRIBUTING.md, AGENTS.md, artifacts/ and BACKLOG.md: no develop, no VERSION, no changelog, no CI and no Makefile (the answers stored with --url name BACKLOG.md as the backlog file). --json prints the plan and its token as one object; the token approves the same plan."),
+                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme", "qargi project new notes --methodology plain --url https://github.com/me/notes"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
@@ -212,7 +215,8 @@ COMMANDS = {
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")], [PLAN, APPROVED],
-                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, or a runtime with --runtime) and qargi provider accept. "
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, a runtime with --runtime, or an option of a runtime with --runtime NAME --option OPT) and qargi provider accept. "
+                              "profiles.NAME.options (a list of the options of the profile's runtime that the project enabled with qargi provider enable PROJECT --runtime NAME --option OPT) is a plain set that only selects among them; project validate refuses one that is not enabled and one on a profile of the reviewer base. "
                               "profiles.NAME.runtime (the runtime a profile's members run on: the project's own, or one enabled with qargi provider enable PROJECT --runtime NAME) is a plain set, with a hyphen allowed in the profile's name (profiles.codex-build.runtime), and a member's guard refuses it as it does roles.NAME.tools. "
                               "Setting models.provider.local (or models.provider) to a runtime that does not confine reads prints a warning line: members on NAME can read the real ~/.codex ... reads are not confined; it asks for no phrase. "
                               "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
@@ -1267,15 +1271,16 @@ COMMANDS = {
     "methodology": {
         "summary": "List and inspect the development and release methodologies",
         "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
-                 "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
+                 "CI, release steps and deployment options, and the generic files a new project starts with. Two ship with qargi: gitflow, and plain for a project whose output is documents (one long-lived branch, main, and no feature, release or hotfix branches, no tag and no version); "
                  "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). Today a methodology sets "
                  "the files and parameters a project starts with and a few patterns; the feature, release and branch verbs name develop and master themselves. "
+                 "A methodology whose flow is plain (the key flow in methodology.json: gitflow by default) has exactly one long-lived branch and none of the release patterns; qargi feature, release (hotfixes included), branch prune, upstream and changelog renumber refuse such a project with the refusal methodology-no-flow (exit 2, nothing changed), while qargi local prepare, run, verify, close and clean, qargi review check, save and apply, and qargi backlog work with --base set to its branch. A methodology whose flow is not a valid value (or whose methodology.json cannot be read) is refused by those verbs as a plain one is, never run as gitflow; one that is not found is not refused. "
                  "These verbs only read; qargi project new and adopt write, and only after a plan."),
         "scripts": ["methodology.py"],
         "verbs": {
             "list": verb("List the methodologies and where they live"),
-            "show": verb("Print a methodology: branches, tests, CI, release steps, parameters, scaffold, deployment options", [("NAME", "methodology")]),
-            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")]),
+            "show": verb("Print a methodology: flow, branches, tests, CI, release steps (or the work steps of a plain one), parameters, scaffold, deployment options", [("NAME", "methodology")]),
+            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")], desc="Names each problem. A methodology with the flow plain must have exactly one long-lived branch and a task pattern, and none of branches.feature, release, hotfix and tag, after_release, release and versioning. The optional work is a list of steps, each a non-empty line of text."),
             "files": verb("Print the scaffold rendered with the parameters, writing nothing", [("NAME", "methodology")],
                           [opt("--param", "a parameter as name=value (repeat)", "NAME=VALUE")],
                           examples=["qargi methodology files gitflow --param project=acme --param test_command='make test'"]),
@@ -1339,7 +1344,7 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
+            "enable": verb("Let a project use a library extension pack, or start members on one more local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, OPTION_GATE, ASKED_WORDS, PLAN, APPROVED, EXEC],
                            desc=("An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified. "
                                  "With --runtime NAME (and no extension) it allows an extra runtime: the project may then start members on NAME beside its own local runtime (models.extra_runtimes.local), "
                                  "chosen by a profile (profiles.NAME.runtime) or by one task (qargi local prepare --runtime NAME). NAME is a command runtime of the local surface (a shipped one, or a library pack that is sealed and unchanged) that is not the project's own; "
@@ -1350,11 +1355,18 @@ COMMANDS = {
                                  "the tool packs each role would get on it and that their MCP servers run outside the sandbox; the hidden paths and what the runtime lacks (a guard hook, managed member skills, pack renders). "
                                  "Applied with --plan TOKEN --approved WORDS it writes models.extra_runtimes.local and one audit line (provider:enable). For a runtime that does not confine reads the owner's words must contain reads are not confined "
                                  "(letter case and runs of blanks ignored, matched as words), else the refusal runtime-reads-unacknowledged and the token stays good: the lead passes the owner's words on and never writes the phrase itself. "
+                                 "With --runtime NAME --option OPT, NAME being a runtime the project has enabled (its own or an extra one: else runtime-not-enabled), it enables a run option the definition of NAME declares (dispatch.run_config.options; an option that is not declared does not exist), "
+                                 "for the profiles of the project that select it (profiles.NAME.options): a run of such a profile gets the run's configuration file with the option's settings over the baseline, and nothing else changed; every other run gets the baseline alone. "
+                                 "The plan prints the settings the option adds to the run's file, in that file's format; that the tool it opens runs outside the sandbox, may spend, and that qargi does not measure that; where it may write; the reads warning of the runtime; "
+                                 "whether the option is verified (verified_on of the definition: null is not yet); the profiles that could select it; and the phrase of the option, which the owner's approval words must contain (as words, letter case and runs of blanks ignored), "
+                                 "else the refusal runtime-option-unacknowledged and the token stays good. It is for write runs only, and a read-only run whose profile selects one is refused at prepare (runtime-option-class). Applied it writes models.run_options.local.NAME and one audit line (provider:enable-option). "
                                  "A lead's verb: the guard refuses it to a member. The project's own runtime, one already enabled and a name that is not a runtime are refused; nothing is changed.")),
-            "disable": verb("Stop a project using a library extension pack, or one extra local runtime (--runtime)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, ASKED_WORDS, PLAN, APPROVED],
+            "disable": verb("Stop a project using a library extension pack, one extra local runtime (--runtime), or one run option of a runtime (--runtime --option)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, OPTION_GATE, ASKED_WORDS, PLAN, APPROVED],
                             desc=("With --runtime NAME it takes NAME out of models.extra_runtimes.local, with a plan and a token as for enable and no phrase to say. It is refused, with no token, while a profile names the runtime "
                                   "(unset profiles.NAME.runtime first: qargi project unset PROJECT profiles.NAME.runtime). Runs prepared for it are refused when they start (runtime-drift: prepare again); "
-                                  "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime.")),
+                                  "finished runs are verified, reviewed, applied, closed and cleaned as before, because those verbs ask for no runtime. "
+                                  "With --runtime NAME --option OPT it takes OPT out of models.run_options.local.NAME, with its own plan and token and no phrase to say; it is refused, with no token, while a profile selects the option "
+                                  "(take it out of profiles.NAME.options first). Runs prepared with it are refused when they start (prepare again). Disabling the runtime itself is refused, with no token, while an option of it is enabled: disable the options first.")),
             "runtimes": verb("Print the runtimes the project's local surface runs members on", [("PROJECT", "project")],
                              desc=("The line primary NAME (the project's own local runtime, models.provider.local), then a line extra NAME for each runtime of models.extra_runtimes.local, each once. "
                                    "Read-only and open to a member. Exit 2 for a project with no local runtime or no such project.")),
@@ -1413,6 +1425,27 @@ COMMANDS = {
                             [opt("--why", "the reason; required to dismiss", "CODE", REASONS)]),
         },
     },
+    "plan": {
+        "summary": "The stored record of a plan, as a verb kept it when it printed its token",
+        "desc": ("A verb that prints a plan token keeps the plan it hashed in STATE/plans/TOKEN.json (mode 600, seven days; nothing in a dry run), so that a stale token can name what moved "
+                 "and a reader can show the plan again. The plans of the verbs docs/reference/plan-record.md lists keep it (plain lines or one line of words); the plans of a JSON document or a digest, some plans of plain lines (packs seed, provider enable and disable, local clean --orphans) and those of qargi upgrade and of the link verbs are not kept yet. The record never decides a token: a plan whose record cannot be kept still prints its token."),
+        "scripts": ["plan.py"],
+        "verbs": {
+            "show": verb("Print the stored record of a plan token: the verb, what it acts on, the labelled lines that were hashed, when it was made and when its seven days end", [("TOKEN", "none")],
+                         [opt("--json", "print the record as it was stored, with \"state\": \"valid\", as one JSON object")],
+                         desc=("Read only, open to a member, and it changes nothing: no file is made or removed (an expired record stays; the store prunes), no audit line, no lock, and it works under QARGI_DRY=1. "
+                               "The state directory's plans directory and the file are opened without following a link, and the file must be a regular file of one link and mode 600. Before it prints, it checks the "
+                               "record: the schema (qargi.plan/0, a draft that may change without notice until a consumer publishes it), the form, the SHA-256 of the lines (input_sha256, from the lines and input_newline; it binds the lines only) and the token "
+                               "against that hash and the name of the file. The text shows the verb, the target (the project and the one object the verb acts on), each line that was hashed with its label, "
+                               "and the times created and expires (created plus seven days); a control character in a value is printed as \\xNN. The lines hold the values in clear, lead-chosen ones (a branch, a path, a name) included, each with a kind (ref, path, name, sha, label or count): "
+                               "the file is the owner's, as the audit log is, and a card that showed a digest would ask for an approval blind. --json prints the record as stored (schema, verb, context, target, lines, "
+                               "input_sha256, input_newline, token, created, expires and the basis qargi plan-stale reads) and adds \"state\": \"valid\". "
+                               "Exit status: 0; 1 for a refusal: plan-unknown (the token is not 12 hex digits, no such file, or a file of before the schema), plan-expired (expires is past; QARGI_PLAN_NOW stands for the clock in tests) "
+                               "or plan-record-invalid (a link, a file of the wrong kind or mode, one that cannot be read, bad JSON, an unknown schema, a record that is malformed or whose lines do not hash to the token); 2 for a usage error. "
+                               "The token is the first 12 hex digits of input_sha256: a card is bound to input_sha256, not to the token. Expiry is not checked when a plan is applied."),
+                         examples=["qargi plan show 1a2b3c4d5e6f", "qargi plan show 1a2b3c4d5e6f --json"]),
+        },
+    },
     "track": {
         "summary": "Track a session that was started elsewhere (for example in the console)",
         "scripts": ["session.sh"],
@@ -1438,6 +1471,7 @@ COMMANDS = {
                               "New prepared runs use private attempt authority. Dispatch, verify, apply, close and clean share one lifecycle lock and refuse active or unknown members, including discard. Applied, closed or cleaned runs cannot be retried. Dry-run and preflight refusal preserve previous output; setup or spawn failure after the attempt commit leaves it unverified and retains earlier saved evidence. Opted-in member snapshots validate content and selection drift read-only, print MEMBER_SKILLS_DIR and names/approval hashes on dry-run, and publish private staged bytes after lifecycle begin into dispatch.home.skills_dir. Foreign/replaced destinations or missing ownership refuse; cleanup requires recorded group quiescence and validates staged identity before deletion. Interrupted cleanup resumes through native --again; dry-run only inspects. Save/verify prove frozen evidence independently of current configuration/review. "
                               "Retry epochs precede ref collection. Lead-written report manifests use the private prepared base commit. TERM, HUP and INT before begin leave a not-started attempt; uncatchable death without a recorded child remains unknown and refuses recovery. Only a kernel report that the recorded process group is absent proves it gone. An addressable group with no live member in a process listing, including unreaped zombies, remains busy or unknown; inaccessible evidence remains unknown. "
                               "Only for a runtime whose dispatch mode is command; a runtime that works inside the session (dispatch mode in-session) is refused: dispatch it as its notes say (qargi provider notes spawn). "
+                              "A run whose profile selects options gets the run's configuration file with their settings over the baseline (--dry-run prints RUN_CONFIG_OPTIONS=, the settings each applies; RUN_CONFIG_BASELINE= stays the definition's baseline), RUN/dispatch.json records run_config.options (names only) and the run prints RUN_OPTIONS=; the options bind the prepared request, so one enabled, selected or edited after prepare is refused with re-prepare guidance. "
                               "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
                               "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy. "
                               "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): a clone, contract, git wrapper, OUT or TMP there that the run's class does not show refuses it before it starts (exit 2), naming the path and the fix. "
@@ -1459,6 +1493,7 @@ COMMANDS = {
                                   "and MEMBER_SKILLS=none (not delivered to an extra runtime) for a run on an extra runtime, which freezes no managed member skills. Its registry line carries runtime, model_confirmed (display only: whether the runtime's model override is verified) and model; a project without extra runtimes sees no new word, key or digest. "
                                   "Under a coordinator label (QARGI_ACTOR, qargi help coordinator) the base must be feature/ followed by the label's feature, and the run's registry line records the label (actor) and the feature (feature); a run prepared without a label has neither field. "
                                   "Command runtimes resolve the role's explicit or implicit profile before RUN, TMP or the clone is made, without member registration. The logical worker/reviewer base, requested model and effort, class and runtime are retained in lead-owned private lifecycle authority, bound to runtime/mode/catalog/profile/policy inputs. RUN/request.json and RUN/profile mirror that request for inspection; they cannot authorize selection or accept drift. MEMBER names the logical base, MODEL the requested id or alias, and EFFORT the requested level, including when the runtime has no native effort control. "
+                                  "A run whose profile selects an option the project enabled for the runtime (profiles.NAME.options, qargi provider enable --runtime NAME --option OPT) prints RUN_OPTIONS=NAME (what it opens: hosted, outside the sandbox, may spend); a project and a profile with none print nothing new and bind nothing new. A read-only run whose profile selects an option is refused (runtime-option-class) before anything is made; a selection the project did not enable, or the definition does not declare, is refused (exit 2). "
                                   "Managed member snapshots default off; the owner gate packs member-skills freezes canonical role-specific skills in private lifecycle authority, including empty selections. Exact prepared-request hashes stay unchanged, so a changed shipped home declaration requires re-prepare. With --task-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: "
                                   "ROLE (with the class), ABILITY (the role's text), TASK (the file), DONE, PROFILE (the text of the repository's profile, ~/.qargi/config/profiles/<repository>.md, when there is one), "
                                   "BASE, BASE_SHA, SCOPE (one line, the paths comma separated, or none), RUN_DIR, CLONE, OUT, TMP, GIT, CONTRACT, then SUBMODULES and MEMORY when there are any. "
@@ -1799,7 +1834,7 @@ COMMANDS = {
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
                  "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions, "
-                 "models.extra_runtimes or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
+                 "models.extra_runtimes, models.run_options or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
                  "methodology_accepted, review.reject_trailers, backlog.archive and backlog.section (a member's project set is refused them too); an archive may keep or drop "
                  "entries of such a list but not add or change one: the stored value stays, "
                  "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
@@ -1993,7 +2028,7 @@ for _area, _names, _words in (
     ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
     ("team", "", "brief check contract"), ("memory", "", "lint get tiers check"), ("canon", "", "check plan audit"),
     ("credential", "", "check"), ("discover", "", "sources search recommend show"), ("lead", "", "usage compact-check status"),
-    ("supervise", "", "status hooks"), ("local", "", "list"),
+    ("supervise", "", "status hooks"), ("local", "", "list"), ("plan", "", "show"),
     # a coordinator's own work, narrowed to its feature
     ("local", "base", "prepare"), ("local", "run", "run verify clean"), ("review", "run", "check"), ("feature", "feature", "status verify"),
 ):
@@ -2017,7 +2052,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
@@ -2063,6 +2098,11 @@ TOPICS = {
         "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
         "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
         "with a null token. A verb that describes a --json option of its own keeps it.",
+        "A plan that a verb printed is kept so that it can be shown again: qargi plan show TOKEN (--json for the record) prints the verb, what it acts on and the labelled lines that were hashed, "
+        "with the values in clear and a kind for each (ref, path, name, sha, label or count), from STATE/plans/TOKEN.json (mode 600, seven days, nothing in a dry run). It changes nothing and works in a dry run. "
+        "The plans of the verbs docs/reference/plan-record.md lists keep it (plain lines or one line of words; packs seed, provider enable and disable, local clean --orphans, qargi upgrade and the link verbs keep none yet); a token of a plan that keeps none is not known to it (plan-unknown), and a plan whose record could not be kept still prints its token. The record is a draft, schema qargi.plan/0, and "
+        "the token stays the first 12 hex digits of its input_sha256: a record whose lines (or input_newline) were edited no longer hashes to its token and is not shown (plan-record-invalid), and one past its seven days is not shown either (plan-expired). The hash binds the lines only: the verb, the target, the context, the labels, the kinds and the times are not under it. They are checked for their form, and expires must be created plus seven days, but a hand edit that keeps them well formed (another verb, say) is shown as it stands: the file belongs to the owner, and the record is a reading aid, not a signature; "
+        "applying a plan does not check its age.",
         "start and send require --asked \"your request\" naming the cloud instance. The gate records it in the state directory's "
         "append-only audit log. Consult each command's help for its request and approval requirements. "
         "Audit entries record supplied --asked and --approved words only where the command calls audit_log.",
@@ -2172,6 +2212,7 @@ ENVIRONMENT = [
     ("QARGI_DRY", "set to 1 by --dry-run inside the verb that has it (release start, push and fix --push, feature finish, branch prune): a helper that writes (the audit log, the state files, the journal, a ref move, a commit) "
                   "stops the verb with exit 70, and git and gh pass only commands that read; unset, empty and 0 are a normal run. Do not set it yourself"),
     ("QARGI_VERB", "the verb a refusal's contract line names, as 'feature finish' (default: the verb the script was run as); the scripts that raise a refusal set it, you need not"),
+    ("QARGI_PLAN_NOW", "a time (UTC, 2026-11-22T10:00:00Z) that stands for the clock of the plan records: when a plan is kept (created, expires) and when qargi plan show asks whether it is past its seven days; for tests, you need not set it"),
     ("QARGI_ROLE", "the role a refusal's contract line names (default: none); set by a member's run, you need not"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
@@ -2199,6 +2240,7 @@ FILES = [
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
     ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
+    ("~/.qargi/state/plans/TOKEN.json", "the plan a verb printed under that token (mode 600, kept seven days, none in a dry run): qargi plan show TOKEN"),
 ]
 
 WORKFLOW = [

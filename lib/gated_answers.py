@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Store dedicated gated answers: packs.member_skills, models.extensions, models.extra_runtimes.local and models.accept_no_barrier.SURFACE.
+"""Store dedicated gated answers: packs.member_skills, models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME and models.accept_no_barrier.SURFACE.
 
 The member-skills path is boolean and stores only through its dedicated packs
 gate. Project validation is shared; ordinary project writes cannot bypass it.
 The provider answers are models.extensions (what a project adds to its runtime), models.extra_runtimes.local (the other runtimes of the local
-surface it may start members on) and models.accept_no_barrier.SURFACE (the owner's acceptance of a provider surface with no read-only barrier). All
-three change what an agent may run on, so each has its own verb with a plan token and an approval (`qargi provider enable|disable`, with
-`--runtime` for the second, and `qargi provider accept`), and those verbs
+surface it may start members on), models.run_options.local.RUNTIME (the options of its runtime's definition that a profile of the project may select: a
+tool that runs outside the member's sandbox, say) and models.accept_no_barrier.SURFACE (the owner's acceptance of a provider surface with no read-only
+barrier). All four change what an agent may run on, so each has its own verb with a plan token and an approval (`qargi provider enable|disable`, with
+`--runtime` for the second, `--runtime NAME --option OPT` for the third, and `qargi provider accept`), and those verbs
 store through here, after their gate, and nowhere else: `qargi project set` and `qargi project init` refuse the keys always, and nothing a
 caller can set (no environment variable, no option) opens them there.
 
-  gated_answers.py store PROJECT PATH JSON [--conf DIR]     PATH is packs.member_skills, models.extensions, models.extra_runtimes.local or models.accept_no_barrier.local|cloud
+  gated_answers.py store PROJECT PATH JSON [--conf DIR]     PATH is packs.member_skills, models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME or models.accept_no_barrier.local|cloud
 
 A module for lib/conformance/library.py (store()) and the script lib/provider.sh calls. The script has no gate of its own, as lib/project_link.py
 has none: the verb that calls it has passed its plan token first. The guard therefore refuses any use of the script to a member (lib/guard.py),
@@ -41,7 +42,9 @@ def check_path(path):
     m = re.fullmatch(r"models\.accept_no_barrier\.([a-z]+)", path or "")
     if m and m.group(1) in SURFACES:
         return
-    raise Refused("%s is not stored here: only models.extensions, models.extra_runtimes.local, packs.member_skills and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
+    if re.fullmatch(r"models\.run_options\.local\.[a-z][a-z0-9-]{0,40}", path or ""):
+        return
+    raise Refused("%s is not stored here: only models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME, packs.member_skills and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
 
 
 def store(project, path, value, conf=None):

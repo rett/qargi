@@ -1,6 +1,6 @@
 ---
 name: qargi-contributing
-description: Habits for a member changing qargi itself: quoting, sleep, fail-first tests, shrink-only ceilings, targeted tests.
+description: "Habits for a member changing qargi itself: quoting, sleep, fail-first tests, shrink-only ceilings, targeted tests."
 ---
 # Working on qargi
 
