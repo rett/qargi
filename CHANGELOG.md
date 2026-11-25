@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-24
+
 ### Added
 - The `plain` methodology, for a project whose output is documents (docs/flow/plain.md): one long-lived branch, `main`, and `agent/SLUG` task branches cut from it; no feature, release or hotfix branches, no tags, no `VERSION`, no changelog, no CI. `qargi project new NAME --methodology plain` plans and creates a repository on `main` with `README.md`, `CONTRIBUTING.md`, `AGENTS.md` (with its Development environment section), `artifacts/.gitkeep` and `BACKLOG.md`, and stores `BACKLOG.md` as the backlog file when `--url` is given; a test shows that the token `project new --json` prints approves the same plan. `qargi methodology check` accepts `"flow": "plain"` in a methodology.json (default `gitflow`): exactly one long-lived branch, a task pattern with `{slug}`, and none of `branches.feature`, `release`, `hotfix` and `tag`, `after_release`, `release` and `versioning`, each failure naming its reason; `methodology show` prints the flow and a plain methodology's work steps. The gitflow scaffold, plan, template and `methodology show` output are unchanged (tests/fixtures/gitflow-same).
 - `qargi project template NAME --methodology M` prints answers with `methodology` set, the long-lived branches of the methodology (plain: `main`, not `master` and `develop`) and the bases of its roles; a methodology that fails `methodology check` is refused. Without the option the output is what it was.
