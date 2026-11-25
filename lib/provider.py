@@ -3715,7 +3715,7 @@ def main(argv):
         sh = os.path.join(HERE, "provider.sh")
         sys.stdout.flush()
         os.execv(sh, [sh, "accept"] + rest)
-    if verb in ("enable", "disable") and "--runtime" in rest:     # an extra runtime of a project: the same shell gate (plan, token, approval, audit line)
+    if verb in ("enable", "disable") and ("--runtime" in rest or "--option" in rest):     # an extra runtime or one of its run options of a project: the same shell gate (plan, token, approval, audit line)
         sh = os.path.join(HERE, "provider.sh")
         sys.stdout.flush()
         os.execv(sh, [sh, verb] + rest)
