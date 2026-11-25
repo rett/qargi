@@ -1,6 +1,6 @@
 ---
 name: gitflow-member
-description: Your part of a git-flow project as a member: work on agent/<slug> from the BASE you were given, leave the long-lived branches and merges to the lead, and run only the checks that cover your change.
+description: "Your part of a git-flow project as a member: work on agent/<slug> from the BASE you were given, leave the long-lived branches and merges to the lead, and run only the checks that cover your change."
 ---
 # Git-flow, the member's part
 

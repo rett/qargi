@@ -162,3 +162,4 @@
 40 bash tests/test_plain.sh
 20 bash tests/test_plan_record.sh
 12 python3 tests/test_plan_record.py
+2 python3 tests/test_skill_frontmatter.py
