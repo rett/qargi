@@ -850,14 +850,15 @@ case $verb in
         jq -e '.old == false' <<<"$member_status" >/dev/null || die "member skills opt-in requires command dispatch; in-session delivery is unsupported"
       fi
       if [ "$CMODE" = command ]; then
-        reqargs=("$CPJ" "$R" "$ROLE" "$CLASS")
+        reqargs=(with-options "$CPJ" "$R" "$ROLE" "$CLASS")
         [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")
-        REQUEST=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit $?   # 2 for a request that cannot be made, 1 for a refusal (runtime-option-class)
+        REQANS=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit $?   # 2 for a request that cannot be made, 1 for a refusal (runtime-option-class)
+        # the request and the words of its RUN_OPTIONS= line come from the one prepare: the line says what the request binds
+        REQUEST=$(jq -c .request <<<"$REQANS"); ROPTS=$(jq -r .options <<<"$REQANS")
         PROFILE=$(jq -r .profile <<<"$REQUEST"); MEMBER=$(jq -r .base <<<"$REQUEST")
         MODEL=$(jq -r .model <<<"$REQUEST"); EFFORT=$(jq -r .effort <<<"$REQUEST")
         OVMODEL=$MODEL OVEFFORT=$EFFORT
-        # the run options of the profile (profiles.NAME.options, enabled by qargi provider enable PROJECT --runtime NAME --option OPT): the words of the RUN_OPTIONS= line, nothing when there are none
-        ROPTS=$(python3 -I "$(dirname "$0")/prepared_request.py" run-options "$CPJ" "$R" "$PROFILE" "$CLASS" </dev/null) || exit $?
+        # ROPTS: the run options of the profile (profiles.NAME.options, enabled by qargi provider enable PROJECT --runtime NAME --option OPT), the words of the RUN_OPTIONS= line, empty when there are none
       fi
     fi
     if [ "$CMODE" != command ] && { [ -n "$SELECTOR" ] || [ -n "$OVERRIDE" ]; }; then

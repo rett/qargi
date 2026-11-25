@@ -707,12 +707,17 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
   jq -rn --slurpfile n "$1" --slurpfile s "$2" '
     def norm: if . == null or . == [] or . == {} then null else . end;
     def keys_of: if type == "object" and (.models | type) == "object" then .models else {} end;
-    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry
+    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry: a list is narrower when it is a subset (as a set, the
+    # order and repeats do not count), an object when each of its keys is stored and its value is the stored one or narrower (a list of an object of lists too:
+    # models.extra_runtimes.local, models.run_options.local.RUNTIME), as lib/transfer.py _gated_narrower reads an archive
+    def sub($x; $y): (($x - $y) | length) == 0;
+    def nar($x; $y):
+      if $x == $y then true
+      elif ($x | type) == "array" then ($y | type) == "array" and sub($x; $y)
+      elif ($x | type) == "object" then ($y | type) == "object" and ($x | to_entries | all(. as $e | ($y | has($e.key)) and nar($e.value; $y[$e.key])))
+      else false end;
     def narrower($a; $b; $k): ($a[$k] | norm) as $x | ($b[$k] | norm) as $y
-      | if $x == null then true elif $y == null then false
-        elif ($x | type) == "array" then (($x - $y) | length) == 0
-        elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
-        else $x == $y end;
+      | if $x == null then true elif $y == null then false else nar($x; $y) end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
     | (["extensions", "extra_runtimes", "run_options", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
       (select(($n[0].packs | type) == "object" and ($n[0].packs | has("member_skills")))
@@ -720,7 +725,7 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
 }
 gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
   local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
-  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION or --runtime NAME, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
+  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME, and for a run option of a runtime qargi provider enable PROJECT --runtime NAME --option OPT; qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
 }
 
 # verify.environment (the declaration a whole-suite run is started under, lib/suite_env.py) is changed by the routes that write the answers, and

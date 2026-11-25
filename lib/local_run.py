@@ -1046,8 +1046,9 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if row is not None and "lifecycle" in row:
         prepared = store.show()["prepared"]
         request = prepared.get("request")
+    chosen, declared = [], {}                                # the options of the profile the run was prepared with, from the prepare that PR.current compares with the request
     if request is not None:
-        PR.current(request, project, runtime, cls)
+        chosen, declared = PR.current(request, project, runtime, cls)
     skills = MS.current(store, prepared, project, runtime) if prepared and request else None
     if prepared and request is None and project:
         MS.need(not MS.enabled(project), 'enabled request has no snapshot; re-prepare')
@@ -1100,9 +1101,6 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     home = plan_home(disp, run, runtime, doc)
-    chosen, declared = [], {}
-    if request is not None:                                  # the options of the profile the run was prepared with, as the project has them now (PR.current has just held them to prepare's)
-        chosen, _enabled, declared = PR.run_options(project, runtime, request["profile"], cls, comp)
     rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime, chosen, declared)
     options_line = PR.options_text(declared, chosen) if chosen else ""
     if cls == "read-only":

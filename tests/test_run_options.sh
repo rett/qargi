@@ -86,6 +86,8 @@ EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "go ahead" >"$T
   && ok "unacknowledged: an approval without the phrase is runtime-option-unacknowledged (exit 1), stores nothing and writes no audit line" || no "no phrase: rc=$rc $(cat "$T/e")"
 EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "hosted image generation runs outside the sandboxes" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "unacknowledged-as-words: a word that only starts like the phrase's last one does not carry it" || no "as words: rc=$rc $(cat "$T/e")"
+EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "unhosted image generation runs outside the sandbox" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "unacknowledged-as-words: a word that only ends like the phrase's first one does not carry it either" || no "as words, prefix: rc=$rc $(cat "$T/e")"
 EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "yes: Hosted  IMAGE
 generation runs outside the sandbox, and it may spend" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 0 ] && [ "$(opts_of g1)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } \
@@ -107,6 +109,16 @@ mkfake fakeno_opts 'del(.dispatch.run_config.options)'
 out=$(EN g1 --runtime fakeimg --option nosuchopt 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'declares no option named nosuchopt' <<<"$out" && grep -q 'image_generation' <<<"$out" && ! grep -q '^plan token' <<<"$out"; } \
   && ok "an option the definition does not declare does not exist (exit 2, no token)" || no "undeclared: rc=$rc $out"
+# a definition that provider check refuses has no plan: an empty phrase (grep -w "" matches anything), a missing phrase or set, a set outside the rule
+for bad in '.phrase = ""' 'del(.phrase)' 'del(.set)' '.set = {"features": {"newkey": true}}' '.set = {"approval_policy": "on-request"}' '.set = {"web_search": "live"}' '.set = {"sandbox_workspace_write": {"exclude_slash_tmp": false}}'; do
+  mkfake fakebad ".dispatch.run_config.options.image_generation |= ($bad)"
+  mkproj g6 '{"local":"fakebad"}'
+  out=$(EN g6 --runtime fakebad --option "$OPT" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q 'the definition of fakebad is not valid, so no plan is made for its option image_generation' <<<"$out" && ! grep -q '^plan token' <<<"$out" \
+    && ! grep -q 'Traceback' <<<"$out" && [ "$(opts_of g6)" = '"none"' ]; } && ok "an option of a malformed definition has no plan, no token and no traceback ($bad)" || no "malformed ($bad): rc=$rc $out"
+  EN g6 --runtime fakebad --option "$OPT" --plan 0000 --approved "anything at all" >"$T/o" 2>&1; rc=$?
+  { [ "$rc" = 2 ] && [ "$(opts_of g6)" = '"none"' ]; } && ok "nor an approval, whatever the words ($bad)" || no "malformed approve ($bad): rc=$rc $(cat "$T/o")"
+done
 out=$(EN g1 --runtime fakeimg --option 'Bad Name' 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "a bad option name is a usage error (exit 2)" || no "bad name: rc=$rc $out"
 mkproj g2 "$own"
@@ -151,8 +163,29 @@ python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local '{}' -
   || ok "gated_answers stores models.run_options.local.RUNTIME and no other path of it"
 python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ] \
   && ok "gated_answers stores it for the verb that passed the plan token" || no "gated_answers: $(opts_of g3)"
-"$DA" project unset g3 models.run_options >"$T/o" 2>&1; rc=$?     # a member run is refused before the gate is asked, so the refusal text is either
-{ [ "$rc" = 2 ] && grep -Eq 'not removed with project unset|not available in a member run' "$T/o" && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } && ok "project unset refuses it too" || no "unset: rc=$rc $(cat "$T/o")"
+out=$(cd "$T" && "$DA" project unset g3 models.run_options 2>&1); rc=$?      # not from inside a run directory: unset is the lead's verb, and a member run is refused before the gate is asked
+{ [ "$rc" = 2 ] && grep -q 'models.run_options is not removed with project unset: it changes what an agent may run on' <<<"$out" && grep -q 'qargi provider enable PROJECT --runtime NAME --option OPT' <<<"$out" \
+  && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } && ok "project unset refuses it too, with the gate's message" || no "unset: rc=$rc $out"
+
+# an init file that drops an option of a runtime only narrows what is stored (it is accepted), and one that adds an option or a runtime is refused
+mkproj g4 "$own" '["fakeother"]'
+python3 -I "$TOOL/lib/gated_answers.py" store g4 models.run_options.local.fakeimg '["image_generation","second_opt"]' --conf "$T/c" >/dev/null 2>&1 \
+  && python3 -I "$TOOL/lib/gated_answers.py" store g4 models.run_options.local.fakeother '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not store the options of g4"
+cp "$T/c/projects/g4.json" "$T/before4.json"
+jq '.models.run_options.local.fakeimg = ["image_generation"]' "$T/before4.json" > "$T/new4.json"
+"$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c .models.run_options "$T/c/projects/g4.json")" = '{"local":{"fakeimg":["image_generation"],"fakeother":["image_generation"]}}' ]; } \
+  && ok "project init --answers that drops one option of a runtime is accepted: it only narrows" || no "init drop an option: rc=$rc $(cat "$T/o")"
+cp "$T/before4.json" "$T/c/projects/g4.json"
+jq '.models.run_options.local.fakeimg = ["second_opt", "image_generation"]' "$T/before4.json" > "$T/new4.json"
+"$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c .models.run_options.local.fakeimg "$T/c/projects/g4.json")" = '["second_opt","image_generation"]' ]; } \
+  && ok "the same options in another order are no change: the list is compared as a set" || no "init reorder: rc=$rc $(cat "$T/o")"
+cp "$T/before4.json" "$T/c/projects/g4.json"
+jq '.models.run_options.local.fakeimg += ["third_opt"]' "$T/before4.json" > "$T/new4.json"
+"$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
+{ [ "$rc" != 0 ] && grep -q 'models.run_options' "$T/o" && grep -q 'qargi provider enable PROJECT --runtime NAME --option OPT' "$T/o" && cmp -s "$T/before4.json" "$T/c/projects/g4.json"; } \
+  && ok "project init --answers that adds an option is refused, and the message names provider enable PROJECT --runtime NAME --option OPT" || no "init add an option: rc=$rc $(cat "$T/o")"
 
 # --- project validate: the shape of the answer, and what a profile may select
 mkproj v1 "$own" null '{"p":{"base":"worker","options":["image_generation"]}}'
@@ -261,19 +294,25 @@ python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeim
 drift "the project enabling an option after prepare (the list changed)"
 prep d1 --slug d1b --profile imgs
 { [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } || no "d1b: rc=$PREP_RC $PREP"
-python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '[]' --conf "$T/c" >/dev/null 2>&1
+# the verb that stores the list refuses an answers file in which a profile selects what is not enabled, so the file is edited by hand
+jq '.models.run_options.local.fakeimg = []' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
+drift "the project dropping the option while the profile still selects it (the list alone changed)"
+jq '.models.run_options.local.fakeimg = ["image_generation"]' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
+prep d1 --slug d1b2 --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } || no "d1b2: rc=$PREP_RC $PREP"
 jq '.profiles.imgs.options = []' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
-drift "the project dropping the option and the profile its key (what a run was prepared with is gone)"
-python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+drift "the profile dropping its key while the project keeps the option enabled (the selection alone changed)"
+jq '.profiles.imgs.options = ["image_generation"]' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
 prep d1 --slug d1c --profile plain
 jq '.profiles.plain.options = ["image_generation"]' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
 drift "the profile gaining the key after prepare (the selection changed)"
 jq '.profiles.plain |= del(.options)' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
 prep d1 --slug d1d --profile imgs
 python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
-jq '.dispatch.run_config.options.image_generation.set.features.image_generation = true | .dispatch.run_config.options.image_generation.note = "edited"' "$TOOL/lib/providers/fakeimg.json" > "$T/fakeimg.json" \
+jq '.dispatch.run_config.options.image_generation.phrase = "hosted image generation is edited"' "$TOOL/lib/providers/fakeimg.json" > "$T/fakeimg.json" \
   && mv "$T/fakeimg.json" "$TOOL/lib/providers/fakeimg.json"
-drift "the definition's option edited after prepare (its hash changed)"
+python3 -I "$TOOL/lib/provider.py" check fakeimg >/dev/null 2>&1 || no "the edited definition is no longer valid"
+drift "the definition's option edited after prepare: its phrase, which is part of the hashed definition"
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 're-prepare' <<<"$out"; } && ok "drift: a dry run refuses as well" || no "drift dry: rc=$rc $out"
 

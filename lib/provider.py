@@ -1235,7 +1235,7 @@ OPTION_CLASSES = ("write",)        # a run option is for a write run only: a rea
 
 
 def _option_set_problems(where, node, base, trail, root_parts):
-    """The leaves of an option's `set`: each is a key the baseline already has, whose baseline value is a leaf of the same type, with another value."""
+    """The leaves of an option's `set`: each is a key the baseline already holds as false, set to true; nothing else."""
     bad = []
     for k, v in node.items():
         here = trail + [k]
@@ -1256,10 +1256,8 @@ def _option_set_problems(where, node, base, trail, root_parts):
                 bad.append("%s: %s is an object where the baseline holds %s" % (where, shown, _show(base[k])))
             else:
                 bad += _option_set_problems(where, v, base[k], here, root_parts)
-        elif isinstance(base[k], dict) or type(v) is not type(base[k]):
-            bad.append("%s: %s is %s where the baseline holds %s: an option sets a value of the same type" % (where, shown, _show(v), _show(base[k])))
-        elif v == base[k]:
-            bad.append("%s: %s is %s, which is what the baseline holds already" % (where, shown, _show(v)))
+        elif base[k] is not False or v is not True:
+            bad.append("%s: %s is %s where the baseline holds %s: an option only turns on a setting the baseline holds false" % (where, shown, _show(v), _show(base[k])))
     return bad
 
 
@@ -2913,6 +2911,10 @@ def option_plan(project, name, option, verb, conf=None, root=None, library=None)
     if option not in declared:
         out["refusal"] = "the definition of %s declares %s (dispatch.run_config.options: %s); an option that is not declared does not exist (qargi provider show %s)" % (
             name, "no option named %s" % option, ", ".join(sorted(declared)) or "none", name)
+        return out
+    bad = run_config_problems(_dict(doc.get("dispatch")), _dict(doc.get("resources")))     # a definition that provider check refuses has no plan: its option may lack a key or a phrase
+    if bad:
+        out["refusal"] = "the definition of %s is not valid, so no plan is made for its option %s: %s (qargi provider check %s)" % (name, option, bad[0], name)
         return out
     o = declared[option]
     out["new"] = cur + [option]

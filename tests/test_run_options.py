@@ -11,6 +11,7 @@ import hermetic  # noqa: F401
 import copy
 import json
 import os
+from unittest import mock
 from pathlib import Path
 import sys
 import unittest
@@ -105,16 +106,57 @@ class RunOptions(unittest.TestCase):
         again = self.binding("--profile", "imgs")
         self.assertEqual(again, first)
 
-    def test_the_request_of_a_profile_that_selects_nothing_does_not_know_the_options_of_the_project(self):
+    def test_a_profile_that_selects_nothing_prints_no_run_options_line_though_the_project_enabled_one(self):
         self.option_runtime()
         self.profiles(imgs={"options": ["img"]}, plain={})
         self.enable()
-        self.prepare("--profile", "plain")
-        plain = self.request()
-        self.assertEqual(plain["profile"], "plain")
+        out = self.prepare("--profile", "plain")
+        self.assertEqual(self.request()["profile"], "plain")
+        self.assertNotIn("RUN_OPTIONS", out)
         out = self.prepare("--profile", "imgs")
+        self.assertEqual(self.request()["profile"], "imgs")
         self.assertIn("RUN_OPTIONS=img (hosted, outside the sandbox, may spend)\n", out)
-        self.assertNotIn("RUN_OPTIONS", self.prepare("--profile", "plain"))
+
+    def test_what_prepare_computed_is_what_local_run_and_local_prepare_act_on(self):
+        import contextlib
+        import io
+        PR = C.R.PR
+        self.option_runtime()
+        self.profiles(imgs={"options": ["img"]}, plain={})
+        self.enable()
+        (self.conf / "agents.json").write_text("{}\n")
+        request = PR.prepare("demo", "cmdone", "build", "write", "imgs")
+        calls = []
+        real = PR.run_options
+
+        def counted(*args, **kw):
+            calls.append(args[2])
+            return real(*args, **kw)
+        # current() hands over the options of the prepare it compared with the request, and reads them once: nothing reads the answers a second time
+        with mock.patch.object(PR, "run_options", counted):
+            chosen, declared = PR.current(request, "demo", "cmdone", "write")
+        self.assertEqual((chosen, list(declared), calls), (["img"], ["img"], ["imgs"]))
+        self.assertEqual(declared["img"]["set"], {"features": {"img": True}})
+        # a profile that selects nothing hands over none
+        plain = PR.prepare("demo", "cmdone", "build", "write", "plain")
+        self.assertEqual(PR.current(plain, "demo", "cmdone", "write")[0], [])
+        # the options a changed answer would select are refused as drift, never handed over: the request no longer equals the prepare
+        self.profiles(imgs={"options": []}, plain={})
+        with self.assertRaises(PR.Invalid) as drift:
+            PR.current(request, "demo", "cmdone", "write")
+        self.assertIn("re-prepare", str(drift.exception))
+        self.profiles(imgs={"options": ["img"]}, plain={})
+        # local run takes them from current() and makes no read of its own; local prepare prints the line of the prepare that made its request
+        self.assertNotIn("run_options(", (C.ROOT / "lib" / "local_run.py").read_text())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(PR.main(["with-options", "demo", "cmdone", "build", "write", "imgs"]), 0)
+        got = json.loads(out.getvalue())
+        self.assertEqual(got, {"request": request, "options": "img (hosted, outside the sandbox, may spend)"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(PR.main(["with-options", "demo", "cmdone", "build", "write", "plain"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["options"], "")
 
     def test_a_run_gets_the_baseline_with_the_options_of_its_profile_applied(self):
         import tomllib
