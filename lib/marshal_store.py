@@ -654,14 +654,26 @@ class RefsBackend:
         self.remote = remote
         self.integrity = integrity
         self.member = self.R.in_member_run()
+        # a dry run (QARGI_DRY=1, exactly) reads like a member does: nothing moves the high-water mark, rewrites the observed cache or creates the lock file
+        self.dry = os.environ.get("QARGI_DRY") == "1"
+        self.persist = not (self.member or self.dry)
         self.snap = None
         self.heads = {}
         self.warned = set()
 
     # -- the cache
     def repo_lock(self, ctx):
-        os.makedirs(os.path.join(ctx.state, "features"), exist_ok=True)
-        lk = open(os.path.join(ctx.state, "features", ".refs-%s.lock" % ctx.project), "a")
+        path = os.path.join(ctx.state, "features", ".refs-%s.lock" % ctx.project)
+        if self.dry:
+            # nothing is created: the lock file is opened for reading when it exists (a shared lock waits for a writer), else there is nothing to wait for
+            try:
+                lk = open(path, "r")
+            except OSError:
+                return None
+            fcntl.flock(lk, fcntl.LOCK_SH)
+            return lk
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        lk = open(path, "a")
         fcntl.flock(lk, fcntl.LOCK_EX)
         return lk
 
@@ -681,15 +693,16 @@ class RefsBackend:
             feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads, guard.prefetch if guard else None)
             bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
             if guard:
-                view, based, bad = guard.settle(feats, done, ignored, heads, not self.member, ctx.name)
+                view, based, bad = guard.settle(feats, done, ignored, heads, self.persist, ctx.name)
                 notes = guard.notes
             else:
                 view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
                 notes = []
             # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
-            ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=not self.member)
+            ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=self.persist)
         finally:
-            lk.close()
+            if lk is not None:
+                lk.close()
         # with integrity on, a read about one feature warns about that feature only (the others are not what was asked, and a project that
         # still has unsigned records from before would repeat the same warnings on every call)
         only = ctx.name if self.integrity != "off" else None

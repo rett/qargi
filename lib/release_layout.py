@@ -9,6 +9,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release.changelog.released   the heading of a released section (default "## [{version}] - {date}"); {version} is required, {date} is optional
   release.changelog.numbered   true when the items under the unreleased heading are numbered ("12. text" or "- 12. text"; default false): feature sync and
                                feature finish then check them for duplicates (lib/changelog_numbers.py, qargi changelog renumber)
+  release.changelog.fragments  a directory (default none) whose files, other than README* and .gitkeep, are changelog fragments: `release start` counts them as notes, and `release
+                               push` and `release finish` refuse while the release branch still holds one (fold them into the changelog there, then `release fix VER --record`)
   release.version_files        other files that carry the version (a list of paths relative to the repository; default none): `release start` lists the
                                ones that do not yet contain VERSION, `release status` and `release verify` show the same check on the release branch
   release.man_pages            the manual pages whose .TH date and version the release sets (default: the man/*.1 files of the repository)
@@ -22,13 +24,17 @@ Answers, under `release` in the project's answers file (every one optional; the 
                                plan is approved and before any merge, tag or push; a non-zero exit refuses with nothing moved (default: none)
 
   release_layout.py problems REL_JSON                  the problems of those answers (a JSON object on the command line); one per line
-  release_layout.py changelog FILE VER DATE ALLOW AF [KIND]  check and rewrite the changelog for a release; exit 1 with the reason. KIND hotfix: a
+  release_layout.py changelog FILE VER DATE ALLOW AF [KIND]  check and rewrite the changelog for a release; exit 1 with the reason, exit 3 (and `empty-notes<TAB>reason` on standard output) when there are no notes. KIND hotfix: a
                                changelog with no unreleased heading, when release.changelog.unreleased carries {version}, gets the released heading, empty, above the first heading that follows the released template (else the first of that level) (it prints heading-added)
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
   release_layout.py notes-missing SECTION NOTES        print the items of the changelog section SECTION that the file NOTES does not mention (exit 1 if any)
   release_layout.py has-version FILE|- VER             exit 0 when FILE (or stdin) contains VER as a whole version (0.2.1 is not found in 0.2.10 or 10.2.1)
+  release_layout.py fragments                          reads file names (NUL separated, git ls-tree -r -z --name-only) on standard input and prints the changelog fragments: any but README* and .gitkeep (exit 1 when none)
+  release_layout.py section-empty FILE VER AF          exit 0 when the released section of VER has notes (a line that is neither blank nor a heading), 1 when it is empty, 2 when there is no such section
+  release_layout.py outside PATH...                    reads file names (NUL separated, as git diff -z prints them) on standard input and prints each one that is
+                               neither one of the PATHs nor under one (a path is matched whole, a directory by prefix); exit 1 when there is one. A rename lists both of its names
 """
 import json
 import os
@@ -38,7 +44,7 @@ import sys
 DEFAULT_UNRELEASED = "## [Unreleased]"
 DEFAULT_RELEASED = "## [{version}] - {date}"
 LAYOUT_KEYS = ("version_file", "version_files", "changelog", "man_pages", "test_command", "preflight", "hotfix_preflight", "finish_check")
-CHANGELOG_KEYS = ("unreleased", "released", "numbered")
+CHANGELOG_KEYS = ("unreleased", "released", "numbered", "fragments")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
@@ -96,6 +102,8 @@ def problems(rel):
                 p = template_problem("release.changelog.unreleased", c["unreleased"], ("version",), DEFAULT_UNRELEASED)
                 if p:
                     out.append(p)
+            if "fragments" in c and not rel_name_ok(c["fragments"]):
+                out.append("release.changelog.fragments: a directory relative to the repository (no .., no #, not starting with - or /) whose files, but README* and .gitkeep, are changelog fragments to be folded into the changelog on the release branch")
             if "numbered" in c and not isinstance(c["numbered"], bool):
                 out.append("release.changelog.numbered: true or false (true: the items under the unreleased heading are numbered; see qargi changelog)")
             if "released" in c:
@@ -212,8 +220,10 @@ def cmd_changelog(argv):
                  % (os.path.basename(path), unrel))
     body = t[m.end():][:section_end(t[m.end():], level(unrel))]
     if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
-        sys.exit("qargi: %s has nothing under '%s'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again."
-                 % (os.path.basename(path), unrel))
+        # the caller (release.sh) raises the refusal release-notes-empty and prints this as its `more:` line
+        print("empty-notes\t%s has nothing under '%s'. Fix: record the changes of this release there, add a changelog fragment (release.changelog.fragments), or pass --allow-empty-notes to release without notes, then start again."
+              % (os.path.basename(path), unrel))
+        return 3
     head = m.group(0).rstrip("\r\n")
     eol = nl if m.group(0).endswith("\n") else ""
     if "{version}" in unrel:        # the unreleased heading carries the version: it is renamed, nothing is kept
@@ -222,6 +232,31 @@ def cmd_changelog(argv):
         new = t[:m.start()] + head + nl + nl + released + eol + t[m.end():]
     open(path, "w", encoding="utf-8", newline="").write(new)
     return 0
+
+
+def cmd_section_empty(argv):
+    """FILE (- for standard input) VER AF: exit 0 when the released section of VER has notes (a line that is not blank and not a heading), 1 when it is empty, 2 when the changelog has no such section."""
+    path, ver, af = argv[:3]
+    _, rel = templates(load_release(af))
+    t = sys.stdin.buffer.read().decode("utf-8", "replace") if path == "-" else open(path, encoding="utf-8", errors="replace").read()
+    m = re.search(r"^" + heading_re(rel, ver) + r"[^\n]*(?:\n|\Z)", t, re.M)
+    if not m:
+        return 2
+    body = t[m.end():][:section_end(t[m.end():], level(rel))]
+    return 0 if [l for l in body.split("\n") if l.strip() and not l.startswith("#")] else 1
+
+
+def cmd_fragments(argv):
+    """The names on standard input (NUL separated: git ls-tree -r -z --name-only) that are changelog fragments: any file but README* and .gitkeep. Printed one to a line; exit 1 when there is none."""
+    out = []
+    for raw in sys.stdin.buffer.read().split(b"\0"):
+        name = raw.decode("utf-8", "surrogateescape")
+        base = name.rsplit("/", 1)[-1]
+        if name and not base.startswith("README") and base != ".gitkeep":
+            out.append(name)
+    for name in out:
+        print(name)
+    return 0 if out else 1
 
 
 def cmd_has_section(argv):
@@ -332,6 +367,49 @@ def cmd_th_empty(argv):
     return bad
 
 
+FILE_MODES = ("100644", "100755")
+
+
+def cmd_outside(argv):
+    """[--dir DIR]... [PATH]...: the entries of `git diff-tree -r --no-renames --raw -z` on standard input that the cut does not cover. A path is covered when it is a
+    PATH (the whole name: `VERSION/x` is not `VERSION`) or lies under a DIR (a directory, by prefix). An entry is outside too when it is a symlink or a gitlink on either
+    side (mode 120000, 160000), or when its mode changes (including the executable bit). The names are printed one to a line; exit 1 when there is one."""
+    paths, dirs, i = [], [], 0
+    while i < len(argv):
+        if argv[i] == "--dir" and i + 1 < len(argv):
+            dirs.append(argv[i + 1].rstrip("/"))
+            i += 2
+            continue
+        paths.append(argv[i].rstrip("/"))
+        i += 1
+    paths = [p for p in paths if p]
+    dirs = [d for d in dirs if d]
+    bad = []
+    toks = sys.stdin.buffer.read().split(b"\0")
+    i = 0
+    while i < len(toks):
+        meta = toks[i]
+        i += 1
+        if not meta.startswith(b":"):
+            if meta:   # not the raw format: nothing can be judged, so whatever it names is outside
+                bad.append(meta.decode("utf-8", "surrogateescape"))
+            continue
+        fields = meta[1:].decode("ascii", "replace").split()
+        if i >= len(toks):
+            bad.append("(unreadable entry)")
+            break
+        name = toks[i].decode("utf-8", "surrogateescape")
+        i += 1
+        old, new = (fields[0], fields[1]) if len(fields) >= 2 else ("?", "?")
+        kinds_ok = all(m in FILE_MODES or m == "000000" for m in (old, new)) and (old == new or "000000" in (old, new))
+        covered = name in paths or any(name.startswith(d + "/") for d in dirs)
+        if not (covered and kinds_ok):
+            bad.append(name)
+    for name in bad:
+        print(name)
+    return 1 if bad else 0
+
+
 def main(argv):
     if not argv:
         print(__doc__, file=sys.stderr)
@@ -357,6 +435,12 @@ def main(argv):
         return cmd_notes_missing(rest)
     if cmd == "has-version" and len(rest) == 2:
         return cmd_has_version(rest)
+    if cmd == "outside":
+        return cmd_outside(rest)
+    if cmd == "fragments":
+        return cmd_fragments(rest)
+    if cmd == "section-empty" and len(rest) == 3:
+        return cmd_section_empty(rest)
     print("qargi: release_layout.py: unknown command or wrong arguments: %s" % cmd, file=sys.stderr)
     return 2
 

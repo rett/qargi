@@ -13,8 +13,10 @@ JSON pointers that pick the last assistant turn and add up its input, cache-read
 lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
 definition's single window, which is only assumed. An assumed window is a guess, so no line shows a percentage of it and none advises a
 compact: each prints the tokens in use and says "window unknown; set lead.context_window" (when the tokens exceed the guess it adds that
-they do, since the real window is larger). --json says which window in window_source: "answer", "model" or "assumed"; while it is assumed
-percent is null (the window is the guess, kept for reference) and window_exceeded says whether the tokens are beyond it. Nothing is written;
+they do, since the real window is larger). A window a model id gave is taken for an assumed one as soon as the tokens exceed it: the table is
+wrong for that id, so it is no more than a guess. --json says which window in window_source: "answer", "model" or "assumed"; while it is assumed
+percent is null (the window is the guess, kept for reference) and window_exceeded says whether the tokens are beyond it (only the answer is
+never doubted). Nothing is written;
 a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
@@ -235,6 +237,8 @@ def measure(a, conf):
         out["tokens"], out["model"] = t
         if not out["window"]:
             out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
+        if out["window_source"] == "model" and t[0] > out["window"]:
+            out["window_source"] = "assumed"                              # tokens beyond the window a model id gave: the table is wrong for this id, so it is a guess too
         out["window_exceeded"] = out["window_source"] == "assumed" and t[0] > out["window"]
         out["percent"] = None if out["window_source"] == "assumed" else round(t[0] * 100.0 / out["window"], 1)     # a share of a guess is not a fact
         out["known"] = True

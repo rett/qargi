@@ -196,6 +196,40 @@ def show_topic(t):
     return "\n\n".join([b(title)] + [wrap(p) for p in paras])
 
 
+def refusal_codes():
+    """The catalogue of refusals (lib/refusals.json, read by lib/refusal.py): {code: entry}."""
+    import refusal as R
+    return R.load()["codes"]
+
+
+def show_refusal(args):
+    """qargi help refusal [CODE]: the topic and the list of the codes, or the entry of one code (rule, why, class, exit, status, fields, message, next, sites). An unknown code exits 2."""
+    codes = refusal_codes()
+    if not args:
+        out = [show_topic("refusal"), "", b("Codes") + "  (qargi help refusal CODE)"]
+        w = max(len(c) for c in codes) + 2
+        for c, e in codes.items():
+            out.append(fill("(%s, exit %d, %s) %s" % (e["class"], e["exit"], e["status"], e["rule"]), width(), "  " + c.ljust(w), "  " + " " * w))
+        return "\n".join(out), 0
+    if len(args) > 1 or args[0] not in codes:
+        return "qargi: no refusal code '%s'.%s qargi help refusal lists the codes." % (" ".join(args), " One code at a time." if len(args) > 1 else ""), 2
+    c, e = args[0], codes[args[0]]
+    nxt = e["next"]
+    out = [b(c) + "  (%s)" % e["status"], "",
+           wrap("Rule: " + e["rule"].rstrip(".") + ".", 2),
+           wrap("Why: " + e["why"].rstrip(".") + ".", 2),
+           "  Class: %s    Exit: %d" % (e["class"], e["exit"]),
+           wrap("Fields: " + (", ".join("%s (%s)" % (k, v) for k, v in e["fields"].items()) or "none"), 2),
+           wrap("Message: " + e["message"], 2),
+           wrap("Next, for a lead: " + nxt["lead"], 2)]
+    if nxt["host"] != nxt["lead"]:
+        out.append(wrap("Next, in the owner's own session (host): " + nxt["host"], 2))
+    if e.get("sites"):
+        n = len(e["sites"])
+        out.append(wrap("Printed at %d site%s, not raised by one verb: the sentences are in docs/reference/refusals.md and, for a guard code, qargi help guard." % (n, "" if n == 1 else "s"), 2))
+    return "\n".join(out), 0
+
+
 def show(args):
     args = [a for a in args if a not in ("-h", "--help")]
     if args and args[0] == "--man":
@@ -205,6 +239,14 @@ def show(args):
         print(show_overview())
         return 0
     name = args[0]
+    if name == "refusal":
+        try:
+            text, rc = show_refusal(args[1:])
+        except (OSError, ValueError, KeyError) as e:
+            print("qargi: the catalogue of refusals cannot be read (%s)" % e, file=sys.stderr)
+            return 1
+        print(text, file=sys.stderr if rc else sys.stdout)
+        return rc
     if name in C.TOPICS:
         print(show_topic(name))
         return 0
@@ -275,7 +317,7 @@ def man(date_from=None):
         w(".TP")
         w('.BI "%s " "%s"' % (esc(op["flag"]), esc(op["arg"])) if op["arg"] else ".B " + esc(op["flag"]))
         w(esc(op["help"] + "."))
-    for t in ("concepts", "approvals", "guard", "naming", "memory-stores", "push"):
+    for t in ("concepts", "approvals", "guard", "refusal", "naming", "memory-stores", "push"):
         title, paras = C.TOPICS[t]
         w(".SH " + t.upper())
         for i, p in enumerate(paras):
@@ -523,7 +565,7 @@ def field_values(name):
     return C.MODELS if name == "model" else FIELD_VALUES.get(name)
 # answers a project may hold that are not there yet, so a key can be typed before it exists
 EXTRA_KEYS = ("lead.model", "lead.effort", "lead.push.local", "lead.push.cloud", "lead.push.branch_pattern", "lead.push.merge",
-              "lead.push.release", "lead.context_window", "lead.compact_advice_pct", "budget_cents", "test_command", "gates", "backlog.file", "release.version_file", "release.version_files", "release.changelog.unreleased", "release.changelog.released", "release.changelog.numbered",
+              "lead.push.release", "lead.context_window", "lead.compact_advice_pct", "budget_cents", "test_command", "gates", "backlog.file", "release.version_file", "release.version_files", "release.changelog.unreleased", "release.changelog.released", "release.changelog.numbered", "release.changelog.fragments",
               "review.scrub", "review.trailer_policy", "review.reject_trailers", "backlog.archive", "backlog.section", "ci.not_gates", "methodology_accepted", "release.man_pages", "release.test_command", "release.preflight", "release.hotfix_preflight", "release.finish_check", "release.assets", "release.assets_command", "release.after_steps", "release.notes_file",
               "env.doctor_command", "env.bootstrap_command", "env.dry_run_command", "env.known_failures", "verify.environment") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "tools", "skills", "push.mode"))
 
@@ -646,6 +688,11 @@ def _candidates(cur, prev):
     if prev[0] == "help":
         if len(prev) == 1:
             return by_type("help", prev)
+        if prev[1] == "refusal":
+            try:
+                return [(c, e["rule"]) for c, e in refusal_codes().items()] if len(prev) == 2 else []
+            except (OSError, ValueError, KeyError):
+                return []
         vs = verbs_of(prev[1]) if prev[1] in C.COMMANDS else None
         return [(v, vs[v]["summary"]) for v in vs] if vs and len(prev) == 2 else []
     if prev[0] not in C.COMMANDS:
@@ -755,7 +802,8 @@ def resolve(argv):
                   ((" Projects: " + ", ".join(have)) if have else " No project is stored yet: qargi help project."), file=sys.stderr)
             return None
         return argv
-    if pk is not None and len(pos) < len(required):
+    optional_after = pk is not None and any(len(a) > 2 and a[2] for a in args[pk + 1:])
+    if pk is not None and (len(pos) < len(required) or (optional_after and len(pos) < len(args))):    # an optional word after the project (provider enable PROJECT [EXTENSION]): one word that is no stored project is the word, the project is implied
         given = pk < len(pos) and os.path.exists(os.path.join(conf(), "projects", out[pos[pk]] + ".json"))
         if not given:
             out.insert(pos[pk] if pk < len(pos) else (pos[-1] + 1 if pos else 0), P)

@@ -33,12 +33,18 @@ refusal changes nothing.
    - A member's guard refuses `project set` of both answers, as the command is the lead's. A member's own `review check` (the
      member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints
      `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
-   - Then `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, and `qargi branch prune` to delete merged `agent/*`
-     branches. Run `qargi local verify RUN` on every returned run before merging any of them. Verify and clean accept and name
+   - Then `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, and `qargi branch prune --agents` to delete merged `agent/*`
+     branches (at once, no token: see Pruning merged branches). Run `qargi local verify RUN` on every returned run before merging any of them. Verify and clean accept and name
      qargi's own moves (`develop moved by qargi feature finish`, a fetch, the parking branch fast-forwarded to develop), so a run
      whose work is merged need not be cleaned before the next `feature finish`.
    - A branch you make or push yourself while a run is out is accepted once you journal it with
-     `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained). The harness's own
+     `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained). A branch you delete with
+     git (`git branch -D`, `git push --delete`) is journaled with `qargi ref record --deleted BRANCH OLD --why "<reason>"` (OLD is the
+     commit it was at; `origin/BRANCH` names a branch of origin, asked live; a long-lived branch is refused); a run prepared before then
+     verifies and cleans with the deletion named as `qargi ref deleted`. A branch deleted and made again with the same name is
+     `ref record --deleted`, then `ref note`, whose line starts at absent. A branch you reword by hand with the same tree
+     is `qargi ref record --rewrite BRANCH OLD NEW --why "<reason>"`, for an `agent/*` branch and also for a `release/*` or `hotfix/*`
+     branch that origin does not have yet (asked live), never a long-lived or a feature branch. The harness's own
      `worktree-bridge-*` branches are left out, as are the refs you declare a runtime's own with the answer `runs.owned_refs`
      (glob patterns such as `refs/heads/foo-*`; verify and clean name the pattern).
    - The answers a run is checked and applied by (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
@@ -115,7 +121,7 @@ refusal changes nothing.
    (no ref here or on origin, no tag, no record). It is off unless set, and a member may not set it (`project set` refuses every
    `release.*` answer). To fix a failed check, `qargi release
    fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
-   pull request.
+   pull request; `release fix VERSION --record` journals the commits first and asks nothing (item 6).
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
    `qargi release publish TAG` creates the release from the changelog section (plan and token). The files to attach can be built
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
@@ -163,10 +169,38 @@ refusal changes nothing.
    runs only when what the plan fixed still holds: `start` finds its own plan as it was frozen, `push` the branch where `start` left it,
    `finish` the branch where `push` left it (the head the checks ran on), master and the second target as planned and `--keep` as planned,
    `site` the tag on the commit `finish` tagged. Otherwise it is refused before anything moves, and the step
-   is run with its own plan and approval (a fix committed after `start` is pushed that way, with `release fix --push`); the cut
+   is run with its own plan and approval (a fix committed after `start` that changes a path outside `fix_paths`, below, is pushed
+   that way, with `release fix --push`); the cut
    records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
    `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
    steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
+   A fix after `start`, and what the cut's approval covers of it:
+   - `qargi release fix VERSION --record` journals the commits you made with git on the release (or hotfix) branch. It is a record of
+     fact, like `ref note`: the lead's (exit 2 in a member run), with no plan, no token and no approval, and exclusive with `--push`,
+     `--plan` and `--approved` (a usage error, exit 2). A run prepared before the commits then verifies. The head of the branch must
+     follow the cut's anchor, the latest of the heads recorded for `fix`, `push` and `start`, along first parents, else it is refused
+     with `cut-branch-moved`. It then says where the commits stand.
+   - `release plan` prints `fix_paths` and keeps them in the cut record: the paths a fix may change and still go on under the cut's
+     approval. They come from the project's answers: the directory of `release.changelog.fragments` (matched by prefix) when set,
+     `CHANGELOG.md`, `release.version_file` (default `VERSION`, unless `none`) and each of `release.version_files` (matched by their whole
+     name). `docs/` is outside, and so are the manual pages: a manual page is generated from the code. A rename counts on both sides.
+   - Every commit since the anchor inside `fix_paths`: `--record` records `fix` in the cut and prints `inside the cut: push goes on under
+     its approval`; `release push` (or `release fix VERSION --push`) with the cut's token then passes and records `fix` and `push`. A
+     lead who never ran `--record` gets the same answer: push makes the same catch-up and the same check.
+   - A commit that changes any other path: `--record` journals it, records nothing in the cut, prints the notice `cut-fix-outside`
+     (`outside the cut: push will take its own plan`) and lists the commits that leave the paths (three and `+N`), exit 0. `release
+     push --plan CUT` is then refused with `cut-fix-outside` and the same list; `qargi release push VERSION` without the cut's token
+     has its own plan, which lists every commit since the anchor, and takes the owner's approval.
+   - A push under its own approval records the push in the cut (the head and `own_plan`, its token) and leaves the cut live. The anchor
+     is now the pushed head, so the commits before it are no longer counted, and a later fix inside `fix_paths` goes on under the cut
+     again.
+   - The answer `release.changelog.fragments` (a directory, relative to the repository; lead only) is for a project whose notes are
+     files: a fragment is any file in it but `README*` and `.gitkeep`. With it `release start` counts the fragments at the base as
+     notes (no `--allow-empty-notes`; the plan says how many are to be folded on the branch), and `release push` and `release finish`
+     refuse with `release-fragments-unfolded` while the directory at the branch head holds a fragment, or the released section of
+     `CHANGELOG.md` has no notes, is missing, or `CHANGELOG.md` is missing. Fold them in the fix worktree (`release fix VERSION`
+     makes it), commit, then `release fix VERSION --record`: the fold is inside `fix_paths`. Without the answer nothing changes, and
+     an empty unreleased section refuses with `release-notes-empty`, which names `--allow-empty-notes` and the answer.
    The approval is bound to the lead that recorded it: the record keeps that lead's identity, which is `QARGI_LEAD` when it is set
    and otherwise `user@host` (the marshal verbs also honour `--as`; `release` takes no `--as`), and every step under the cut,
    including a cut-off `finish` that resumes, is refused before anything moves when run by another lead, when the identity cannot
@@ -191,6 +225,24 @@ with `--resolved`. The second merge of `release finish` takes the master merge c
 names the tag (`merging tag VERSION (the master merge commit abc1234) conflicts`); that commit is kept in a `.master` file beside the
 worktree and a run with `--resolved` uses it only when it is a merge of exactly the current master and the release branch head
 (any other file is removed and the merge made anew).
+
+## A dry run before asking the owner
+
+A token dies when what it hashed changes, and a refusal found after the owner approved costs a second approval. So the verbs that
+are most often refused late take `--dry-run`: `release start`, `release push`, `release fix VERSION --push` (only with `--push`;
+without it `--dry-run` is a usage error, exit 2), `feature finish` and `branch prune`. `QARGI_DRY=1` is the switch the scripts use
+inside the verb; do not set it yourself.
+
+- A dry run changes nothing: no ref, no push, no pull request, no audit line, no lock, no file in the state directory (the temporary
+  worktree in which `release start` builds its bump commit is removed again, also when the run is interrupted). A helper that would
+  write, or a git or `gh` command that is not a read (`gh api` included), ends it with exit 70, a defect of the verb.
+- It prints the plan with the token of the plain plan and, last, `invalidated by: ...`, the labels of the plan. With `--plan TOKEN`
+  it compares the token with the plan as it is now (`plan-stale` names the labels that moved) and prints each other refusal the
+  apply would meet in the normal format, `qargi-refusal/1` line first with `dry=1` first in its `detail`. The first refusal ends it,
+  as it ends the apply, except a check that is independent of the others, so several may be listed. Origin is asked with
+  `git ls-remote` and never fetched.
+- The last line of standard output is `dry-run: N would refuse; nothing was changed`, and the exit status is what the apply would
+  exit with: 0, or 1 when N is not 0.
 
 ## Detached branches
 
@@ -243,6 +295,15 @@ feature; a branch that only sits at the tip of develop or of a feature was never
 develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
 the reason. A remote branch is deleted as a lease on the tip the plan showed.
+
+`qargi branch prune --agents [--dry-run]` is the exception to the gate: it deletes the merged `agent/*` branches of the repository at
+once, with no plan token and no approval, because the tip of each stays reachable from the merge that took it in. It prints what it
+deletes (each branch, the commit and the branch it was merged into, the worktree qargi made that goes with it, the commits made with
+git that the journal takes in, and the branches kept with the reason); for each branch it first journals the commits made with git on
+it, so a run prepared before them still verifies, deletes it only while it is at the tip it printed, journals the deletion and writes
+one audit line. It is the lead's (a member run, and a call nested in an approved apply, are refused, exit 2). It is local only:
+`--agents` with `--remote`, `--plan` or `--approved` is a usage error (exit 2), and the `feature/*` branches and the branches on origin
+stay behind the plan and the approval above. With `--dry-run` it prints the same lines and deletes nothing.
 
 ## Following an upstream repository
 

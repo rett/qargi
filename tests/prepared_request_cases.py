@@ -337,6 +337,48 @@ class PreparedRequests(unittest.TestCase):
         self.record.write_bytes(A.encode(bad))
         self.assertIn("re-prepare", self.cmd("local", "run", self.run, "--dry-run", code=2))
 
+    def direct(self, runtime, role, cls, selector=None):
+        """prepared_request.prepare() in this process: qargi has not run, so the file of the members (which agent for reads) is made here."""
+        (self.conf / "agents.json").write_text("{}\n")
+        return R.PR.prepare("demo", runtime, role, cls, selector)
+
+    def enable_second_runtime(self):
+        """cmdtwo becomes an extra runtime of the project (its fast tier is another model), and a profile names it."""
+        doc = copy.deepcopy(self.definitions["cmdtwo"])
+        doc["models"]["tiers"]["fast"]["model"] = "fake-fast-two"
+        self.install("cmdtwo", doc)
+        self.answers["models"]["extra_runtimes"] = {"local": ["cmdtwo"]}
+        self.answers["profiles"] = {"quick": {"base": "worker", "tier": "fast", "effort": "low", "runtime": "cmdtwo"}}
+        self.save_answers()
+
+    def test_request_of_the_own_runtime_is_the_request_it_was_without_extras(self):
+        before = self.direct("cmdone", "build", "write")
+        self.enable_second_runtime()
+        self.assertEqual(self.direct("cmdone", "build", "write"), before)
+        R.PR.current(before, "demo", "cmdone", "write")    # a run prepared before the enable is not stale
+
+    def test_request_of_an_extra_runtime_is_bound_to_it_and_drifts_when_it_is_disabled(self):
+        own = self.direct("cmdone", "build", "write")
+        self.enable_second_runtime()
+        extra = self.direct("cmdtwo", "build", "write", "quick")
+        self.assertEqual((extra["runtime"], extra["model"], extra["effort"], extra["selector"]), ("cmdtwo", "fake-fast-two", "low", "quick"))
+        for key in ("runtime", "policy"):
+            self.assertNotEqual(extra["binding"][key], own["binding"][key])
+        R.PR.current(extra, "demo", "cmdtwo", "write")
+        # the task's own runtime beats the runtime the profile names, and the tier is resolved again in it
+        chosen = self.direct("cmdone", "build", "write", "quick")
+        self.assertEqual((chosen["runtime"], chosen["model"], chosen["profile"]), ("cmdone", "fake-fast", "quick"))
+        self.assertEqual(chosen["binding"]["runtime"], own["binding"]["runtime"])
+        self.answers["models"].pop("extra_runtimes")
+        self.save_answers()
+        with self.assertRaises(R.PR.Invalid) as drift:
+            R.PR.current(extra, "demo", "cmdtwo", "write")
+        self.assertIn("runtime-not-enabled", str(drift.exception))
+        self.assertNotIn("qargi-refusal/1", str(drift.exception))
+        self.assertIn("re-prepare", str(drift.exception))
+        with self.assertRaises(R.PR.Invalid):
+            self.direct("cmdtwo", "build", "write")
+        R.PR.current(own, "demo", "cmdone", "write")
 
 
 if __name__ == "__main__":

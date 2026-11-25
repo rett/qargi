@@ -319,6 +319,41 @@ class Import(Env):
         self.assertNotIn("would add or change", r.stderr)
         self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"], {"provider": "claude-code", "extensions": ["kept-ext"]})
 
+    def test_the_archive_cannot_add_an_extra_runtime(self):
+        # models.extra_runtimes is stored by qargi provider enable|disable only (a plan, a token, the reads phrase, an audit line); an archive is untrusted data
+        src = os.path.join(self.conf, "projects", "alpha.json")
+        doc = jd(src)
+        doc["models"] = {"provider": "claude-code", "extra_runtimes": {"local": ["fakecx", "other"]}}
+        self.write(src, json.dumps(doc))
+        a = self.export()
+        t, conf, state, fake = self.target()
+        # a machine that stores none: the key is left out, the rest of the answers comes in
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"], {"provider": "claude-code"})
+        self.assertIn("models.extra_runtimes", r.stderr)
+        self.assertIn("qargi provider enable|disable|accept", r.stderr)
+        # a machine that stores one runtime: another is not added, the stored list stays
+        own = {"project": "alpha", "models": {"provider": "claude-code", "extra_runtimes": {"local": ["fakecx"]}}, "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["extra_runtimes"], {"local": ["fakecx"]})
+        self.assertIn("models.extra_runtimes", r.stderr)
+        # the same list needs no note; dropping an entry is allowed
+        own["models"]["extra_runtimes"] = {"local": ["fakecx", "other"]}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        doc["models"]["extra_runtimes"] = {"local": ["fakecx"]}
+        self.write(src, json.dumps(doc))
+        a2 = self.export("b.tar.gz")
+        r = self.run_import(a2, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["extra_runtimes"], {"local": ["fakecx"]})
+
     def test_the_archive_cannot_set_the_answers_a_member_may_not_set(self):
         # ci.not_gates, methodology_accepted, review.reject_trailers, backlog.archive and backlog.section are refused to a member by the guard; an archive is untrusted data too
         src = os.path.join(self.conf, "projects", "alpha.json")

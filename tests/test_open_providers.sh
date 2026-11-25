@@ -282,7 +282,7 @@ guard() { # CLASS TOOL KEY VALUE: one call through the hook; the payload is made
 }
 deny() { # CLASS TOOL KEY VALUE WORDS: exit 0, a JSON deny on stdout whose reason has WORDS
   local out rc; out=$(guard "$1" "$2" "$3" "$4" 2>"$T/gerr"); rc=$?
-  [ $rc = 0 ] && [ ! -s "$T/gerr" ] && jq -e --arg w "$5" '.decision == "deny" and (.reason | startswith("qargi guard: ")) and (.reason | contains($w))' <<<"$out" >/dev/null
+  [ $rc = 0 ] && [ ! -s "$T/gerr" ] && jq -e --arg w "$5" '.decision == "deny" and (.reason | test("^(\\[[a-z0-9-]+\\] )?qargi guard: ")) and (.reason | contains($w))' <<<"$out" >/dev/null
 }
 pass() { local out rc; out=$(guard "$1" "$2" "$3" "$4" 2>"$T/gerr"); rc=$?; [ $rc = 0 ] && [ -z "$out" ] && [ ! -s "$T/gerr" ]; }
 deny '' run_shell cmd "git push origin main" "Agents never push" && ok "fakemd guard: git push is a JSON deny with exit 0" || no "guard push"

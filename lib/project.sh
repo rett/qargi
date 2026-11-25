@@ -85,7 +85,7 @@ provision_reads() {
     repo|repo.url|repo.long_lived) return 0;;                                   # the lead's teams block names the repository and its branches
     teams|teams.*|roles|roles.*|profiles|profiles.*) return 0;;                 # members, their model, effort, packages, skills, tools, packs, base branch
     budget_cents|memory|memory.memory_store|memory.reference_store) return 0;;  # the budget and the stores to attach
-    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
+    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.extra_runtimes|models.extra_runtimes.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
     lead|lead.model|lead.effort|lead.push|lead.push.*) return 0;;               # the lead agent, and the push rules in its prompt and tools
     packs|packs.none) return 0;;                                                # skills and tools render by what is linked
     cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
@@ -101,9 +101,10 @@ gated_path() {
     packs) if jq -e 'type == "object" and has("member_skills")' >/dev/null 2>&1 <<<"$2"; then
              echo "qargi packs member-skills PROJECT --enable|--disable"; return 0; fi;;
     models.extensions|models.extensions.*) echo "qargi provider enable PROJECT EXTENSION (and disable)"; return 0;;
+    models.extra_runtimes|models.extra_runtimes.*) echo "qargi provider enable PROJECT --runtime NAME (and disable)"; return 0;;
     models.accept_no_barrier|models.accept_no_barrier.*) echo "qargi provider accept NAME --surface S --no-barrier"; return 0;;
-    models) if jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
-              echo "qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)"; return 0; fi;;
+    models) if jq -e 'type == "object" and (has("extensions") or has("extra_runtimes") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
+              echo "qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME, qargi provider accept NAME --surface S --no-barrier (models.extensions, models.extra_runtimes and models.accept_no_barrier are set by them)"; return 0; fi;;
   esac
   return 1
 }
@@ -161,6 +162,24 @@ elif isinstance(pname, dict):
         else:
             d = _runtime(nm.strip(), sf)
             if d: Ds.append(d)
+# models.extra_runtimes.local: the other runtimes of the local surface the project may start members on (qargi provider enable PROJECT --runtime NAME).
+# The shape is checked here; whether each can be used (a runtime that exists, sealed, local, started by a command) changes outside the answers and
+# is a finding of no_provider, so a pack that is edited later never makes the project invalid
+_ex = _m.get("extra_runtimes") if isinstance(_m, dict) else None
+if _ex is not None:
+    if not isinstance(_ex, dict):
+        bad.append("models.extra_runtimes: an object like {local: [runtime names]} (qargi provider enable PROJECT --runtime NAME)")
+    else:
+        bad.extend("models.extra_runtimes.%s: not a surface with extra runtimes (only local)" % k for k in _ex if k != "local")
+        _lst = _ex.get("local")
+        if _lst is not None and not (isinstance(_lst, list) and all(isinstance(x, str) and provider.NAME_RE.match(x) for x in _lst)):
+            bad.append("models.extra_runtimes.local: a list of runtime names, each by its own name (qargi provider enable PROJECT --runtime NAME)")
+        elif isinstance(_lst, list):
+            try: _own = provider.resolve_project(c, "local")[0]
+            except provider.ProviderError: _own = None
+            for _i, _x in enumerate(_lst):
+                if _x in _lst[:_i]: bad.append("models.extra_runtimes.local: %s is listed twice" % _x)
+                if _x == _own: bad.append("models.extra_runtimes.local: %s is the project's own runtime, not an extra one (qargi provider disable PROJECT --runtime %s)" % (_x, _x))
 seen = set(); Ds = [d for d in Ds if not ((d["provider"], d["surface"]) in seen or seen.add((d["provider"], d["surface"])))]
 if Ds:
     _pats = [re.compile(d["model_pattern"]) for d in Ds]
@@ -363,6 +382,9 @@ if isinstance(r, dict):
     import tools as _tools
     bad.extend(_tools.conflicts(r))
 prof = c.get("profiles")
+try: _own_local = provider.resolve_project(c, "local")[0]
+except provider.ProviderError: _own_local = None
+_extra_local = provider.extra_runtimes_of(c)
 if prof is not None:
     import os
     md = json.load(open(os.path.join(sys.argv[3], "model-defaults.json")))
@@ -378,8 +400,8 @@ if prof is not None:
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", pn): bad.append("%s: a lower-case name (letters, digits, hyphen; at most 31 characters)" % p); continue
         if not isinstance(pf, dict): bad.append("%s: an object like {base, tier, model, effort, purpose, abilities}" % p); continue
         for k in pf:
-            if k not in ("base", "tier", "model", "effort", "purpose", "abilities"):
-                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities)" % (p, k))
+            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime"):
+                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime)" % (p, k))
         bases = md["bases"]
         b = pf.get("base")
         if b is None and pn in md["profiles"]: b = md["profiles"][pn].get("base")
@@ -387,9 +409,28 @@ if prof is not None:
             bad.append("%s.base: required for a profile of your own (%s)" % (p, ", ".join(bases)))
         elif "base" in pf and pf["base"] not in bases:
             bad.append("%s.base: one of %s" % (p, ", ".join(bases))); b = None
-        if "tier" in pf: need(pf["tier"] in tiers_ok, "%s.tier: one of %s" % (p, ", ".join(tiers_ok)))
-        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in aliases or model_ok.fullmatch(pf["model"])), "%s.model: %s" % (p, (", ".join(aliases) + " or " if aliases else "") + like("balanced")))
-        if "effort" in pf: need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
+        # a profile's tier, model and effort are checked against the runtime the profile runs on: its own `runtime` (the project's own or an enabled
+        # extra one), else the project's providers as before
+        p_ok, p_aliases, p_like, p_tiers, p_effort = model_ok, aliases, like, tiers_ok, None
+        if "runtime" in pf:
+            rt = pf["runtime"]
+            enabled = ([_own_local] if _own_local else []) + [x for x in _extra_local if isinstance(x, str)]
+            if not (isinstance(rt, str) and provider.NAME_RE.match(rt)):
+                bad.append("%s.runtime: a runtime name, the project's own or one enabled for it" % p)
+            elif rt not in enabled:
+                bad.append("%s.runtime: %s is not enabled for this project (qargi provider enable PROJECT --runtime %s)" % (p, rt, rt))
+            else:
+                _d = _runtime(rt, "local")
+                if _d:
+                    _rx = re.compile(_d["model_pattern"])
+                    p_ok, p_aliases, p_tiers, p_effort = _rx, [a for a in _d["aliases"].values() if a], list(_d["tiers"]), _d["effort"]
+                    p_like = lambda tier, _d=_d: "a model id like %s" % _d["tiers"][tier]
+        if "tier" in pf: need(pf["tier"] in p_tiers, "%s.tier: one of %s" % (p, ", ".join(p_tiers)))
+        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in p_aliases or p_ok.fullmatch(pf["model"])), "%s.model: %s" % (p, (", ".join(p_aliases) + " or " if p_aliases else "") + p_like("balanced")))
+        if "effort" in pf:
+            need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
+            if p_effort is not None and pf["effort"] in efforts and p_effort.get(pf["effort"]) is None:
+                bad.append("%s.effort: %s is not an effort level of the runtime %s" % (p, pf["effort"], pf["runtime"]))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
         if "abilities" in pf:
             ab = pf["abilities"]
@@ -524,6 +565,16 @@ pack_warn() {
     | group_by(.[0])[] | .[0][0] + "\t" + (map(.[1]) | unique | join(", "))' "$links" 2>/dev/null)
 }
 
+# reads_warn RUNTIME [INDENT]: when the local runtime RUNTIME (a runtime or a family name) is a command runtime whose definition does not confine reads
+# (dispatch.reads), prints the warning of the enable plan as a `warning:` line: members on it can read what the account can read, the owner's own
+# sessions among it. Prints nothing for a runtime that confines reads, works in the session or is unknown. The places that make a runtime the project's
+# own (new, attach, set) print it and ask for no phrase; validate and every other verb stay silent about it
+reads_warn() {
+  local w
+  w=$(pymod provider reads-warning "$1" </dev/null 2>/dev/null) || return 0
+  [ -z "$w" ] || echo "${2:-}warning: $w"
+}
+
 # no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
 # object, or blank: the same rule as provider.py project_provider), or leave a surface without one (the object form), or name one that
 # has no definition, or a name that serves only one surface, or a single name resolved through its family (the notice of
@@ -572,6 +623,16 @@ else:
     else:
         out.extend("finding: " + n for n in notices)
         out.extend("finding: " + r for r in refused)
+# the extra runtimes the project lists (models.extra_runtimes.local) that can no longer be used as they stand: unknown, not sealed or changed since,
+# not of the local surface, not started by a command (the shape of the answer is validate's)
+_extras = P.extra_runtimes_of(ans)
+if _extras:
+    try: _own = P.resolve_project(ans, "local", name)[0]
+    except P.ProviderError: _own = None
+    for x in _extras:
+        try: why = P.runtime_problem(x, _own)
+        except P.ProviderError as e: out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s" % (x, e)); continue
+        if why != "ok" and why != "is-primary": out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s (qargi provider check %s)" % (x, why, x))
 print("\n".join(out))
 sys.exit(0 if out else 1)
 EOF
@@ -595,13 +656,13 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
         elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
         else $x == $y end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
-    | (["extensions", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
+    | (["extensions", "extra_runtimes", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
       (select(($n[0].packs | type) == "object" and ($n[0].packs | has("member_skills")))
        | select(($n[0].packs.member_skills // false) != ($s[0].packs.member_skills // false)) | "packs.member_skills")'
 }
 gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
   local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
-  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
+  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION or --runtime NAME, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
 }
 
 # verify.environment (the declaration a whole-suite run is started under, lib/suite_env.py) is changed by the routes that write the answers, and
@@ -776,6 +837,7 @@ PY
     if [ -n "$url" ]; then echo "  qargi answers stored for $url (outside the repository)"; else echo "  no --url: the answers are stored later, when the remote exists: qargi project attach $dir --url URL"; fi
     echo "  deployment: ${dep:-not chosen (see below)}"
     echo "  provider: $ptxt"
+    reads_warn "${provl:-$prov}" "  "
     echo
     if [ -z "$APPROVED" ]; then
       python3 -I "$lib/methodology.py" deployment "$meth"
@@ -909,6 +971,7 @@ PY
     fi
     if [ -z "$APPROVED" ]; then
       echo "stored answers would be:"; jq . <<<"$ans"
+      reads_warn "$(jq -r '(.models.provider // "") | if type == "string" then . elif type == "object" then (.local // "") else "" end' <<<"$ans")"
       no_provider /dev/stdin "$n" <<<"$ans" || true   # attach does not guess a provider and stores none
       echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
@@ -999,7 +1062,7 @@ PY
       case $1 in --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) usage_die "unknown option $1";; esac
     done
     case $path in verify|verify.*) ;; *) [ -z "$PLAN_ARG$APPROVED" ] || usage_die "--plan and --approved apply only to verify.environment (a loosening of it takes a plan token and the owner's words); $path takes neither";; esac
-    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
+    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.-]*$' || die "PATH: dotted keys such as roles.write.effort"
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
@@ -1064,7 +1127,8 @@ PY
     echo "$n: $path = $val$(set_note "$n" "$path" "$val")"
     echo "was: $was"
     [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
-    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
+    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac
+    case $path in models.provider|models.provider.local) reads_warn "$(pymod provider of-if-set "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null)";; esac;;
   unset)
     # remove one answer; the same refusals as set (the marshal backend, the answers that take a plan token), and a member never runs it: its guard
     # may not name this verb, so the refusal is made here, from the member's run directory or its marked environment
@@ -1084,7 +1148,7 @@ PY
       0) echo "qargi: project unset is not available in a member run: it removes an answer of the project the lead runs on; propose the removal in your report" >&2; exit 2;;
       *) echo "qargi: project unset could not tell whether this is a member run (the check failed with status $mrc); refused: it removes an answer of the project the lead runs on" >&2; exit 2;;
     esac
-    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
+    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.-]*$' || die "PATH: dotted keys such as roles.write.effort"
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     case $path in verify|verify.*) verify_env_lock;; esac     # before the answers are read: the lock spans the read, the comparison and both writes
     was=$(answer_was "$PROJ_DIR/$n.json" "$path")

@@ -94,7 +94,7 @@
 29 bash tests/test_release_ci.sh
 1 bash tests/test_changelog_section.sh
 12 bash tests/test_marshal_hook.sh
-2 python3 tests/test_help.py
+9 python3 tests/test_help.py
 2 python3 tests/test_tools.py
 1 python3 tests/test_procenv.py
 0 python3 tests/role_seed_sim.py shared
@@ -134,7 +134,9 @@
 17 bash tests/test_json_plans.sh
 26 bash tests/test_resume_push.sh
 53 bash tests/test_release_master_merge.sh
-61 bash tests/test_release_cut.sh
+180 bash tests/test_release_cut.sh
+57 bash tests/test_release_fix_record.sh
+105 bash tests/test_dry_run.sh
 5 python3 tests/test_marshal_batch.py
 36 bash tests/test_marshal_batch.sh
 15 python3 tests/test_marshal_startup.py
@@ -147,5 +149,10 @@
 19 python3 tests/test_campaign.py
 3 bash tests/test_readonly_init.sh
 0 python3 tests/test_seat_contract.py
+5 python3 tests/test_refusals.py
 20 python3 tests/test_suite_env.py
 108 bash tests/test_suite_env_flow.sh
+15 python3 tests/test_rolecard.py
+34 bash tests/test_runtime_enable.sh
+17 bash tests/test_runtime_resolve.sh
+227 bash tests/test_runtime_run.sh

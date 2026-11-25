@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "project": "demo",
+  "repo": {
+    "url": "https://github.com/example/demo",
+    "path": "",
+    "credential_file": "",
+    "long_lived": [
+      "master",
+      "develop"
+    ]
+  },
+  "roles": {
+    "build": {
+      "base": "develop",
+      "push": {
+        "mode": "none"
+      },
+      "model": null,
+      "effort": "high",
+      "apt": [],
+      "tools": [],
+      "skills": []
+    },
+    "review": {
+      "base": "develop",
+      "push": {
+        "mode": "none"
+      },
+      "model": null,
+      "effort": "high",
+      "apt": [],
+      "tools": [],
+      "skills": []
+    }
+  },
+  "profiles": {
+    "worker-fast": {
+      "base": "worker",
+      "tier": "fast",
+      "effort": "low",
+      "abilities": [
+        "build"
+      ]
+    },
+    "reviewer-deep": {
+      "base": "reviewer",
+      "tier": "deep",
+      "effort": "high",
+      "abilities": [
+        "review"
+      ]
+    }
+  },
+  "lead": {
+    "context_window": null
+  },
+  "models": {
+    "provider": {
+      "local": "codex"
+    }
+  },
+  "memory": {
+    "memory_store": "",
+    "reference_store": "",
+    "tiers": {}
+  },
+  "budget_cents": 500
+}

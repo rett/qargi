@@ -389,13 +389,18 @@ project_provider_if_set() { # project-or-empty surface
 cloud_note() { # project topic
   ( unset QARGI_LEAD_RUNTIME; pymod provider notes "$2" --project "$1" --surface cloud </dev/null )
 }
-# barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
-# `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
-# that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
+# barrier_guard SURFACE PROJECT-or-empty [RUNTIME]: a read-only role is about to run on SURFACE, on RUNTIME (default: the project's provider
+# for the surface). Exits 2 with the reason and the `qargi provider accept` command when the project's own provider has no read-only barrier
+# there and the project did not accept that; a partial barrier passes and prints its note on stderr. A RUNTIME that is one of the project's
+# extra runtimes (models.extra_runtimes.local) needs a barrier of its own: the acceptance of the project's provider does not count for it, and
+# without one it is refused with runtime-barrier-missing (exit 1). (lib/provider.py require-barrier decides.)
 barrier_guard() {
-  local rc=0 prov
-  prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
+  local rc=0 prov=${3:-}
+  [ -n "$prov" ] || prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
   pymod provider require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
+  if [ "$rc" = 4 ]; then
+    refuse runtime-barrier-missing name="$prov"
+  fi
   [ "$rc" = 0 ] || exit "$rc"
 }
 
@@ -459,6 +464,26 @@ res_name() {
 }
 
 die() { echo "qargi: $*" >&2; exit 1; }
+# fail MESSAGE...: a failure that is not a rule (a tool that did not run, a file that cannot be written): the output and the exit status of die. tests/refusal-sites.txt
+# counts the die calls that are not yet either this or a refusal, and the count may only go down.
+fail() { echo "qargi: $*" >&2; exit 1; }
+# refuse CODE key=value...: a rule refused the verb. lib/refusals.json holds the rule, why it exists and the next step; lib/refusal.py prints the contract line
+# (qargi-refusal/1 and a JSON object) and the human lines on standard error, and answers with the code's exit status (70 for a caller that is wrong: an unknown
+# code or field, a value of the wrong type, a code that is not live). The verb, the project and the role of the line are the script's `verb` (or QARGI_VERB),
+# PROJECT and QARGI_ROLE, as far as they are names. refuse exits with that status; run only on the refusal path (it starts python).
+refuse() { _refusal refuse "$@"; exit $?; }
+# notice CODE key=value...: the same message and next step from the catalogue as `qargi: note [CODE] ...`, with no contract line, and returns 0: for a verb that
+# did its work and names a rule that will apply later. A caller that is wrong exits 70.
+notice() { local rc=0; _refusal notice "$@" || rc=$?; [ "$rc" = 0 ] || exit "$rc"; }
+_refusal() { # refuse|notice CODE key=value...
+  local mode=$1; shift
+  python3 -I "$QARGI_TOOL/lib/refusal.py" "$mode" --verb "${QARGI_VERB:-${verb:-}}" --project "${PROJECT:-}" --role "${QARGI_ROLE:-}" "$@"
+}
+# dry_stop HELPER: a dry run (QARGI_DRY=1, as `--dry-run` sets it; unset, empty and 0 are a normal run) changes nothing, so a helper that writes calls this first: reached in a dry run it is a
+# defect of the verb, not a refusal, and exits 70 naming the helper, before it takes a lock or makes a file. Outside a dry run it returns at once.
+dry_stop() {
+  [ "${QARGI_DRY:-}" != 1 ] || { echo "qargi: defect: $1 was reached in a dry run (QARGI_DRY is set): a dry run changes nothing, so this path must not write" >&2; exit 70; }
+}
 usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option, missing argument, a usage line): exit 2, as the manual page promises
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
   [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
@@ -472,6 +497,7 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 # said>": the quote is stored in the tracker so the choice is auditable.
 # Commands that call audit_log append their supplied request and approval words here.
 audit_log() { # verb [detail]
+  dry_stop audit_log
   local f=$DA_STATE/audit.log line rc=0
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
   line=$(jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
@@ -491,9 +517,35 @@ audit_log() { # verb [detail]
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
-plan_token() { sha256sum | cut -c1-12; }
+# plan_token [--basis "LABELS"]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the labelled lines are also kept in
+# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1): line N takes the Nth word of LABELS and the lines after the last word
+# belong to it, so a later need_plan can say which labels moved. The token is the same with or without --basis.
+plan_token() {
+  [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
+  [ $# -ge 2 ] || usage_die "plan_token --basis needs the labels: one word for each line of the plan"
+  local plan tok rc=0
+  plan=$(mktemp) || fail "plan_token: cannot make a temporary file"
+  cat > "$plan"
+  tok=$(sha256sum < "$plan" | cut -c1-12)
+  if [ "${QARGI_DRY:-}" != 1 ]; then
+    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$2" < "$plan" || rc=$?
+    case $rc in
+      0) ;;
+      70) rm -f "$plan"; exit 70;;
+      *) echo "qargi: note: the basis of the plan could not be kept, so a stale token will not say what moved" >&2;;
+    esac
+  fi
+  rm -f "$plan"
+  printf '%s\n' "$tok"
+}
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
-  [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
+  [ "${PLAN_ARG:-}" = "$1" ] && return 0
+  local tokarg=() moved # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
+  [[ $1 =~ ^[0-9a-f]{12}$ ]] && tokarg=("token=$1")
+  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing ${tokarg[@]+"${tokarg[@]}"}
+  # the labels whose lines differ between the plan that was shown and this one, when both were planned with plan_token --basis
+  moved=$(QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis moved "$PLAN_ARG" "$1" 2>/dev/null) && [ -n "$moved" ] || moved=unrecorded
+  refuse plan-stale "moved=$moved" ${tokarg[@]+"${tokarg[@]}"}
 }
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
@@ -507,6 +559,7 @@ need_asked() {
 
 # json_update FILE JQ_FILTER [jq args...]: atomic, locked in-place update.
 json_update() {
+  dry_stop json_update
   local file=$1 filter=$2; shift 2
   (
     flock 9

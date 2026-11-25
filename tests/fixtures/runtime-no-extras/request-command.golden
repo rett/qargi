@@ -1,0 +1,44 @@
+--- request build
+{
+  "base": "worker",
+  "binding": {
+    "catalog": "-",
+    "composition": "-",
+    "policy": "75668ef7870a2cf7b2ad8e964229ce62ad20fe325e0b1ebb8493b65c46488aaa",
+    "runtime": "-",
+    "selection": "104a2c2306a4b220d9b2163596699d8a5b4e020bed66aa6bf67886280d0e4098"
+  },
+  "class": "write",
+  "effort": "high",
+  "mode": "command",
+  "model": "gpt-6.1-terra",
+  "model_id": "gpt-6.1-terra",
+  "profile": "build",
+  "project": "nxcommand",
+  "role": "build",
+  "runtime": "codex",
+  "schema": 1,
+  "selector": null
+}
+--- request review
+{
+  "base": "reviewer",
+  "binding": {
+    "catalog": "-",
+    "composition": "-",
+    "policy": "75668ef7870a2cf7b2ad8e964229ce62ad20fe325e0b1ebb8493b65c46488aaa",
+    "runtime": "-",
+    "selection": "326139f6f20606376a13972a8d1e505abe8b4a045a7208dbfe3101dcb87ca1ac"
+  },
+  "class": "read-only",
+  "effort": "high",
+  "mode": "command",
+  "model": "gpt-6.1-sol",
+  "model_id": "gpt-6.1-sol",
+  "profile": "review",
+  "project": "nxcommand",
+  "role": "review",
+  "runtime": "codex",
+  "schema": 1,
+  "selector": null
+}

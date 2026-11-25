@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# qargi provider accept: record that you accept a provider surface that has no read-only barrier (lib/provider.py runs this
-# for the verb; the other provider verbs are Python).
+# qargi provider accept: record that you accept a provider surface that has no read-only barrier, and qargi provider enable|disable PROJECT
+# --runtime NAME: allow or stop an extra runtime for a project (lib/provider.py runs this for the two verbs; the other provider verbs are Python).
+#
+#   provider.sh enable|disable PROJECT --runtime NAME [--asked "<your words>"]                      plan: what the runtime is, what it reads, what it needs, a token
+#   provider.sh enable|disable PROJECT --runtime NAME [--asked W] --plan TOKEN --approved "<the owner's go-ahead>"
+#
+# Applied, an enable writes models.extra_runtimes.local of the project's stored answers (lib/gated_answers.py) and one line to the audit log. The plan
+# comes from lib/provider.py (runtime-info). A runtime that does not confine reads (dispatch.reads of its definition) is approved only by words that
+# contain "reads are not confined", as words (letter case and runs of blanks ignored; runtime-reads-unacknowledged otherwise, and the token stays good); disable asks for no phrase.
 #
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P]       plan: what would be recorded, and a token
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P] --plan TOKEN --approved "<your go-ahead>"
@@ -14,6 +21,54 @@
 here=$(dirname "$(readlink -f "$0")")
 usage='usage: qargi provider accept NAME --surface local|cloud --no-barrier --asked "<your words>" [--project P] [--plan TOKEN --approved "<your go-ahead>"]'
 verb=${1:-}; shift || true
+runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T --approved W]: the gate of an extra runtime
+  local v=$1 PROJ='' NAME='' ASKED='' APPROVED='' PLAN_ARG='' rusage info nothing verdict plan refusal new token norm phrase
+  rusage="usage: qargi provider $v PROJECT --runtime NAME [--asked \"<your words>\"] [--plan TOKEN --approved \"<the owner's go-ahead>\"]"
+  shift
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --runtime) need_val "$1" $#; NAME=$2; shift 2;;
+      --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+      --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+      --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+      -*) usage_die "unknown option $1";;
+      *) [ -z "$PROJ" ] || usage_die "unexpected argument $1"; PROJ=$1; shift;;
+    esac
+  done
+  [ -n "$PROJ" ] && [ -n "$NAME" ] || usage_die "$rusage"
+  [ -z "$APPROVED" ] || [ -n "$PLAN_ARG" ] || usage_die "--approved needs --plan TOKEN, the token the plan printed"
+  printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9-]*$' || usage_die "--runtime needs a runtime name (lower-case letters, digits and -): $rusage"
+  valid_project "$PROJ" && [ -f "$DA_CONF/projects/$PROJ.json" ] || fail "no stored answers for project '$PROJ' (qargi project list)"
+  # shellcheck disable=SC2034  # refuse (lib.sh) names the verb and the project of its contract line from these
+  PROJECT=$PROJ QARGI_VERB="provider $v"
+  info=$(pymod provider runtime-info "$PROJ" "$NAME" "$v" </dev/null) || exit $?
+  nothing=$(jq -r '.nothing // empty' <<<"$info")
+  [ -z "$nothing" ] || { echo "$nothing"; exit 0; }
+  verdict=$(jq -r .verdict <<<"$info")
+  if [ "$verdict" != ok ]; then refuse runtime-unusable name="$NAME" why="$verdict"; fi
+  plan=$(jq -r '.lines[]' <<<"$info")
+  printf '%s\n' "$plan"
+  refusal=$(jq -r '.refusal // empty' <<<"$info")
+  if [ -n "$refusal" ]; then echo "qargi: $refusal; nothing was changed" >&2; exit 2; fi
+  new=$(jq -c .new <<<"$info")
+  token=$(printf '%s\n' "$plan" | plan_token)
+  if [ -z "$APPROVED" ]; then
+    echo "plan token: $token   (apply with: --plan $token --approved \"<the owner's words>\")"
+    exit 0
+  fi
+  need_plan "$token"
+  if [ "$(jq -r .needs_phrase <<<"$info")" = true ]; then
+    phrase=$(jq -r .phrase <<<"$info")
+    norm=$(printf '%s' "$APPROVED" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+    if ! grep -qwF -- "$phrase" <<<"$norm"; then       # as words: "threads are not confined" does not carry "reads are not confined"
+      refuse runtime-reads-unacknowledged name="$NAME"
+    fi
+  fi
+  audit_log "provider:$v" "$PROJ runtime $NAME $token"
+  python3 -I "$here/gated_answers.py" store "$PROJ" models.extra_runtimes.local "$new" --conf "$DA_CONF" >/dev/null || fail "could not record it in the answers of $PROJ; nothing changed"
+  echo "${v}d runtime $NAME for project $PROJ (approved: $APPROVED)"
+}
+case $verb in enable|disable) runtime_verb "$verb" "$@"; exit 0;; esac
 [ "$verb" = accept ] || usage_die "$usage"
 NAME='' SURFACE='' NOBAR='' PROJ='' ASKED='' APPROVED='' PLAN_ARG=''
 while [ $# -gt 0 ]; do

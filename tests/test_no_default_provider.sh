@@ -143,8 +143,11 @@ out=$("$DA" provision plan --project np --role build --model fake-m-1 2>&1); rc=
 [ "$rc" = 0 ] && ok "provision plan: a model given on the command line needs no provider lookup" || no "np with --model: rc=$rc $out"
 
 # --- local prepare: a read-only role needs the project's provider for its barrier
-prep() { # repo slug role
-  "$DA" local prepare --repo "$1" --base main --slug "$2" --scratch "$T/scr" --role "$3" 2>&1
+prep() { # repo slug role: the output without the warning of a scratch on a tmpfs (this suite may run on one; test_local.sh checks the warning), the exit status of prepare
+  local o rc
+  o=$("$DA" local prepare --repo "$1" --base main --slug "$2" --scratch "$T/scr" --role "$3" 2>&1); rc=$?
+  grep -v '^qargi: warning: --scratch .* is on a tmpfs' <<<"$o"
+  return $rc
 }
 out=$(prep "$T/repo-np" rv1 review); refuses "local prepare --role review: a project with none is refused" "$?" "$out" np
 [ -z "$(ls "$T/scr")" ] && ok "and no run directory was made" || no "run dir made: $(ls "$T/scr")"
