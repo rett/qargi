@@ -181,4 +181,100 @@ out=$("$DA" project validate v5 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^finding: models.run_options.local.fakeimg 'nosuchopt' is not an option the definition of fakeimg declares" <<<"$out" && ! grep -q "'image_generation'" <<<"$out"; } \
   && ok "validate: an option the definition no longer declares is a finding, a declared one none" || no "validate finding: rc=$rc $out"
 
+# --- prepare, dry run and run: a profile that selects the option gets it, nothing else does
+mkproj r1 "$own" null "$PROFILES"
+python3 -I "$TOOL/lib/gated_answers.py" store r1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not enable the option of r1"
+prep() { # PROJECT ARGS...: local prepare in the project's repository: PREP (standard error too), PREP_RC, RUN
+  local p=$1; shift
+  PREP=$("$DA" local prepare --repo "$T/repo-$p" --base main --scratch "$T/scr" "$@" 2>&1); PREP_RC=$?
+  PREP=$(grep -v '^qargi: warning: --scratch .* is on a tmpfs' <<<"$PREP")     # the suite may run under a tmpfs
+  RUN=$(sed -n 's/^RUN=//p' <<<"$PREP")
+  [ -z "$RUN" ] || printf 'TASK: write a file\nDONE: true\n' > "$RUN/task.md"
+}
+line() { sed -n "s/^$1=//p" <<<"$PREP" | head -1; }
+toml_json() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")), sort_keys=True, separators=(",", ":")))' "$1"; }
+BASE=$(jq -cS .dispatch.run_config.baseline "$SRC/lib/providers/codex.json")
+WANT=$(jq -cS '.features.image_generation = true' <<<"$BASE")
+prep r1 --slug o1 --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ "$(line RUN_OPTIONS)" = 'image_generation (hosted, outside the sandbox, may spend)' ] && [ "$(line PROFILE)" = imgs ]; } \
+  && ok "prepare: RUN_OPTIONS= names the option and what it opens, only for the profile that selects it" || no "prepare with option: rc=$PREP_RC $PREP"
+RUN1=$RUN
+out=$("$DA" local run "$RUN1" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qx "RUN_CONFIG_OPTIONS={\"image_generation\":{\"features\":{\"image_generation\":true}}}" <<<"$out" && grep -qx "RUN_CONFIG_BASELINE=$BASE" <<<"$out"; } \
+  && ok "dry run: RUN_CONFIG_OPTIONS= shows what the option applies, RUN_CONFIG_BASELINE= is the definition's baseline as it is" || no "dry run: rc=$rc $out"
+{ [ ! -e "$RUN1/home/.codex/config.toml" ] && [ ! -e "$RUN1/dispatch.json" ]; } && ok "a dry run writes nothing" || no "dry run wrote"
+out=$("$DA" local run "$RUN1" 2>&1); rc=$?
+CFG=$RUN1/home/.codex/config.toml
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && grep -qx 'RUN_OPTIONS=image_generation (hosted, outside the sandbox, may spend)' <<<"$out"; } \
+  && ok "run: the outcome is ok and RUN_OPTIONS= is printed" || no "run: rc=$rc $out"
+{ [ "$(toml_json "$CFG")" = "$WANT" ] && [ "$(stat -c %a "$CFG")" = 600 ]; } \
+  && ok "run config: the baseline with features.image_generation true and nothing else changed (mode 600)" || no "run config: $(toml_json "$CFG" 2>&1)"
+jq -e --argjson b "$BASE" '.run_config.options == ["image_generation"] and .run_config.baseline == $b and .run_config.baseline.features.image_generation == false' "$RUN1/dispatch.json" >/dev/null \
+  && ok "dispatch.json: run_config.options names the option, run_config.baseline stays the definition's" || no "dispatch.json: $(jq -c .run_config "$RUN1/dispatch.json")"
+# the same project's other profile, and a read-only run, get the baseline alone and no line
+prep r1 --slug o2 --profile plain
+{ [ "$PREP_RC" = 0 ] && ! grep -q 'RUN_OPTIONS' <<<"$PREP"; } && ok "prepare: a profile that selects none prints no RUN_OPTIONS=, though the project enabled the option" || no "prepare plain: rc=$PREP_RC $PREP"
+RUN2=$RUN
+out=$("$DA" local run "$RUN2" --dry-run 2>&1); ! grep -q 'RUN_CONFIG_OPTIONS' <<<"$out" && ok "dry run: no RUN_CONFIG_OPTIONS= either" || no "dry plain: $out"
+out=$("$DA" local run "$RUN2" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q 'RUN_OPTIONS' <<<"$out" && [ "$(toml_json "$RUN2/home/.codex/config.toml")" = "$(jq -cS . <<<"$BASE")" ] && ! jq -e '.run_config | has("options")' "$RUN2/dispatch.json" >/dev/null; } \
+  && ok "run config: the other profile gets the baseline alone, dispatch.json has no options key, and the output no line" || no "plain run: rc=$rc $out"
+prep r1 --slug o3 --role review
+{ [ "$PREP_RC" = 0 ] && ! grep -q 'RUN_OPTIONS' <<<"$PREP"; } && ok "prepare: a read-only run gets none" || no "prepare review: rc=$PREP_RC $PREP"
+RUN3=$RUN
+out=$("$DA" local run "$RUN3" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(toml_json "$RUN3/home/.codex/config.toml")" = "$(jq -cS . <<<"$BASE")" ]; } && ok "run config: a read-only run gets the baseline alone" || no "review run: rc=$rc $out"
+
+# --- a read-only run with an option is refused at prepare, whatever the profile says, before anything is made
+made() { { ls "$T/scr"; ls -d "$T"/qargi-run.* 2>/dev/null; } | wc -l; }
+mkproj c1 "$own" null '{"rev":{"base":"reviewer","tier":"balanced","options":["image_generation"]},"imgs":{"base":"worker","tier":"balanced","options":["image_generation"]}}'
+# project validate refuses this profile, so the answers are edited by hand: prepare holds the rule whatever the file says
+jq '.models.run_options = {local: {fakeimg: ["image_generation"]}}' "$T/c/projects/c1.json" > "$T/c1.json" && mv "$T/c1.json" "$T/c/projects/c1.json"
+"$DA" project validate c1 2>&1 | grep -q 'the profile is on the base reviewer' && ok "(validate does refuse that profile)" || no "validate c1"
+before=$(made)
+prep c1 --slug c1 --role review --profile rev
+{ [ "$PREP_RC" = 1 ] && [ "$(refusal_code "$PREP")" = runtime-option-class ] && grep -q 'refused \[runtime-option-class\] the option image_generation of the runtime fakeimg is for write runs, and this run is read-only' <<<"$PREP" \
+  && [ "$(made)" = "$before" ]; } && ok "runtime-option-class: a read-only run whose profile selects an option is refused at prepare (exit 1), and nothing is made" || no "read-only with option: rc=$PREP_RC made=$(made)/$before $PREP"
+prep c1 --slug c2 --role review
+{ [ "$PREP_RC" = 0 ] && ! grep -q 'RUN_OPTIONS' <<<"$PREP"; } && ok "the same project's review profile with no option is prepared" || no "review of c1: rc=$PREP_RC $PREP"
+# a profile that selects what the project did not enable, or the definition does not declare, is refused too
+mkproj c2 "$own" null "$PROFILES"
+before=$(made)
+prep c2 --slug c3 --profile imgs
+{ [ "$PREP_RC" = 2 ] && grep -q 'the profile imgs selects the option image_generation, which project c2 has not enabled for the runtime fakeimg' <<<"$PREP" && [ "$(made)" = "$before" ]; } \
+  && ok "prepare: a profile that selects an option the project did not enable is refused (exit 2), and nothing is made" || no "not enabled: rc=$PREP_RC $PREP"
+mkproj c3 '{"local":"fakeplain"}' null "$PROFILES"
+python3 -I "$TOOL/lib/gated_answers.py" store c3 models.run_options.local.fakeplain '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not store the option of c3"
+prep c3 --slug c4 --profile imgs
+{ [ "$PREP_RC" = 2 ] && grep -q 'the definition of the runtime fakeplain declares no option image_generation' <<<"$PREP"; } \
+  && ok "prepare: an option the definition does not declare does not exist" || no "undeclared at prepare: rc=$PREP_RC $PREP"
+
+# --- drift: the definition's option, the project's list and the profile key each bind the request; a change after prepare is refused at run
+drift() { # LABEL: the run in RUN was prepared; it must be refused with a re-prepare and leave no trace
+  local out rc
+  out=$("$DA" local run "$RUN" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q 're-prepare' <<<"$out" && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$RUN/home/.codex/config.toml" ]; } && ok "drift: $1" || no "drift $1: rc=$rc $out"
+}
+mkproj d1 "$own" null "$PROFILES"
+prep d1 --slug d1a --profile plain
+python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+drift "the project enabling an option after prepare (the list changed)"
+prep d1 --slug d1b --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } || no "d1b: rc=$PREP_RC $PREP"
+python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '[]' --conf "$T/c" >/dev/null 2>&1
+jq '.profiles.imgs.options = []' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
+drift "the project dropping the option and the profile its key (what a run was prepared with is gone)"
+python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+prep d1 --slug d1c --profile plain
+jq '.profiles.plain.options = ["image_generation"]' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
+drift "the profile gaining the key after prepare (the selection changed)"
+jq '.profiles.plain |= del(.options)' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
+prep d1 --slug d1d --profile imgs
+python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+jq '.dispatch.run_config.options.image_generation.set.features.image_generation = true | .dispatch.run_config.options.image_generation.note = "edited"' "$TOOL/lib/providers/fakeimg.json" > "$T/fakeimg.json" \
+  && mv "$T/fakeimg.json" "$TOOL/lib/providers/fakeimg.json"
+drift "the definition's option edited after prepare (its hash changed)"
+out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 're-prepare' <<<"$out"; } && ok "drift: a dry run refuses as well" || no "drift dry: rc=$rc $out"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }

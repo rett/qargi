@@ -64,7 +64,8 @@ A runtime's definition may declare **options**: opt-in changes to the file every
 
 1. Enable it for the project: `qargi provider enable PROJECT --runtime codex --option image_generation` prints the plan and a token. `codex` must be the project's own runtime or one you enabled in step 1 (else `runtime-not-enabled`). Approve with your own words, which must carry the phrase of the plan, `hosted image generation runs outside the sandbox`: `--plan TOKEN --approved "yes, hosted image generation runs outside the sandbox"`. Without it the refusal is `runtime-option-unacknowledged` and the token stays good.
 2. Select it in a profile of a worker base: `qargi project set PROJECT profiles.codex-images '{"base":"worker","tier":"balanced","effort":"high","runtime":"codex","options":["image_generation"]}'`. It is a plain `project set` that only selects among what you enabled; `qargi project validate` refuses an option that is not enabled and a profile on the `reviewer` base.
-3. To stop: take the option out of the profile (`qargi project set PROJECT profiles.codex-images.options '[]'`), then `qargi provider disable PROJECT --runtime codex --option image_generation` (its own plan and token, no phrase); disabling the runtime itself (step 5) is refused while an option of it is enabled. A run prepared with the option before a change of the project's list, the profile or the definition is refused at `local run` with a request to prepare again.
+3. Prepare with that profile: `qargi local prepare ... --profile codex-images` prints `RUN_OPTIONS=image_generation (hosted, outside the sandbox, may spend)`. Every other profile, and every read-only run, gets the baseline alone; a read-only run whose profile selects an option is refused (`runtime-option-class`) before anything is made.
+4. To stop: take the option out of the profile (`qargi project set PROJECT profiles.codex-images.options '[]'`), then `qargi provider disable PROJECT --runtime codex --option image_generation` (its own plan and token, no phrase); disabling the runtime itself (step 5) is refused while an option of it is enabled. A run prepared with the option before a change of the project's list, the profile or the definition is refused at `local run` with a request to prepare again.
 
 ## When something is refused
 
@@ -74,6 +75,7 @@ A runtime's definition may declare **options**: opt-in changes to the file every
 | `runtime-unusable` | the runtime is not sealed, not local, not started by a command, or is the project's own | `qargi provider check NAME`, or choose a command runtime |
 | `runtime-reads-unacknowledged` | the approval words lack the phrase | approve again with the same token and words that carry `reads are not confined` |
 | `runtime-option-unacknowledged` | the approval words of an option lack its phrase | approve again with the same token and words that carry the phrase the plan printed |
+| `runtime-option-class` | a read-only run whose profile selects an option | take the option out of that profile, or prepare the task for a write role |
 | `runtime-profile-model` | a profile's `model` is not one the runtime offers | give the profile a tier |
 | `runtime-barrier-missing` | a read-only role on a runtime that has no barrier (the acceptance of the own runtime does not count) | use a runtime with a barrier |
 | `runtime-drift` | the run was prepared for a runtime that is no longer enabled, usable or unchanged | `qargi local prepare` again |
