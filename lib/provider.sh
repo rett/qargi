@@ -21,13 +21,49 @@
 here=$(dirname "$(readlink -f "$0")")
 usage='usage: qargi provider accept NAME --surface local|cloud --no-barrier --asked "<your words>" [--project P] [--plan TOKEN --approved "<your go-ahead>"]'
 verb=${1:-}; shift || true
+# option_verb: the gate of a run option of a runtime the project has enabled (provider enable|disable PROJECT --runtime NAME --option OPT), called by runtime_verb with
+# its variables. The plan names what the option adds to the run's configuration file, that it runs outside the sandbox and may spend, and the words the owner's approval
+# must contain (the phrase of the option's definition, as words); an approval without them is runtime-option-unacknowledged and the token stays good. A disable asks for no
+# phrase and is refused while a profile selects the option. Stored at models.run_options.local.NAME through lib/gated_answers.py, with one audit line.
+option_verb() {
+  local path
+  printf '%s' "$OPT" | grep -Eq '^[a-z][a-z0-9_]{0,40}$' || usage_die "--option needs an option name of the runtime's definition (lower-case letters, digits and _): $rusage"
+  info=$(pymod provider option-info "$PROJ" "$NAME" "$OPT" "$v" </dev/null) || exit $?
+  if [ "$(jq -r .not_enabled <<<"$info")" = true ]; then refuse runtime-not-enabled name="$NAME"; fi
+  nothing=$(jq -r '.nothing // empty' <<<"$info")
+  [ -z "$nothing" ] || { echo "$nothing"; exit 0; }
+  refusal=$(jq -r '.refusal // empty' <<<"$info")
+  if [ "$(jq '.lines | length' <<<"$info")" = 0 ]; then echo "qargi: $refusal; nothing was changed" >&2; exit 2; fi
+  plan=$(jq -r '.lines[]' <<<"$info")
+  printf '%s\n' "$plan"
+  if [ -n "$refusal" ]; then echo "qargi: $refusal; nothing was changed" >&2; exit 2; fi
+  new=$(jq -c .new <<<"$info")
+  token=$(printf '%s\n' "$plan" | plan_token)
+  if [ -z "$APPROVED" ]; then
+    echo "plan token: $token   (apply with: --plan $token --approved \"<the owner's words>\")"
+    exit 0
+  fi
+  need_plan "$token"
+  if [ "$(jq -r .needs_phrase <<<"$info")" = true ]; then
+    phrase=$(jq -r .phrase <<<"$info")
+    norm=$(printf '%s' "$APPROVED" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+    if ! grep -qwF -- "$phrase" <<<"$norm"; then       # as words, as for the reads phrase
+      refuse runtime-option-unacknowledged name="$NAME" option="$OPT"
+    fi
+  fi
+  audit_log "provider:$v-option" "$PROJ runtime $NAME option $OPT $token"
+  path="models.run_options.local.$NAME"
+  python3 -I "$here/gated_answers.py" store "$PROJ" "$path" "$new" --conf "$DA_CONF" >/dev/null || fail "could not record it in the answers of $PROJ; nothing changed"
+  echo "${v}d run option $OPT of runtime $NAME for project $PROJ (approved: $APPROVED)"
+}
 runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T --approved W]: the gate of an extra runtime
-  local v=$1 PROJ='' NAME='' ASKED='' APPROVED='' PLAN_ARG='' rusage info nothing verdict plan refusal new token norm phrase
-  rusage="usage: qargi provider $v PROJECT --runtime NAME [--asked \"<your words>\"] [--plan TOKEN --approved \"<the owner's go-ahead>\"]"
+  local v=$1 PROJ='' NAME='' OPT='' ASKED='' APPROVED='' PLAN_ARG='' rusage info nothing verdict plan refusal new token norm phrase
+  rusage="usage: qargi provider $v PROJECT --runtime NAME [--option OPTION] [--asked \"<your words>\"] [--plan TOKEN --approved \"<the owner's go-ahead>\"]"
   shift
   while [ $# -gt 0 ]; do
     case $1 in
       --runtime) need_val "$1" $#; NAME=$2; shift 2;;
+      --option) need_val "$1" $#; OPT=$2; shift 2;;
       --asked) need_val "$1" $#; ASKED=$2; shift 2;;
       --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
       --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -41,6 +77,7 @@ runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T -
   valid_project "$PROJ" && [ -f "$DA_CONF/projects/$PROJ.json" ] || fail "no stored answers for project '$PROJ' (qargi project list)"
   # shellcheck disable=SC2034  # refuse (lib.sh) names the verb and the project of its contract line from these
   PROJECT=$PROJ QARGI_VERB="provider $v"
+  [ -z "$OPT" ] || { option_verb; return; }
   info=$(pymod provider runtime-info "$PROJ" "$NAME" "$v" </dev/null) || exit $?
   nothing=$(jq -r '.nothing // empty' <<<"$info")
   [ -z "$nothing" ] || { echo "$nothing"; exit 0; }

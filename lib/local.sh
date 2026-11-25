@@ -837,7 +837,7 @@ case $verb in
     fi
     # Command profiles apply to implicit role selections too. Resolve before RUN,
     # TMP or a clone exists, then commit the request in the lifecycle authority.
-    REQUEST=null CMODE='' OVMODEL='' OVEFFORT=''
+    REQUEST=null CMODE='' OVMODEL='' OVEFFORT='' ROPTS=''
     if [ -n "$R" ]; then
       # Mode comes from the runtime alone; an in-session selection must retain
       # its existing extension handling. Command resolution composes below.
@@ -852,10 +852,12 @@ case $verb in
       if [ "$CMODE" = command ]; then
         reqargs=("$CPJ" "$R" "$ROLE" "$CLASS")
         [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")
-        REQUEST=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit 2
+        REQUEST=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit $?   # 2 for a request that cannot be made, 1 for a refusal (runtime-option-class)
         PROFILE=$(jq -r .profile <<<"$REQUEST"); MEMBER=$(jq -r .base <<<"$REQUEST")
         MODEL=$(jq -r .model <<<"$REQUEST"); EFFORT=$(jq -r .effort <<<"$REQUEST")
         OVMODEL=$MODEL OVEFFORT=$EFFORT
+        # the run options of the profile (profiles.NAME.options, enabled by qargi provider enable PROJECT --runtime NAME --option OPT): the words of the RUN_OPTIONS= line, nothing when there are none
+        ROPTS=$(python3 -I "$(dirname "$0")/prepared_request.py" run-options "$CPJ" "$R" "$PROFILE" "$CLASS" </dev/null) || exit $?
       fi
     fi
     if [ "$CMODE" != command ] && { [ -n "$SELECTOR" ] || [ -n "$OVERRIDE" ]; }; then
@@ -977,6 +979,7 @@ WRAP
     echo "PROFILE=$PROFILE"
     [ -z "$MEMBER" ] || { echo "MEMBER=$MEMBER"; echo "MODEL=$MODEL"; echo "EFFORT=$EFFORT"; }
     [ -z "$HASX" ] || echo "RUNTIME=$R"   # a project with extra runtimes names the runtime of every run, its own too
+    [ -z "$ROPTS" ] || echo "RUN_OPTIONS=$ROPTS"   # only a run whose profile selects an option the project enabled
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"

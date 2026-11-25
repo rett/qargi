@@ -63,6 +63,41 @@ def validate(request):
     return request
 
 
+class OptionClass(Invalid):
+    """A run option that the class of the run may not have (runtime-option-class): raised by prepare, printed as a refusal by main."""
+
+    def __init__(self, runtime, option):
+        super().__init__("the option %s of the runtime %s is for write runs, and this run is read-only" % (option, runtime))
+        self.runtime, self.option = runtime, option
+
+
+def run_options(project, runtime, profile, cls, comp=None):
+    """(selected, enabled, declared): the options a run of PROFILE on RUNTIME carries (profiles.PROFILE.options of the project's answers, in the order stored, each once),
+    the options the project enabled for RUNTIME (models.run_options.local.RUNTIME) and what the definition declares (dispatch.run_config.options). A run carries an option
+    only when the profile selects it, the project enabled it and the definition declares it, and only a write run does (OptionClass for another class, whatever the
+    profile says); the other cases are Invalid. A project and a profile with no options give ([], enabled, declared) and nothing here changes a run."""
+    answers = P.project_answers(project) or {}
+    enabled = P.run_options_of(answers).get(runtime, [])
+    selected = list(dict.fromkeys(P.profile_options_of(answers, profile)))
+    declared = P.declared_options((comp or P.compose(runtime, "local", project))["definition"]) if selected or enabled else {}
+    for name in selected:
+        if cls != "write" or (name in declared and cls not in declared[name].get("classes", ())):
+            raise OptionClass(runtime, name)
+        need(name in enabled, "the profile %s selects the option %s, which project %s has not enabled for the runtime %s (qargi provider enable %s --runtime %s --option %s)"
+             % (profile, name, project, runtime, project, runtime, name))
+        need(name in declared, "the definition of the runtime %s declares no option %s (dispatch.run_config.options)%s" % (runtime, name, GUIDANCE))
+    return selected, enabled, declared
+
+
+def options_text(declared, names):
+    """The words of the RUN_OPTIONS= line: each option with what the definition says it is (outside the sandbox, may spend), one after the other."""
+    out = []
+    for n in names:
+        words = P.option_words(declared.get(n) or {})
+        out.append("%s (%s)" % (n, words) if words else n)
+    return "; ".join(out)
+
+
 def refusal_text(stderr):
     """The standard error of a refused verb without its contract line (the line a lead reads by machine, which says nothing here)."""
     return "\n".join(l for l in stderr.strip().splitlines() if not l.startswith("qargi-refusal/1 "))
@@ -101,6 +136,11 @@ def prepare(project, runtime, role, cls, selector=None):
     policy["accept_no_barrier"] = P.accepted(project, "local")
     if runtime != primary:
         policy["enabled_extra"] = runtime
+    # the run options bind only when there are some (the options the project enabled for the runtime and the ones the profile selects), so a project with none
+    # keeps the request it always had and no run prepared before is stale
+    chosen, enabled, _declared = run_options(project, runtime, selection["profile"], cls, comp)
+    if chosen or enabled:
+        policy["run_options"] = {"enabled": enabled, "selected": chosen}
     profiles = (P.project_answers(project) or {}).get("profiles")
     selected_input = {"present": isinstance(profiles, dict) and selection["profile"] in profiles,
                       "value": profiles.get(selection["profile"]) if isinstance(profiles, dict) else None}
@@ -163,9 +203,18 @@ def main(argv):
             need(dispatch is None or isinstance(dispatch, dict), "invalid runtime dispatch data")
             print((dispatch or {}).get("mode", ""))
             return 0
+        if len(argv) == 5 and argv[0] == "run-options":      # a project name has no hyphen, so no project is taken for this word
+            # run-options PROJECT RUNTIME PROFILE CLASS: the words of the RUN_OPTIONS= line of a run of that profile, nothing when it carries no option
+            chosen, _enabled, declared = run_options(argv[1], argv[2], argv[3], argv[4])
+            if chosen:
+                print(options_text(declared, chosen))
+            return 0
         need(len(argv) in (4, 5), "prepared request requires PROJECT RUNTIME ROLE CLASS [PROFILE]")
         print(json.dumps(prepare(*argv[:4], selector=argv[4] if len(argv) == 5 else None), sort_keys=True))
         return 0
+    except OptionClass as e:
+        import refusal
+        return refusal.refuse("runtime-option-class", [("name", e.runtime), ("option", e.option)], verb="local prepare", project=argv[1] if argv[0] == "run-options" else argv[0])
     except (Invalid, P.ProviderError, subprocess.SubprocessError, OSError) as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 2

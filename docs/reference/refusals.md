@@ -63,6 +63,8 @@ compares them with that page.
 | [`plan-record-invalid`](#plan-record-invalid) | plan | 1 | live | A stored plan is shown only when its file is whole |
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
+| [`runtime-option-unacknowledged`](#runtime-option-unacknowledged) | project-rule | 1 | live | The owner's approval of a run option says what it opens |
+| [`runtime-option-class`](#runtime-option-class) | project-rule | 1 | live | A run option is for the run classes its definition names |
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
 | [`runtime-not-enabled`](#runtime-not-enabled) | project-rule | 1 | live | A run uses a runtime the project enabled |
 | [`runtime-profile-model`](#runtime-profile-model) | project-rule | 1 | live | A profile's model belongs to the runtime the profile is resolved in |
@@ -330,6 +332,25 @@ compares them with that page.
 - Message: `the approval of the runtime {name} does not carry the phrase the plan printed: reads are not confined`
 - Next, for a lead: ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase; do not write the phrase for the owner
 - Next, in the owner's own session (`host`): approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed
+
+### runtime-option-unacknowledged
+
+- Rule: The owner's approval of a run option says what it opens.
+- Why: an option of a runtime changes what its members may do for a project (a tool that runs outside the sandbox and may spend, say), and the owner approves that knowingly, in words that carry the phrase the option's definition names.
+- Exit 1, live.
+- Fields: `name` (label), `option` (name), `context` (enum:lead,host).
+- Message: `the approval of the option {option} of the runtime {name} does not carry the phrase the plan printed`
+- Next, for a lead: ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase the plan printed; do not write the phrase for the owner
+- Next, in the owner's own session (`host`): approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed
+
+### runtime-option-class
+
+- Rule: A run option is for the run classes its definition names.
+- Why: an option of a runtime opens a tool outside the member's sandbox, which the read-only barrier of a runtime does not hold, so a read-only run never gets one whatever its profile says.
+- Exit 1, live.
+- Fields: `name` (label), `option` (name).
+- Message: `the option {option} of the runtime {name} is for write runs, and this run is read-only`
+- Next, for a lead: take the option out of the profile of this run (profiles.NAME.options), or prepare the task for a write role
 
 ### runtime-barrier-missing
 

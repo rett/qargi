@@ -54,7 +54,10 @@
 #      a link's source, .qargi-run.lock, apart)
 #  14  with dispatch.run_config.baseline, a write run and a read-only one (as in 12) each get the run's configuration file holding the
 #      baseline and nothing else (no tool pack reaches a role in the hermetic home), read back in the format of resources.mcp, found by
-#      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live
+#      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live.
+#      With dispatch.run_config.options the project has them all enabled and those runs still get the baseline alone (no profile of theirs selects one); a
+#      write run of a profile that selects an option gets the baseline with that option's settings applied and nothing else changed, recorded in
+#      RUN/dispatch.json (run_config.options), and a read-only run whose profile selects one is refused by prepare (runtime-option-class)
 #  15  with dispatch.hidden_paths, a write run and a read-only one (as in 12) whose run directory lies in a hidden place are refused (exit 2)
 #      before the stub starts, naming each run path the member of the class works with and the class does not show (CLONE, CONTRACT, GIT;
 #      for a write run OUT and TMP too), and a run on another place whose TMP alone is hidden is refused or goes on by the same rule.
@@ -510,7 +513,7 @@ HOMEREL=$(jq -r '.dispatch.home.dir // empty | strings' "$DESC")
 CFGIN=$(jq -r '.dispatch.run_config.in // empty | strings' "$DESC")
 CFGFILE=$(jq -r '.dispatch.run_config.file // empty | strings' "$DESC")
 CBIN=$W/cbin
-CRUN=""; CRC=0; COUT=""
+CRUN=""; CRC=0; COUT=""; CPROFILE=""; CPREP=""     # CPROFILE: the profile of the next run (--profile), CPREP: what the last prepare printed
 pycases() {   # PYTHON-CODE ARG...: the code with sys.argv[1] the lib of this suite (lib/conformance/cases.py is `cases`) and the descriptor as doc
   python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1])
 from conformance import cases
@@ -555,8 +558,13 @@ cmd_fixture() {   # once: the repository, the stored project and the private sta
   : > "$CREPO/src/a.go"
   fixture_git init -q -b main --template="$W/git-template" "$CREPO" && fixture_git -C "$CREPO" add src/a.go \
     && fixture_git -C "$CREPO" commit -q -m 'Conformance fixture' || return 1
-  jq -n --arg p "$(cd "$CREPO" && pwd -P)" --arg v "$NAME" '{schema: 1, project: "conformance", repo: {url: "https://github.com/example/conformance", path: $p, long_lived: ["main"]},
-    roles: {build: {base: "main", push: {mode: "none"}}}, models: {provider: $v}, memory: {}, budget_cents: 500}' > "$QARGI_CONF/projects/conformance.json"
+  # a runtime that declares run options (dispatch.run_config.options) has them all enabled for the project, one profile per option that selects it alone (optw0, optw1, ...) and
+  # a profile of the reviewer base that selects them all (optro): what case 14 runs; the fixture sets them as the owner's verbs would, since it has no owner to ask
+  jq -n --arg p "$(cd "$CREPO" && pwd -P)" --arg v "$NAME" --argjson ro "$(jq -c '(.dispatch.run_config.options // {}) | keys' "$DESC")" \
+    '{schema: 1, project: "conformance", repo: {url: "https://github.com/example/conformance", path: $p, long_lived: ["main"]},
+      roles: {build: {base: "main", push: {mode: "none"}}}, models: ({provider: $v} + (if ($ro | length) > 0 then {run_options: {local: {($v): $ro}}} else {} end)), memory: {}, budget_cents: 500}
+      + (if ($ro | length) > 0 then {profiles: (([range(0; $ro | length)] | map({key: ("optw" + tostring), value: {base: "worker", tier: "balanced", options: [$ro[.]]}}) | from_entries)
+                                               + {optro: {base: "reviewer", tier: "balanced", options: $ro}})} else {} end)' > "$QARGI_CONF/projects/conformance.json"
 }
 cmdregistry() {   # Read authority through the same trusted Store reader for marker, request and TMP; never RUN/tmpdir.
   python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import attempts as A
@@ -594,7 +602,8 @@ cmdprep() {   # CLASS [SCRATCH [TMP-PARENT]]: a run of the class made by qargi l
   CRUN=""; COUT=""; CRC=0
   if ! { cmd_fixture && cmdtools "$cls"; }; then echo "internal: could not make the fixture of the run" > "$W/cmd.err"; CRC=1; return; fi
   mkdir -p "${2:-$CSCR}"
-  out=$( umask 077; QARGI_RUN_TMP=${3:-$CSHM} "$PTOOL/bin/qargi" local prepare --repo "$CREPO" --base main --slug "conf-$cls" --scratch "${2:-$CSCR}" --role "$role" 2>"$W/cmd.err" ) || { CRC=$?; return; }
+  out=$( umask 077; QARGI_RUN_TMP=${3:-$CSHM} "$PTOOL/bin/qargi" local prepare --repo "$CREPO" --base main --slug "conf-$cls" --scratch "${2:-$CSCR}" --role "$role" ${CPROFILE:+--profile "$CPROFILE"} 2>"$W/cmd.err" ) || { CRC=$?; return; }
+  CPREP=$out
   CRUN=$(sed -n 's/^RUN=//p' <<<"$out" | head -1)
   if [ -z "$CRUN" ]; then echo "internal: qargi local prepare named no run" > "$W/cmd.err"; CRC=1; return; fi
   # These are current command runs: both the marker and the private prepared request must survive every fixture transform.
@@ -763,6 +772,37 @@ print(json.dumps(tomllib.loads(data.decode()) if sys.argv[2] == "toml" else json
     runs="$runs $cls"
   done
   [ -z "$runs" ] || note "runs:$runs; each got the baseline, $(jq -r 'keys | length' <<<"$want") top-level keys"
+  # run options (dispatch.run_config.options): the project has them all enabled and no profile of the runs above selects one, so those runs got the baseline alone, as
+  # asserted. A write run of a profile that selects one gets the baseline with that option's settings applied and nothing else changed, and RUN/dispatch.json records the
+  # option; a read-only run whose profile selects one is refused by prepare (runtime-option-class) before any run is made. Whether the runtime honours the setting is live
+  local opt n=0 oruns=""
+  for opt in $(jq -r '(.dispatch.run_config.options // {}) | keys[]' "$DESC"); do
+    CPROFILE=optw$n; n=$((n + 1))
+    cmdrun write; ran
+    CPROFILE=""
+    if [ "$CRC" != 0 ]; then problem "option $opt: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
+    grep -q '^RUN_OPTIONS=' <<<"$CPREP" || problem "option $opt: qargi local prepare printed no RUN_OPTIONS= line"
+    if [ "$CFGIN" = home ]; then f=$CRUN/home/$HOMEREL/$CFGFILE; else f=$CRUN/config/$CFGFILE; fi
+    if ! got=$(python3 -I -c 'import json, sys, tomllib
+data = open(sys.argv[1], "rb").read()
+print(json.dumps(tomllib.loads(data.decode()) if sys.argv[2] == "toml" else json.loads(data), sort_keys=True, separators=(",", ":")))' "$f" "$fmt" 2>/dev/null); then
+      problem "option $opt: the run's configuration file ${f#"$CRUN"/} is missing or cannot be read as $fmt"; continue
+    fi
+    # the baseline with the option's settings put over it: every key of its set exists in the baseline (provider check), so nothing is added
+    got2=$(jq -cS --argjson b "$want" --arg o "$opt" '.dispatch.run_config.options[$o].set as $s | $b | . * $s' "$DESC")
+    [ "$got" = "$got2" ] || problem "option $opt: the run's configuration file is not the baseline with the option applied: $(cut -c1-200 <<<"$got")"
+    jq -e --arg o "$opt" --argjson b "$want" '.run_config.options == [$o] and .run_config.baseline == $b' "$CRUN/dispatch.json" >/dev/null 2>&1 \
+      || problem "option $opt: RUN/dispatch.json does not record the option (run_config.options) and the definition's baseline"
+    oruns="$oruns $opt"
+  done
+  if [ -n "$oruns" ]; then
+    note "options:$oruns each applied over the baseline for a write run"
+    if [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" != no ]; then
+      CPROFILE=optro; cmdprep read-only; CPROFILE=""
+      { [ "$CRC" = 1 ] && [ -z "$CRUN" ] && grep -q '"code":"runtime-option-class"' "$W/cmd.err"; } \
+        || problem "a read-only run whose profile selects an option: prepare did not refuse it with runtime-option-class (exit $CRC): $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"
+    fi
+  fi
   finish 14 "$title"
 }
 

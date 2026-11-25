@@ -1,0 +1,21 @@
+{
+ "base": "worker",
+ "binding": {
+  "catalog": "0e4c4993038a3c56e0fea5da59ceacca63399c79f6646c2c92a733901035f70c",
+  "composition": "e4407df4f3a0e4000f3171a7a492472ddcee074dc9f32ec7e43c34ebf944765e",
+  "policy": "289d5fb8fad66cecf04349ebef37454de22e87c969e734532aa0de95ae314c48",
+  "runtime": "159373a3a03996fff094b67ba84d3d1ea94bba27b5404ead5f1e5caf3b50369a",
+  "selection": "0f172a3394df5c3dca49389ce9aa9cda872158ce190b0ccd677e0dc0be570fba"
+ },
+ "class": "write",
+ "effort": "high",
+ "mode": "command",
+ "model": "fake-balanced",
+ "model_id": "fake-balanced",
+ "profile": "build",
+ "project": "demo",
+ "role": "build",
+ "runtime": "cmdone",
+ "schema": 1,
+ "selector": null
+}

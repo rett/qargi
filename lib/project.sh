@@ -80,12 +80,12 @@ accepted_lines() {
 provision_reads() {
   case $1 in
     roles.*.push|roles.*.push.*) return 1;;                                     # the push policy is validated, not read: only "none" is implemented
-    profiles.*.tier|profiles.*.model|profiles.*.effort|profiles.*.purpose) return 1;;   # a profile is read for its base and abilities (class_abilities)
+    profiles.*.tier|profiles.*.model|profiles.*.effort|profiles.*.purpose|profiles.*.options) return 1;;   # a profile is read for its base and abilities (class_abilities); its options are read when a run is prepared
     memory.tiers|memory.tiers.*) return 1;;                                     # the memory tiers are read by the memory verbs
     repo|repo.url|repo.long_lived) return 0;;                                   # the lead's teams block names the repository and its branches
     teams|teams.*|roles|roles.*|profiles|profiles.*) return 0;;                 # members, their model, effort, packages, skills, tools, packs, base branch
     budget_cents|memory|memory.memory_store|memory.reference_store) return 0;;  # the budget and the stores to attach
-    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.extra_runtimes|models.extra_runtimes.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
+    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.extra_runtimes|models.extra_runtimes.*|models.run_options|models.run_options.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, its run options, the read-only barrier
     lead|lead.model|lead.effort|lead.push|lead.push.*) return 0;;               # the lead agent, and the push rules in its prompt and tools
     packs|packs.none) return 0;;                                                # skills and tools render by what is linked
     cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
@@ -102,9 +102,10 @@ gated_path() {
              echo "qargi packs member-skills PROJECT --enable|--disable"; return 0; fi;;
     models.extensions|models.extensions.*) echo "qargi provider enable PROJECT EXTENSION (and disable)"; return 0;;
     models.extra_runtimes|models.extra_runtimes.*) echo "qargi provider enable PROJECT --runtime NAME (and disable)"; return 0;;
+    models.run_options|models.run_options.*) echo "qargi provider enable PROJECT --runtime NAME --option OPTION (and disable)"; return 0;;
     models.accept_no_barrier|models.accept_no_barrier.*) echo "qargi provider accept NAME --surface S --no-barrier"; return 0;;
-    models) if jq -e 'type == "object" and (has("extensions") or has("extra_runtimes") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
-              echo "qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME, qargi provider accept NAME --surface S --no-barrier (models.extensions, models.extra_runtimes and models.accept_no_barrier are set by them)"; return 0; fi;;
+    models) if jq -e 'type == "object" and (has("extensions") or has("extra_runtimes") or has("run_options") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
+              echo "qargi provider enable PROJECT EXTENSION, qargi provider enable PROJECT --runtime NAME [--option OPTION], qargi provider accept NAME --surface S --no-barrier (models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are set by them)"; return 0; fi;;
   esac
   return 1
 }
@@ -180,6 +181,33 @@ if _ex is not None:
             for _i, _x in enumerate(_lst):
                 if _x in _lst[:_i]: bad.append("models.extra_runtimes.local: %s is listed twice" % _x)
                 if _x == _own: bad.append("models.extra_runtimes.local: %s is the project's own runtime, not an extra one (qargi provider disable PROJECT --runtime %s)" % (_x, _x))
+# models.run_options.local.RUNTIME: the options of the runtime's definition (dispatch.run_config.options) the project enabled, a list of option names
+# (qargi provider enable PROJECT --runtime NAME --option OPT). The shape and the runtime being enabled for the project (its own or an extra one) are checked
+# here; whether the definition still declares each option changes outside the answers and is a finding of no_provider
+_ro = _m.get("run_options") if isinstance(_m, dict) else None
+_ro_local = {}
+if _ro is not None:
+    if not isinstance(_ro, dict):
+        bad.append("models.run_options: an object like {local: {RUNTIME: [option names]}} (qargi provider enable PROJECT --runtime NAME --option OPT)")
+    else:
+        bad.extend("models.run_options.%s: not a surface with run options (only local)" % k for k in _ro if k != "local")
+        _rl = _ro.get("local")
+        if _rl is not None and not isinstance(_rl, dict):
+            bad.append("models.run_options.local: an object of runtime names, each with a list of option names (qargi provider enable PROJECT --runtime NAME --option OPT)")
+        elif isinstance(_rl, dict):
+            try: _own_o = provider.resolve_project(c, "local")[0]
+            except provider.ProviderError: _own_o = None
+            _en_o = ([_own_o] if _own_o else []) + [x for x in provider.extra_runtimes_of(c) if x != _own_o]
+            for _rn, _ol in _rl.items():
+                _p = "models.run_options.local.%s" % _rn
+                if not (isinstance(_rn, str) and provider.NAME_RE.match(_rn)):
+                    bad.append("models.run_options.local.%s: a runtime name" % _rn); continue
+                if not (isinstance(_ol, list) and all(isinstance(x, str) and provider.OPTION_NAME.match(x) for x in _ol)):
+                    bad.append("%s: a list of option names, each one the definition of the runtime declares (qargi provider enable PROJECT --runtime %s --option OPT)" % (_p, _rn)); continue
+                bad.extend("%s: %s is listed twice" % (_p, x) for _i, x in enumerate(_ol) if x in _ol[:_i])
+                if _ol and _rn not in _en_o:
+                    bad.append("%s: %s is not enabled for this project, so it has no options (its own runtime or one of models.extra_runtimes.local)" % (_p, _rn))
+                _ro_local[_rn] = [x for x in _ol]
 seen = set(); Ds = [d for d in Ds if not ((d["provider"], d["surface"]) in seen or seen.add((d["provider"], d["surface"])))]
 if Ds:
     _pats = [re.compile(d["model_pattern"]) for d in Ds]
@@ -411,8 +439,8 @@ if prof is not None:
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", pn): bad.append("%s: a lower-case name (letters, digits, hyphen; at most 31 characters)" % p); continue
         if not isinstance(pf, dict): bad.append("%s: an object like {base, tier, model, effort, purpose, abilities}" % p); continue
         for k in pf:
-            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime"):
-                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime)" % (p, k))
+            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime", "options"):
+                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime, options)" % (p, k))
         bases = md["bases"]
         b = pf.get("base")
         if b is None and pn in md["profiles"]: b = md["profiles"][pn].get("base")
@@ -443,6 +471,19 @@ if prof is not None:
             if p_effort is not None and pf["effort"] in efforts and p_effort.get(pf["effort"]) is None:
                 bad.append("%s.effort: %s is not an effort level of the runtime %s" % (p, pf["effort"], pf["runtime"]))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
+        # a profile selects among the options the project enabled for the runtime the profile runs on (models.run_options.local.RUNTIME, set by qargi provider
+        # enable PROJECT --runtime NAME --option OPT): a plain list, never a way to enable one. A profile of the reviewer base is a read-only run, which never gets one
+        if "options" in pf:
+            ol = pf["options"]
+            rt_o = pf["runtime"] if isinstance(pf.get("runtime"), str) else _own_local
+            if not (isinstance(ol, list) and all(isinstance(x, str) and provider.OPTION_NAME.match(x) for x in ol) and len(set(ol)) == len(ol)):
+                bad.append("%s.options: a list of distinct option names the project enabled for the runtime of the profile (qargi provider enable PROJECT --runtime NAME --option OPT)" % p)
+            elif ol:
+                if b and md["bases"].get(b, {}).get("class") == "read-only":
+                    bad.append("%s.options: the profile is on the base %s, a read-only run, which never gets a run option" % (p, b))
+                for x in ol:
+                    if x not in _ro_local.get(rt_o, []):
+                        bad.append("%s.options: %s is not enabled for the runtime %s of this project (qargi provider enable PROJECT --runtime %s --option %s)" % (p, x, rt_o or "of the project", rt_o or "NAME", x))
         if "abilities" in pf:
             ab = pf["abilities"]
             if not (isinstance(ab, list) and all(isinstance(x, str) for x in ab)):
@@ -644,6 +685,12 @@ if _extras:
         try: why = P.runtime_problem(x, _own)
         except P.ProviderError as e: out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s" % (x, e)); continue
         if why != "ok" and why != "is-primary": out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s (qargi provider check %s)" % (x, why, x))
+# the run options the project enabled (models.run_options.local) that the definition of the runtime no longer declares: an option that is not declared does not exist
+for _rt, _ol in P.run_options_of(ans).items():
+    try: _declared = P.declared_options(P.definition(_rt, "local"))
+    except P.ProviderError: continue                                   # a runtime that cannot be read is the finding of the extra runtimes above
+    for _o in _ol:
+        if _o not in _declared: out.append("finding: models.run_options.local.%s '%s' is not an option the definition of %s declares (dispatch.run_config.options; qargi provider show %s)" % (_rt, _o, _rt, _rt))
 print("\n".join(out))
 sys.exit(0 if out else 1)
 EOF
@@ -667,7 +714,7 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
         elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
         else $x == $y end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
-    | (["extensions", "extra_runtimes", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
+    | (["extensions", "extra_runtimes", "run_options", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
       (select(($n[0].packs | type) == "object" and ($n[0].packs | has("member_skills")))
        | select(($n[0].packs.member_skills // false) != ($s[0].packs.member_skills // false)) | "packs.member_skills")'
 }
