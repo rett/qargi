@@ -4,19 +4,13 @@
  "goal": "0.3.7: the plan record (qargi.plan/0, plan show --json), then the plain methodology, the Codex image opt-in and the contract hook stub",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-24T04:15:02Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-25T22:04:05Z",
- "finished_at": null,
+ "finished_at": "2026-11-25T22:22:28Z",
  "updated_by": "rett@arc",
- "rev": 28,
- "updated_at": "2026-11-25T22:04:05Z",
+ "rev": 29,
+ "updated_at": "2026-11-25T22:22:28Z",
  "feature": "release-037",
  "project": "qargi"
 }
