@@ -49,7 +49,8 @@
 #      each run carries the arguments of its class and none of the other's; OUT/transcript is what the stub printed; with
 #      dispatch.output.usage, RUN/dispatch.json adds up a usage from it
 #  13  the command gets HOME=RUN/home, no variable of the caller that env_pass does not name, and with dispatch.home its variable at
-#      RUN/home/DIR with each link there while it runs (a file of the hermetic home holding a sentinel) and gone after; the sentinel
+#      RUN/home/DIR with each link there while it runs (a file of the hermetic home holding a sentinel; for a link that declares private, a JSON object
+#      holding it, and the link is there as a regular file, a copy) and gone after; the sentinel
 #      and the source paths are in no output, record or transcript, and the caller's home is unchanged (the empty lock file a run makes beside
 #      a link's source, .qargi-run.lock, apart)
 #  14  with dispatch.run_config.baseline, a write run and a read-only one (as in 12) each get the run's configuration file holding the
@@ -529,18 +530,36 @@ stub_ready() {   # the wrapper named argv[0] first on PATH: it records its envir
     if [[ $HOMEENV =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
       printf 'd=$(printenv %s)\n' "$HOMEENV"
       printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.home"
+      printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -f \"\$f\" ] || [ -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.copies"
       if [ "$CFGIN" = home ] && [[ $CFGFILE =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then   # the run's configuration file as the command finds it
         printf "[ ! -f \"\$d/%s\" ] || cp \"\$d/%s\" '%s'\n" "$CFGFILE" "$CFGFILE" "$W/cmd.cfg"
       fi
     fi
     printf "QARGI_STUB_LOG='%s' exec '%s' \"\$@\"\n" "$W/cmd.log" "$STUB"
   } > "$CBIN/$CMD0" && chmod 755 "$CBIN/$CMD0"
-  local from to rel
-  while IFS=$'\t' read -r from to; do   # each source of the run home's links (~/PATH), a file of this run's home holding the sentinel
+  local from to rel priv
+  while IFS=$'\t' read -r from to priv; do   # each source of the run home's links (~/PATH), a file of this run's home holding the sentinel
     rel=${from#\~/}
     { [ "$rel" != "$from" ] && [ -n "$rel" ] && [[ $rel != *..* ]]; } || continue
-    mkdir -p "$(dirname "$HOME/$rel")" && printf '%s\n' "$SENT" > "$HOME/$rel"
-  done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings)] | @tsv' "$DESC")
+    mkdir -p "$(dirname "$HOME/$rel")" || continue
+    if [ -n "$priv" ]; then   # a private link (dispatch.home.link[].private): the source is a JSON object that holds the sentinel, the paths the definition sets and an expiry ten days away
+      python3 -I -c 'import base64, json, sys, time
+priv, sent = json.loads(sys.argv[1]), sys.argv[2]
+def b64(o): return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+doc = {"sentinel": sent}
+def put(path, value):
+    cur = doc
+    for part in path.split(".")[:-1]:
+        cur = cur.setdefault(part, {})
+    cur[path.split(".")[-1]] = value
+for path in priv["set"]:
+    put(path, sent)
+put(priv["expiry"]["path"], "%s.%s.%s" % (b64({"alg": "none"}), b64({"exp": int(time.time()) + 864000}), "conformance-signature"))
+print(json.dumps(doc))' "$priv" "$SENT" > "$HOME/$rel"
+    else
+      printf '%s\n' "$SENT" > "$HOME/$rel"
+    fi
+  done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings), (.private // empty | tojson)] | @tsv' "$DESC")
 }
 # The runs of cases 12 to 15 are made as every run is: by qargi local prepare, which writes the lead's registry line and the private lifecycle record that alone authorise qargi local run,
 # and started by qargi local run; nothing of a run's authority is written by hand. The stored project (conformance) has the runtime as its local one, its repository is a fixture's, and the
@@ -616,7 +635,7 @@ cmdprep() {   # CLASS [SCRATCH [TMP-PARENT]]: a run of the class made by qargi l
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
 }
 cmdgo() {   # qargi local run of CRUN with the stub in place of the command (the project, the runtime and the class are the lead's record's); COUT, CRC
-  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.cfg"
+  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.copies" "$W/cmd.cfg"
   COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" "$CTOOL/bin/qargi" local run "$CRUN" 2>"$W/cmd.err"); CRC=$?
 }
 cmdrun() {   # CLASS [SCRATCH [TMP-PARENT]]: cmdprep, then cmdgo unless the run could not be made
@@ -734,13 +753,18 @@ case13() {
   if [ -n "$HOMEENV" ]; then
     hd=$CRUN/home/$HOMEREL
     grep -qx "$HOMEENV=$hd" "$W/cmd.env" || problem "$HOMEENV is not RUN/home/$HOMEREL"
-    while IFS=$'\t' read -r from to; do
+    while IFS=$'\t' read -r from to priv; do
       src=$HOME/${from#\~/}
       [ -f "$src" ] || continue
       links="$links $to"
-      grep -qx -- "$to" "$W/cmd.home" 2>/dev/null || problem "$to was not a link in the run home while the command ran"
+      if [ -n "$priv" ]; then   # a private link is a regular file of the run home, a copy that is made for the run and is not a link
+        grep -qx -- "$to" "$W/cmd.copies" 2>/dev/null || problem "$to was not a regular file (a private copy) in the run home while the command ran"
+        grep -qx -- "$to" "$W/cmd.home" 2>/dev/null && problem "$to was a link in the run home, and its definition declares it private"
+      else
+        grep -qx -- "$to" "$W/cmd.home" 2>/dev/null || problem "$to was not a link in the run home while the command ran"
+      fi
       { [ ! -e "$hd/$to" ] && [ ! -L "$hd/$to" ]; } || problem "$to is still in the run home after the run"
-    done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings)] | @tsv' "$DESC")
+    done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings), (.private // empty | tojson)] | @tsv' "$DESC")
     grep -qF -- "$HOME/" <<<"$COUT" && problem "the output of qargi local run names a source path of the run home's links"
     grep -qF -- "$HOME/" "$CRUN/dispatch.json" && problem "RUN/dispatch.json names a source path of the run home's links"
     note "$HOMEENV=RUN/home/$HOMEREL; links:${links:- none}"
