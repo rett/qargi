@@ -1145,14 +1145,14 @@ class Seat(unittest.TestCase):
     @unbuilt(65)
     def test_R65_refusal_line(self):
         """R65: every lead refusal and door refusal prints one line qargi-refusal/1 plus a JSON object {code, exit, verb,
-        project, role, epoch, state, tx, detail} of at most 4 KiB on standard error; detail never carries text a lead wrote.
+        project, role, epoch, state, tx, detail, schema, kind} of at most 4 KiB on standard error; detail never carries text a lead wrote.
         Observable: every refusal of this file has exactly one such line that parses and whose exit equals the exit status;
         with a marker string planted in every lead-written field the line never contains it."""
 
     @unbuilt(66)
     def test_R66_exit_statuses(self):
-        """R66: 0 done, 1 refused, 2 usage, 3 remote not checked, 70 a defect, 77 a lead refusal; a verb that gets 77 from a
-        verb it runs exits 77 and passes the line on.
+        """R66: 0 done, 1 refused, 2 usage, 3 a refusal that a retry may cure (the remote could not be asked), 70 a defect,
+        77 a lead refusal; a verb that gets 77 from a verb it runs exits 77 and passes the line on.
         Observable: a flow verb whose inner marshal question is refused by the gate exits 77 and its standard error holds
         the inner refusal line once."""
 
