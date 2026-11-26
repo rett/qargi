@@ -1,0 +1,29 @@
+{
+  "registry": 1,
+  "kind": "qargi-refusal",
+  "schema": 1,
+  "status": "pinned",
+  "since": "0.3.9",
+  "stream": "stderr",
+  "verbs": ["every verb that stops on a rule of the refusal catalogue (lib/refusals.json)"],
+  "about": "The object that follows the prefix `qargi-refusal/1 ` on one line of standard error (the line stays under 4096 bytes); the human block follows it. The line is not always the first line of standard error: a warning of the verb (an anonymous lead identity, a remote that was not checked) may come before it, so a reader looks for the one line that starts with the prefix. The number in the prefix and `schema` are always equal. A reader acts on `code` and `exit`; `detail` is text for a person and a log and is never parsed. `exit` equals the exit status of the process. `epoch`, `state` and `tx` are reserved: null today, ignored by readers, given a type later without a new integer.",
+  "writes": "Nothing by itself: the line only says that a verb stopped, and what that verb changed before it stopped is the verb's own.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "code", "exit", "verb", "project", "role", "epoch", "state", "tx", "detail"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-refusal"},
+      "code": {"type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)+$", "description": "A code of the refusal catalogue; a code is never reused for another rule."},
+      "exit": {"type": "integer", "description": "The exit status of the process."},
+      "verb": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9:-]*( [a-z][a-z0-9:-]*)*$", "description": "The verb that stopped, or null when the caller named none."},
+      "project": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9]{0,23}$", "description": "The project the verb ran for, or null."},
+      "role": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9-]{0,40}$", "description": "The role of the caller, or null."},
+      "epoch": {"x-reserved": true, "description": "Reserved for the seat contract; always null today."},
+      "state": {"x-reserved": true, "description": "Reserved for the seat contract; always null today."},
+      "tx": {"x-reserved": true, "description": "Reserved for the seat contract; always null today."},
+      "detail": {"type": "string", "x-text": true, "description": "key=value pairs for a person and a log, separated by spaces; the name of a feature, a ref or a path appears only as a digest (sha256: and 12 hexadecimal digits); a count or a plan token as it is. Cut when the line would reach 4096 bytes."}
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin: the object of the contract line gains schema and kind as its last two keys"}]
+}

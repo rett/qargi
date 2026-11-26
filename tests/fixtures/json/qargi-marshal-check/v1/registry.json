@@ -1,0 +1,71 @@
+{
+  "registry": 1,
+  "kind": "qargi-marshal-check",
+  "schema": 1,
+  "status": "pinned",
+  "since": "0.3.9",
+  "stream": "stdout",
+  "verbs": ["marshal check --json", "marshal check NAME --json"],
+  "about": "Whether a feature is free for the caller. With NAME: `feature` is the name, `answer` is yours (the caller leads it), free (no lead) or free-stale (the lead's lease is stale: `lead` holds that lead), `warnings` are the feature's own warnings, the ones the text form prints on standard error as `qargi: warning: ...` (the lead is stale, the feature has no lead or was abandoned, another feature changes the same files), and `features` is absent. Other sentences on standard error (an anonymous lead identity, a remote that was not checked, a lease that was not renewed) are not in the document: `remote` says the second. Without NAME: `feature` and `answer` are null, `lead` is null, `warnings` is empty, and `features` holds one row for each open feature with its own `warnings`. A feature held by another live lead is not an answer: the verb exits 1 with a qargi-refusal line on standard error and no document, and a remote that cannot be asked (without --assume-unreachable-ok) exits 3 the same way. `remote` and `backend` are as in qargi-marshal-status: with --assume-unreachable-ok and a remote that cannot be reached the verb exits 0 from the cache and `remote` is unchecked; with --no-fetch or --no-write nothing is fetched and `remote` is not-asked on the shared refs backend. `lease` and `minutes_since_renewal` of a row mean what `lease_clock` says, as in qargi-marshal-status.",
+  "writes": "Unless --no-write is given: on the local backend a record whose branch is gone is marked abandoned; on the shared refs backend the call fetches the shared records into this machine's cache and updates this machine's own observation cache, with --no-fetch too (a lock file with it) and, with integrity on, its acceptance marks; with --assume-unreachable-ok it appends one audit line. With --no-write nothing is written and nothing is fetched. The shared records are never changed.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "project", "backend", "remote", "feature", "answer", "lead", "warnings"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-marshal-check"},
+      "project": {"type": "string"},
+      "backend": {"enum": ["local", "refs"], "x-since": "0.3.9", "description": "Where the records live: this host's files or the shared refs of the project's remote."},
+      "remote": {"enum": ["checked", "unchecked", "not-asked", "none"], "x-since": "0.3.9", "description": "Whether the answer was checked against the remote of the shared records: none, checked, unchecked (the fetch failed, with --assume-unreachable-ok) or not-asked (--no-fetch, --no-write or a member run)."},
+      "feature": {"type": ["string", "null"], "description": "The feature asked about; null when no NAME was given."},
+      "answer": {"enum": ["yours", "free", "free-stale", null], "description": "null when no NAME was given."},
+      "lead": {"$ref": "#/$defs/lead", "description": "The stale lead when the answer is free-stale; null otherwise."},
+      "warnings": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "The warnings of the feature asked about (only its own, not every sentence the verb prints on standard error); empty when no NAME was given (each row of `features` has its own)."},
+      "features": {"type": "array", "items": {"$ref": "#/$defs/row"}, "x-when": "No NAME was given: one row for each open feature."}
+    },
+    "$defs": {
+      "lead": {
+        "type": ["object", "null"],
+        "required": ["id", "user", "host", "since"],
+        "properties": {
+          "id": {"type": "string"},
+          "user": {"type": "string"},
+          "host": {"type": "string"},
+          "since": {"type": "string"},
+          "worktree": {"type": "string", "x-when": "The lead record names its work tree (a digest of its path)."},
+          "succeeds": {"type": "string", "x-when": "The lead took over as the successor of an earlier lead of the same host, user and work tree."}
+        }
+      },
+      "row": {
+        "type": "object",
+        "required": ["feature", "project", "status", "lead", "lease", "lease_clock", "minutes_since_renewal", "ttl_minutes", "renewed_at", "rev", "branch", "ghost", "updated_by", "purpose", "goal", "plan", "note", "finished_at", "warnings"],
+        "properties": {
+          "feature": {"type": "string"},
+          "project": {"type": "string"},
+          "status": {"enum": ["planned", "active", "blocked", "verifying", "released", "finished", "abandoned", "unled"], "description": "unled: the feature has a branch and no record."},
+          "lead": {"$ref": "#/$defs/lead"},
+          "lease": {"enum": ["live", "stale", "none"], "description": "none: the feature has no lead."},
+          "lease_clock": {"enum": ["wall", "observed-here"], "x-since": "0.3.9", "description": "What `lease` and `minutes_since_renewal` are measured on."},
+          "minutes_since_renewal": {"type": ["integer", "null"], "description": "Whole minutes; null when the feature has no lead or the age is unknown."},
+          "ttl_minutes": {"type": "integer"},
+          "renewed_at": {"type": ["string", "null"], "description": "The time of the last renewal as the record holds it; null when it was never renewed."},
+          "rev": {"type": "integer", "description": "The revision of the record."},
+          "branch": {"type": "boolean", "description": "The branch feature/NAME exists in this repository."},
+          "ghost": {"type": "boolean", "description": "The record is abandoned and its branch is gone."},
+          "updated_by": {"type": "string"},
+          "purpose": {"type": "string", "x-text": true},
+          "goal": {"type": "string", "x-text": true},
+          "plan": {"type": "string", "x-text": true},
+          "note": {"type": "string", "x-text": true},
+          "finished_at": {"type": ["string", "null"]},
+          "warnings": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "The warnings of this feature, the ones the text form prints for it as `qargi: warning: ...` on standard error."},
+          "provisional": {"type": "boolean", "x-when": "Shared refs backend: true while a claim has not reached the remote."},
+          "integrity": {"enum": ["signed", "unsigned", "INVALID", "cannot verify"], "x-open": true, "x-when": "The project's integrity setting is not off."},
+          "integrity_note": {"type": "string", "x-text": true, "x-when": "The project's integrity setting is not off."},
+          "signer": {"type": "string", "x-when": "The project's integrity setting is not off; empty when the record is not signed."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin"}]
+}

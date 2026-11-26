@@ -1,0 +1,35 @@
+{
+ "schema": 1,
+ "kind": "qargi-marshal-status",
+ "project": "app",
+ "backend": "local",
+ "remote": "none",
+ "features": [
+  {
+   "feature": "f1",
+   "project": "app",
+   "status": "active",
+   "lead": null,
+   "lease": "stale",
+   "lease_clock": "wall",
+   "minutes_since_renewal": null,
+   "ttl_minutes": 15,
+   "renewed_at": null,
+   "rev": 2,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "alice",
+   "purpose": "",
+   "goal": "the first goal",
+   "plan": "step one, step two",
+   "note": "a note",
+   "finished_at": null
+  }
+ ],
+ "agent_unattributed": [
+  {
+   "branch": "agent/x1",
+   "base": "feature/none"
+  }
+ ]
+}
