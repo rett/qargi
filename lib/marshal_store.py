@@ -63,6 +63,11 @@ changed, try again; only the refs backend returns it).
 The refusals of status and check (not of the other verbs) print, on standard error, the contract line and the block of lib/refusals.json, then the sentence
 above: marshal-feature-unknown, marshal-feature-held, marshal-remote-unreachable (exit 3) and, for every other refusal, marshal-refused. The exit status is the
 exception's, whatever the rendering does: when it fails for any reason only the sentence is printed (report_refusal), so a refusal is never taken for a defect.
+status and check take --json: one document of the kind qargi-marshal-status or qargi-marshal-check (lib/kinds), built in memory, dumped without NaN and checked against
+its registry file before anything is printed; a record that holds a value the shape does not allow is exit 70 with one line (never a document), and a stdout that
+cannot take the document is exit 1 with one plain line. `remote` says whether the answer was checked against the remote of the shared records (none, checked,
+unchecked, not-asked). status and check also take --no-write: the call writes nothing (a record whose branch is gone is not marked abandoned, no audit line, no cache of
+the remote records, no lock file) and fetches nothing (it implies --no-fetch), so `remote` is not-asked. A lease age is a whole number of minutes on every backend.
 Run through lib/marshal.sh; python3 -I, standard library only."""
 import argparse, calendar, fcntl, hashlib, io, json, os, pwd, re, socket, subprocess, sys, time
 
@@ -82,6 +87,14 @@ class Refuse(Exception):
     def __init__(self, message="", code=None, pairs=()):
         super().__init__(message)
         self.code, self.pairs = code, list(pairs)
+
+
+class Defect(Exception):
+    """The document a verb was about to print breaks its registry file (lib/kinds), or cannot be written as JSON: exit 70, one line, no traceback and no document."""
+
+
+class Unwritable(Exception):
+    """Standard output cannot be written (closed, a closed pipe, a full disk): exit 1, one plain line, no traceback."""
 
 
 class Unreachable(Refuse):
@@ -124,7 +137,8 @@ class Ctx:
         self.conf = getattr(a, "conf", "") or ""
         self.name = getattr(a, "name", None)
         self.be = be or LocalBackend()
-        self.fetch_ok = not getattr(a, "no_fetch", False) and not getattr(self.be, "member", False)
+        self.no_write = bool(getattr(a, "no_write", False))     # the call writes nothing (no record marked abandoned, no audit line, no cache) and fetches nothing
+        self.fetch_ok = not getattr(a, "no_fetch", False) and not self.no_write and not getattr(self.be, "member", False)
         self.need_remote = bool(getattr(a, "need_remote", False))   # claim and check of the command line: a remote that cannot be asked is a refusal, not a warning
         self.verb = getattr(a, "verb", "")
         self.ttl = a.ttl if a.ttl and a.ttl > 0 else 15
@@ -139,6 +153,8 @@ class Ctx:
         self._worktree = None
         self.git_memo = None        # {git arguments: output} while a listing runs (gather): the repository is not changed meanwhile
         self.t = now()
+        if self.no_write and self.be.refs:
+            self.be.dry, self.be.persist = True, False        # the cache of the remote records is read, never written (a lock file is not made)
 
     def path(self, name):
         return os.path.join(self.state, "features", "%s-%s.json" % (self.project, name))
@@ -191,7 +207,11 @@ def lease(ctx, rec):
     age = ctx.be.age(ctx, rec)
     if age is None:
         return ctx.be.no_age, None
-    return ("live" if age < ctx.ttl * 60 else "stale"), max(age, 0) // 60
+    try:
+        mins = int(max(age, 0)) // 60            # the observed age of the refs backend is a float: a document holds integers only
+    except (ValueError, OverflowError):          # a clock that gave NaN or infinity is no age
+        return ctx.be.no_age, None
+    return ("live" if age < ctx.ttl * 60 else "stale"), mins
 
 
 def new_lead(ctx, since=None, succeeds=None):
@@ -306,6 +326,7 @@ class LocalBackend:
     integrity = "off"
     ghost_fix = True              # a record whose branch is gone is abandoned on a read
     no_age = "stale"              # the lease of a record without a readable renewed_at
+    clock = "wall"                # what `lease` and `minutes_since_renewal` are measured on (the field lease_clock of the documents)
     renewed_word = "renewed"
 
     def age(self, ctx, rec):
@@ -655,6 +676,7 @@ class RefsBackend:
     refs = True
     ghost_fix = False
     no_age = "live"
+    clock = "observed-here"
     renewed_word = "last change seen"
 
     def __init__(self, remote, integrity="off"):
@@ -666,6 +688,7 @@ class RefsBackend:
         self.dry = os.environ.get("QARGI_DRY") == "1"
         self.persist = not (self.member or self.dry)
         self.snap = None
+        self.asked = False            # the last read of the cache fetched first
         self.heads = {}
         self.warned = set()
 
@@ -691,6 +714,7 @@ class RefsBackend:
         if not ctx.repo:
             raise Refuse("the shared refs backend needs the project's repository (repo.path)")
         why = None
+        self.asked = bool(fetch)
         lk = self.repo_lock(ctx)
         try:
             if fetch:
@@ -1117,7 +1141,7 @@ def task_state(r):
     else:
         parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
         state = ", ".join(parts)
-    return {"verified": verified, "applied": applied, "cleaned": cleaned, "closed": closed, "state": state}
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "closed": closed, "directory_gone": not os.path.isdir(run), "state": state}
 
 
 def tasks_of(ctx, name):
@@ -1198,7 +1222,7 @@ def worktrees_of(ctx, name):
 def ghost_fix(ctx, name, rec):
     """A record whose branch is gone and that never finished is abandoned: record the transition. -> the record.
     Only the local backend writes it (a read never pushes, and another machine may simply not have the branch)."""
-    if rec is None or not ctx.be.ghost_fix or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
+    if rec is None or not ctx.be.ghost_fix or ctx.no_write or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
         return rec
 
     def fn(r):
@@ -1219,7 +1243,7 @@ def describe(ctx, name, rec, files_cache, derived=True):
     d = {"feature": name, "project": ctx.project, "status": rec["status"],
          "lead": (dict({"id": clean(ld["id"]), "user": clean(ld.get("user", "")), "host": clean(ld.get("host", "")), "since": clean(ld.get("since", ""))},
                   **{k: clean(str(ld[k]))[:128] for k in ("worktree", "succeeds") if ld.get(k)}) if ld else None),
-         "lease": st, "minutes_since_renewal": mins, "ttl_minutes": ctx.ttl, "renewed_at": rec["renewed_at"],
+         "lease": st, "lease_clock": ctx.be.clock, "minutes_since_renewal": mins, "ttl_minutes": ctx.ttl, "renewed_at": rec["renewed_at"],
          "rev": rec.get("rev", 0), "branch": branch_exists(ctx, name), "ghost": ghost, "updated_by": clean(rec.get("updated_by") or ""),
          "purpose": capped(rec["purpose"]), "goal": capped(rec["goal"]), "plan": capped(rec["plan"]), "note": capped(rec["note"]),
          "finished_at": rec["finished_at"]}
@@ -1233,6 +1257,73 @@ def describe(ctx, name, rec, files_cache, derived=True):
         d["tasks"], d["agent_branches"] = tasks_of(ctx, name), (unmerged_agents(ctx, name) if d["branch"] else [])
         d["worktrees"], d["overlap"] = worktrees_of(ctx, name), (overlaps(ctx, name, files_cache) if d["branch"] else {})
     return d
+
+
+def backend_of(ctx):
+    return "refs" if ctx.be.refs else "local"
+
+
+def remote_of(ctx):
+    """Whether the answer was checked against the remote of the shared records: none (the local backend has no remote), checked (the fetch ran and worked),
+    unchecked (it was tried and failed: the answer is from the cache this machine fetched last) or not-asked (--no-fetch, --no-write, a member run)."""
+    be = ctx.be
+    if not be.refs:
+        return "none"
+    if be.snap is None or not be.asked:
+        return "not-asked"
+    return "checked" if be.snap.why is None else "unchecked"
+
+
+JK = None
+
+
+def jsonkind_mod():
+    """lib/jsonkind.py (the registry files of lib/kinds and the checker of a document), loaded by path."""
+    global JK
+    if JK is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("jsonkind", os.path.join(os.path.dirname(os.path.realpath(__file__)), "jsonkind.py"))
+        JK = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(JK)
+    return JK
+
+
+def json_document(kind, doc):
+    """The text of the document DOC of the kind KIND: dumped without NaN and checked against the registry file of the kind before anything is printed
+    (R-J9: exit 0 means one complete, valid document). A record that holds a value the shape does not allow, a registry file that is not well formed or a
+    value that is no JSON is a Defect: exit 70, never a document. The text ends in one newline."""
+    try:
+        text = json.dumps(doc, indent=1, allow_nan=False) + "\n"
+    except (ValueError, TypeError) as e:
+        raise Defect("the document of %s cannot be written as JSON (%s); a record of the marshal holds a value that is no JSON number or text" % (kind, e))
+    return checked_text(kind, text)
+
+
+def checked_text(kind, text):
+    """TEXT, the document of the kind KIND, when it is valid against the registry file of the kind; else a Defect (see json_document)."""
+    jk = jsonkind_mod()
+    try:
+        found = jk.validate(jk.registry_path(kind), text)
+    except jk.RegistryError as e:
+        raise Defect("the document of %s cannot be checked: %s" % (kind, e))
+    if found:
+        raise Defect("the document of %s breaks its registry file at %s %s: %s; a record of the marshal holds a value the document does not allow" % (kind, found[0][0], found[0][1], found[0].message))
+    return text
+
+
+def write_stdout(text):
+    """TEXT on standard output, flushed. A stdout that cannot take it is Unwritable, and is silenced so that the interpreter does not complain again at exit."""
+    try:
+        if sys.stdout is None:
+            raise OSError("standard output is closed")
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except (OSError, ValueError) as e:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+        raise Unwritable("cannot write the document to standard output (%s)" % (getattr(e, "strerror", None) or e))
 
 
 def lead_word(d, brief=False):
@@ -1331,11 +1422,8 @@ def v_status(ctx, a):
     # the agent branches of no open feature are said once, after the features, never under each of them
     ua = [] if a.brief else [{"branch": b, "base": base} for b, base in unattributed_agents(ctx)]
     if a.json:
-        objs = [d for _, d, _ in items]
-        if a.name:
-            print(json.dumps(dict(objs[0], agent_unattributed=ua), indent=1))
-        else:
-            print(json.dumps({"project": ctx.project, "features": objs, "agent_unattributed": ua}, indent=1))
+        write_stdout(json_document("qargi-marshal-status", {"schema": 1, "kind": "qargi-marshal-status", "project": ctx.project, "backend": backend_of(ctx),
+                                                           "remote": remote_of(ctx), "features": [d for _, d, _ in items], "agent_unattributed": ua}))
         return
     if not items:
         print("no open features (qargi feature start NAME)")
@@ -1803,6 +1891,7 @@ def main(argv):
     p.add_argument('--show', action="store_true")
     p.add_argument('--expect-head', dest="expect_head")
     p.add_argument('--need-remote', dest="need_remote", action="store_true")
+    p.add_argument('--no-write', dest="no_write", action="store_true")
     a = p.parse_intermixed_args(argv)   # NAME comes after the options: Python before 3.13 would take an empty optional positional too early
     if a.verb not in ("status", "check") and not a.name:
         return usage_exit("%s needs a feature NAME" % a.verb)
@@ -1815,6 +1904,15 @@ def main(argv):
         return refused(a, e, 3)
     except Refuse as e:
         return refused(a, e, 1)
+    except Defect as e:
+        print("qargi: defect: %s" % CTRL_ALL_RE.sub(" ", str(e)), file=sys.stderr)
+        return 70
+    except Unwritable as e:
+        try:
+            print("qargi: %s" % e, file=sys.stderr)
+        except OSError:
+            pass
+        return 1
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
     except Exception:          # a bug is not a refusal: exit 70, so a caller never mistakes it for "another lead holds this"

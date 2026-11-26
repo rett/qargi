@@ -97,7 +97,7 @@ grep -q "^unattributed agent branches .*agent/ondev (base develop)" "$T/o" && ok
 git -C "$R" update-ref refs/heads/feature/f1 agent/stray   # merged into a feature: no longer unattributed
 M $t0 status --all; grep -q "agent/stray" "$T/o" && no "SPEC an agent branch merged into a feature is still listed as unattributed: $(grep -n stray "$T/o")" || ok "status --all: a branch merged into a feature leaves the unattributed line"
 M $t0 status --all --json; jq -e '[.agent_unattributed[].branch] == ["agent/ondev"] and ([.features[] | select(.feature == "f1") | .agent_branches[]] == ["agent/derivedtask"])' "$T/o" >/dev/null 2>&1 && ok "status --all --json: agent_branches per feature, agent_unattributed once" || no "SPEC json attribution: $(out)"
-M $t0 status f2 --json; jq -e '.agent_branches == ["agent/othertask"] and (.agent_unattributed | length) == 1' "$T/o" >/dev/null 2>&1 && ok "status NAME --json: the feature's branches and the unattributed ones" || no "SPEC json NAME attribution: $(out)"
+M $t0 status f2 --json; jq -e '.features[0].agent_branches == ["agent/othertask"] and (.agent_unattributed | length) == 1' "$T/o" >/dev/null 2>&1 && ok "status NAME --json: the feature's branches and the unattributed ones" || no "SPEC json NAME attribution: $(out)"
 "$DA" feature status f2 >"$T/o" 2>"$T/e"
 grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && grep -q "^unattributed agent branches .*agent/ondev" "$T/o" && ok "feature status: the same attribution and the unattributed line" || no "SPEC feature status attribution: $(out)"
 git -C "$R" update-ref -d refs/heads/agent/othertask; git -C "$R" update-ref -d refs/heads/agent/ondev
@@ -112,7 +112,7 @@ grep -q "opentask (build) started 2026-01-01T00:00:00Z, not verified$" "$T/o" &&
 grep -q "vertask (build) .*, verified$" "$T/o" && ok "status: RUN/verified reads verified" || no "SPEC verified file: $(out)"
 grep -q "regvertask (build) .*, verified, directory gone$" "$T/o" && ok "status: the registry's verified mark reads verified when the directory is gone" || no "SPEC verified mark: $(out)"
 ! grep -q "donetask (build)" "$T/o" && grep -q "^  cleaned: donetask$" "$T/o" && ok "status: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC cleaned: $(out)"
-M $t0 status f5 --json; jq -e '[.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
+M $t0 status f5 --json; jq -e '.features[0] | [.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
 # feature merge warns of a run that exists and has no passing verify, and only of that
 agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from donetask feature/f5
 "$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?

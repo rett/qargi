@@ -152,5 +152,108 @@ for how in unreadable broken missing; do
     && ok "check: with the catalogue $how a held feature is still exit 1, the plain line and no traceback" || no "check held, catalogue $how: rc=$RC $(head -c 600 "$T/e")"
 done
 
+
+# ================================================================ (3) status --json: one shape, with or without NAME, on both backends
+NOW=$((1000000 + 20))
+call L marshal status --all --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && ok "status --all --json (local): a valid document" || no "status --all --json: rc=$RC $(cat "$T/v"; head -c 400 "$T/e")"
+jq -e '.kind == "qargi-marshal-status" and .schema == 1 and .backend == "local" and .remote == "none" and (.features | length) == 6 and (.agent_unattributed | type) == "array"' "$T/o" >/dev/null \
+  && ok "status --all --json (local): backend local, remote none, one row for each open feature" || no "status --all --json fields: $(head -c 600 "$T/o")"
+jq -e '[.features[] | select(.feature == "f1")] | .[0] | .lease == "live" and .lease_clock == "wall" and .minutes_since_renewal == 0 and .lead.id == "alice" and (.tasks | type) == "array" and (.overlap | type) == "object"' "$T/o" >/dev/null \
+  && ok "status --all --json (local): a row has the lead, a live lease on the wall clock and the derived lists" || no "status row f1: $(jq -c '.features[] | select(.feature == "f1")' "$T/o")"
+call L marshal status f1 --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.kind == "qargi-marshal-status" and (.features | length) == 1 and .features[0].feature == "f1" and (has("lead") | not) and (.agent_unattributed | type) == "array"' "$T/o" >/dev/null \
+  && ok "status NAME --json: the same shape with one row (no bare feature object any more)" || no "status f1 --json: rc=$RC $(cat "$T/v"; head -c 400 "$T/o")"
+call L marshal status --all --history --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && ok "status --all --history --json: a valid document" || no "status --history --json: rc=$RC $(cat "$T/v")"
+# a run of the lead's registry: one whose directory exists and one that is gone
+mkdir -p "$T/rundir"
+printf '%s\n' '{"run":"'"$T"'/rundir","slug":"t1","ability":"build","base":"feature/f1","started":"2026-01-01T00:00:00Z"}' '{"run":"'"$T"'/gone","slug":"t2","ability":"review","base":"feature/f1","started":"2026-01-02T00:00:00Z"}' > "$L0/s/local-runs.jsonl"
+call L marshal status f1 --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].tasks | length == 2 and .[0].directory_gone == false and .[1].directory_gone == true and (.[1].state | test("directory gone"))' "$T/o" >/dev/null \
+  && ok "status --json: a task has directory_gone, true for a run whose directory is gone" || no "status tasks: rc=$RC $(jq -c '.features[0].tasks' "$T/o")"
+rm -f "$L0/s/local-runs.jsonl"
+
+call XE a QARGI_MARSHAL_MONO=1000.7 marshal status --all --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.backend == "refs" and .remote == "checked"' "$T/o" >/dev/null && ok "status --all --json (refs): a valid document, backend refs, remote checked" || no "status refs: rc=$RC $(cat "$T/v"; head -c 400 "$T/o")"
+call XE a QARGI_MARSHAL_MONO=1500.3 marshal status --all --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '[.features[] | select(.feature == "r1")] | .[0] | .lease_clock == "observed-here" and .lead.id == "alice"' "$T/o" >/dev/null \
+  && grep -Eq '"minutes_since_renewal": 8,' "$T/o" && ok "status --json (refs): with the monotonic clock held minutes_since_renewal is the integer 8 (it was a float), lease_clock observed-here" || no "status refs minutes: rc=$RC $(cat "$T/v"; jq -c '.features[] | select(.feature == "r1")' "$T/o")"
+call XE a marshal status --all --json --no-fetch
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.remote == "not-asked" and .backend == "refs"' "$T/o" >/dev/null && ok "status --json --no-fetch (refs): remote not-asked" || no "status refs --no-fetch: rc=$RC $(head -c 300 "$T/o")"
+mv "$ORIGIN" "$ORIGIN.gone"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal status r1 --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.remote == "unchecked" and .features[0].feature == "r1"' "$T/o" >/dev/null && grep -q 'remote not checked' "$T/e" \
+  && ok "status --json (refs, remote unreachable): exit 0 from the cache, remote unchecked, the notice on stderr" || no "status refs unreachable: rc=$RC $(cat "$T/v"; head -c 300 "$T/o"; head -c 300 "$T/e")"
+mv "$ORIGIN.gone" "$ORIGIN"
+
+# ================================================================ (4) a record that holds a value the document does not allow: exit 70, no document; the text form is as before
+call L marshal claim f4 --as alice --goal "text"
+call L marshal status f4
+cp "$T/o" "$T/text.before"; [ "$RC" = 0 ] || no "setup: status f4 (text) rc=$RC"
+cp "$(LREC f4)" "$T/f4.good"
+jq '.rev = 1.5' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
+call L marshal status f4 --json
+[ "$RC" = 70 ] && [ ! -s "$T/o" ] && grep -q '^qargi: defect: ' "$T/e" && grep -q 'rev' "$T/e" && ! grep -q Traceback "$T/e" && [ "$(wc -l < "$T/e")" = 1 ] \
+  && ok "status --json: a record with \"rev\": 1.5 is exit 70 with one line that names the path, and no document" || no "status rev 1.5: rc=$RC $(cat "$T/o" "$T/e")"
+call L marshal status f4
+[ "$RC" = 0 ] && cmp -s "$T/o" "$T/text.before" && ok "status (text): the same record gives the same text as before" || no "status text with rev 1.5: rc=$RC $(diff "$T/text.before" "$T/o")"
+call L marshal status --all --json
+[ "$RC" = 70 ] && [ ! -s "$T/o" ] && ok "status --all --json: one bad row makes the whole document a defect (exit 70)" || no "status --all with a bad row: rc=$RC $(head -c 300 "$T/o")"
+sed -i 's/"rev": [0-9.]*/"rev": NaN/' "$(LREC f4)"
+call L marshal status f4 --json
+[ "$RC" = 70 ] && [ ! -s "$T/o" ] && ! grep -q Traceback "$T/e" && ok "status --json: a record with \"rev\": NaN is exit 70, never a document with NaN in it" || no "status NaN: rc=$RC $(cat "$T/o" "$T/e")"
+cp "$T/f4.good" "$(LREC f4)"; jq '.renewed_at = 12' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
+call L marshal status f4 --json
+[ "$RC" = 70 ] && ok "status --json: a renewed_at that is a number is exit 70" || no "status renewed_at 12: rc=$RC $(cat "$T/o" "$T/e")"
+jq '.renewed_at = "2001-09-09T01:46:40Z"' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
+call L marshal status f4 --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && ok "status --json: the record put right gives a document again" || no "status f4 repaired: rc=$RC $(cat "$T/o" "$T/e")"
+
+# ================================================================ (5) a stdout that cannot take the document: a failure with a plain line, never exit 0
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_NO_JSON_WRAP=1 "$DA" marshal status --all --json >&- 2>"$T/e"; RC=$?
+[ "$RC" != 0 ] && ! grep -q Traceback "$T/e" && ok "status --json with stdout closed: a non-zero exit, no traceback ($RC)" || no "status closed stdout: rc=$RC $(cat "$T/e")"
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_NO_JSON_WRAP=1 "$DA" marshal status --all --json >/dev/full 2>"$T/e"; RC=$?
+[ "$RC" = 1 ] && [ "$(wc -l < "$T/e")" = 1 ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "status --json to a full disk: exit 1 and one plain line" || no "status full stdout: rc=$RC $(cat "$T/e")"
+
+# ================================================================ (8) --no-write: nothing is written and nothing is fetched
+# a local record whose branch is gone: status and check mark it abandoned (and write the record); with --no-write the record stays byte for byte
+NOW=$((1000000 + 50))
+call L marshal claim f6 --as alice --goal "branch will go"
+git -C "$R" branch -q -D feature/f6
+cp "$(LREC f6)" "$T/f6.before"; rm -f "$L0/s/audit.log"; cp -a "$L0/s/features" "$T/features.before"
+call L marshal status f6 --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].status == "active" and .features[0].ghost == false and .features[0].branch == false and .remote == "none"' "$T/o" >/dev/null \
+  && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status NAME --no-write: a record whose branch is gone is shown as it is and stays byte for byte" || no "status --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o")"
+call L marshal status --all --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write: the same" || no "status --all --no-write: rc=$RC $(cat "$T/v")"
+call L marshal status --all --no-write
+[ "$RC" = 0 ] && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write (text): the same" || no "status --all --no-write text: rc=$RC $(out)"
+call L marshal status f6 --json
+[ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true' "$T/o" >/dev/null && ! cmp -s "$(LREC f6)" "$T/f6.before" \
+  && ok "status NAME (without --no-write): the default is unchanged, the record is marked abandoned" || no "status f6 default: rc=$RC $(head -c 300 "$T/o")"
+git -C "$R" branch -q feature/f6 develop
+
+# the shared records: nothing fetched, no cache written, the answer says not-asked
+OBS=$T/m/a/s/features/.observed-app.json
+XE a QARGI_MARSHAL_MONO=5000 marshal status --all --brief >/dev/null
+cp "$OBS" "$T/obs.before"; cp -a "$T/m/a/s/features" "$T/afeatures.before"
+mv "$ORIGIN" "$ORIGIN.gone"
+call XE a QARGI_MARSHAL_MONO=9000 QARGI_REMOTE_TIMEOUT=2 marshal status --all --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.remote == "not-asked" and .backend == "refs"' "$T/o" >/dev/null && ! grep -q 'remote not checked' "$T/e" && cmp -s "$OBS" "$T/obs.before" \
+  && ok "status --no-write (refs): remote not-asked, no fetch tried (the origin is away and nothing is said), the clock cache is as it was" || no "status refs --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o"; cat "$T/e")"
+mv "$ORIGIN.gone" "$ORIGIN"
+# the default is unchanged: without --no-write the call fetches and writes the clock cache
+rm -f "$OBS"
+call XE a QARGI_MARSHAL_MONO=9000 marshal status --all --no-write --json
+[ "$RC" = 0 ] && [ ! -e "$OBS" ] && ok "status --no-write (refs): the clock cache is not even made" || no "status refs --no-write makes the cache: rc=$RC"
+call XE a QARGI_MARSHAL_MONO=9000 marshal status --all --json
+[ "$RC" = 0 ] && jq -e '.remote == "checked"' "$T/o" >/dev/null && [ -s "$OBS" ] && ok "status (refs) without --no-write: fetches, and the clock cache is written (the default is unchanged)" || no "status refs default: rc=$RC $(head -c 200 "$T/o")"
+
+# ================================================================ (9) a local prepare on a claimed feature records the lead id in its run record (lib/local.sh reads it from the one status shape)
+call L marshal claim f5 --as carol --goal "prepared"
+mkdir -p "$T/scratch2"
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=carol "$DA" local prepare --repo "$R" --base feature/f5 --slug pj1 --scratch "$T/scratch2" >"$T/o" 2>"$T/e"; RC=$?
+[ "$RC" = 0 ] && [ "$(jq -r 'select(.slug == "pj1") | .lead' "$L0/s/local-runs.jsonl" 2>/dev/null)" = carol ] && ok "local prepare: the run record of a claimed feature holds the lead id" || no "local prepare lead: rc=$RC $(cat "$T/e"; cat "$L0/s/local-runs.jsonl" 2>&1 | head -c 300)"
 [ "$fail" = 0 ] && echo "all ok" || echo "FAILURES"
 exit "$fail"

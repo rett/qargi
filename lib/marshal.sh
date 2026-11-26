@@ -33,7 +33,8 @@
 # switch file (default off). handoff needs no lease and works for a feature someone else leads; it changes no record, ref or audit line and
 # fetches nothing (the shared records are read from the cache this machine holds); only --write FILE makes a file (new, mode 600, never
 # inside a repository or the qargi directories), which the guard refuses to a member. A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
-# session hook uses it).
+# session hook uses it). status and check also take --no-write: the call writes nothing (no record is marked abandoned, no audit line, no cache of
+# the remote records is updated) and fetches nothing (it implies --no-fetch); the documents of --json then say remote "not-asked".
 #
 # The project answer marshal.lease_minutes is the lease length in minutes (a whole number from 1 to 1440, default 15): qargi project set P marshal.lease_minutes 20.
 # The identity is --as ID, else $QARGI_LEAD, else user@host (anonymous: only ever warns).
@@ -151,14 +152,14 @@ marshal_main() {
   # (feature.sh and cred.sh do the same)
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch] [--assume-unreachable-ok]
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch] [--no-write] [--assume-unreachable-ok]
        qargi marshal handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
        qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal forget NAME [--project P] [--plan TOKEN --approved WORDS]"
-  local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' assume='' want sub='' line='' principal='' integ=''
+  local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' nowrite='' assume='' want sub='' line='' principal='' integ=''
   local -a opt=()
   case $verb in
     key) sub=${1:-}; [ "$sub" = init ] || { echo "qargi: $usage" >&2; exit 2; }; shift;;
@@ -175,7 +176,7 @@ marshal_main() {
     resign|forget) want=' --project --plan --approved ';;
     disable) want=' --project --plan --approved ';;
     claim) want=' --project --as --goal --as-successor-of --assume-unreachable-ok ';;
-    status) want=' --project --as --all --history --brief --json --no-fetch ';;
+    status) want=' --project --as --all --history --brief --json --no-fetch --no-write ';;
     handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
     check) want=' --project --as --no-fetch --assume-unreachable-ok ';;
@@ -186,9 +187,9 @@ marshal_main() {
   esac
   while [ $# -gt 0 ]; do
     case $1 in
-      --all|--history|--brief|--json|--no-fetch|--assume-unreachable-ok)
+      --all|--history|--brief|--json|--no-fetch|--no-write|--assume-unreachable-ok)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
-        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; --no-fetch) nofetch=1;; --assume-unreachable-ok) assume=1;; esac; shift;;
+        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; --no-fetch) nofetch=1;; --no-write) nowrite=1;; --assume-unreachable-ok) assume=1;; esac; shift;;
       --*)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
         [ $# -ge 2 ] || { echo "qargi: $1 needs a value; $usage" >&2; exit 2; }
@@ -248,6 +249,7 @@ marshal_main() {
   [ -z "$json" ] || opt+=(--json)
   [ -z "$history" ] || opt+=(--history)
   [ -z "$nofetch" ] || opt+=(--no-fetch)
+  [ -z "$nowrite" ] || opt+=(--no-write)
   if [ "$verb" = enable ]; then
     local remote=origin tok
     git -C "$(marshal_repo "$PROJ")" remote get-url "$remote" >/dev/null 2>&1 || die "the repository of $PROJ has no remote '$remote' to keep the shared refs on"
