@@ -121,10 +121,14 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   `qargi agent remove` takes away for each: the member file, the copy of its render in the configuration directory and its entry
   in `agents.json`) and the approved `verify.environment` declaration the state keeps for it, so that a project made later under
   the same name is not compared with it. The plan lists exactly those files and a token; the apply needs `--plan TOKEN --approved
-  "<the owner's words>"`, writes the audit line `project:remove` with the words, and touches nothing in the repository: no branch,
+  "<the owner's words>"`; it reads what could hold the removal back once more and the approved declarations, writes the audit line `project:remove` with the
+  words before the first removal (`begun`) and a last one when it is done (`removed`), and touches nothing in the repository: no branch,
   no checkout, no git operation that changes anything. The marshal records, the audit log, the project's memory, the rendered
   packs and member render under `~/.qargi/state`, and the stored plans stay; the plan lists the files of the marshal that are there
-  (the switch file of a project on the local backend, the allowed signers) as `stays:` lines. The token covers the project, the hash of the answers
+  (the switch file of a project on the local backend, the allowed signers) as `stays:` lines. A removal that fails part way (a file that cannot be removed) leaves what was already
+  removed removed and the stored answers in place, writes an audit line that says after how many members it stopped, and exits 1; a new
+  plan lists what is left, and the apply of it finishes. A hold that appears between the plan and the apply refuses the apply as it
+  refuses the plan. The token covers the project, the hash of the answers
   file, the approved declaration, the hash of the project's raw record in `agents.json` and each member, and nothing that could hold the removal back, so it stays good after a
   refusal. It is refused (exit 2, nothing changed, with the plan as with the apply) when something still names the project, each
   refusal naming the one command that clears it:

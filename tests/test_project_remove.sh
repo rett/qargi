@@ -286,6 +286,51 @@ run "$DA" project remove gamma --plan "$(tokof)" --approved "retire gamma"; rc=$
 { [ $rc = 0 ] && [ ! -e "$T/c/projects/gamma.json" ] && grep -q "removed project gamma: its stored answers and 0 member(s)" "$T/o"; } && ok "a project with no member is removed (members: none in its plan)" || no "gamma apply: rc=$rc $(out)"
 jq -e 'select(.verb == "project:remove") | .approved == "retire gamma" and (.detail | startswith("gamma"))' "$T/s/audit.log" >/dev/null && ok "the audit line project:remove carries the owner's words" || no "audit: $(tail -2 "$T/s/audit.log")"
 
+# --- the apply reads again before it changes anything, writes its audit line first, and says in the audit log where it stopped
+make_repo "$T/rdelta"; lproj delta "$T/rdelta"
+$DA agent add rune --roles build --project delta >/dev/null 2>&1 && $DA agent add dusk --roles write --project delta >/dev/null 2>&1 && ok "setup: delta has two members" || no "setup delta: agent add"
+python3 -I "$SE" approved set delta '{"fds":"ci-like"}' --by test --state "$T/s" >/dev/null
+DM=$T/s/render/delta/fakelink.agents
+delta_fp() { ( cd "$T" && { find c s -type f \( -path '*delta*' \) ! -name audit.log ! -path 's/plans/*' -print0 | sort -z | xargs -0 sha256sum; sha256sum c/agents.json s/verify-env.json; } ) | sha256sum; }
+delta_audit() { jq -c --arg k "$1" 'select(.verb == "project:remove" and (.detail | startswith("delta")) and (.detail | test($k)))' "$T/s/audit.log" 2>/dev/null | wc -l; }
+held_apply() { # HOLDPATH TOKEN WORDS : start the apply with the hold, return when it reached the point; the caller changes things, creates HOLDPATH.go and calls wait_apply
+  rm -f "$1.reached" "$1.go"
+  QARGI_TEST_REMOVE_HOLD=$1 "$DA" project remove delta --plan "$2" --approved "$3" >"$T/o" 2>"$T/e" & HPID=$!
+  for _ in $(seq 100); do [ -e "$1.reached" ] && return 0; sleep 0.1; done
+  return 1
+}
+wait_apply() { : > "$1.go"; wait "$HPID"; rc=$?; }
+
+# a feature that appears after the plan is shown and before the first removal refuses the apply: nothing changed and no audit line begun
+run "$DA" project remove delta; tokd=$(tokof); d0=$(delta_fp)
+if held_apply "$T/hold1" "$tokd" "retire delta"; then
+  git -C "$T/rdelta" branch -q feature/late develop; wait_apply "$T/hold1"
+  { refused $rc "project-remove-feature" "late" && [ "$d0" = "$(delta_fp)" ] && [ "$(delta_audit begun)" = 0 ]; } && ok "a hold that appeared after the plan (an open feature) refuses the apply (exit 2): nothing changed, no audit line written" || no "hold after the plan: rc=$rc d=$(delta_audit begun) $(out)"
+else no "the hold of the apply was not reached"; kill "$HPID" 2>/dev/null; fi
+git -C "$T/rdelta" branch -D feature/late >/dev/null 2>&1; d0=$(delta_fp)
+
+# the approved declarations are read before a member is removed: one that cannot be read leaves the members, the answers and the audit log as they were
+cp "$T/s/verify-env.json" "$T/venv.keep"; run "$DA" project remove delta; tokd=$(tokof); d0=$(delta_fp)
+if held_apply "$T/hold2" "$tokd" "retire delta"; then
+  printf '{broken' > "$T/s/verify-env.json"; d1=$(delta_fp); wait_apply "$T/hold2"
+  { [ $rc = 1 ] && grep -q "nothing of delta was removed" "$T/e" && [ "$d1" = "$(delta_fp)" ] && [ -f "$DM/rune.toml" ] && [ -f "$T/c/projects/delta.json" ] && [ "$(delta_audit begun)" = 0 ]; } \
+    && ok "approved declarations that cannot be read stop the apply before any member is removed (exit 1): nothing half removed, no audit line" || no "verify-env unreadable: rc=$rc $(out)"
+else no "the hold of the apply was not reached (2)"; kill "$HPID" 2>/dev/null; fi
+cp "$T/venv.keep" "$T/s/verify-env.json"; d0=$(delta_fp)
+
+# a step that fails after the audit line: the log says it began and where it stopped, the answers stay, and a second plan finishes the removal
+mv "$T/c/agents/delta/rune.toml" "$T/rune.copy"; mkdir "$T/c/agents/delta/rune.toml"; : > "$T/c/agents/delta/rune.toml/in-the-way"
+run "$DA" project remove delta; tokd=$(tokof)
+run "$DA" project remove delta --plan "$tokd" --approved "retire delta"; rc=$?
+{ [ $rc = 1 ] && grep -q "project remove stopped" "$T/e" && grep -q "the stored answers of delta are still there" "$T/e" && [ -f "$T/c/projects/delta.json" ] \
+  && [ "$(delta_audit 'begun')" = 1 ] && [ "$(delta_audit 'stopped after [01] of 2 member')" = 1 ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 0 ]; } \
+  && ok "a removal that stops part way writes the audit line before it starts and a second one that says where it stopped; the answers stay" || no "stopped apply: rc=$rc audit=$(grep -c . "$T/s/audit.log") $(out)"
+rm -rf "$T/c/agents/delta/rune.toml"; run "$DA" project remove delta; tokd=$(tokof)
+run "$DA" project remove delta --plan "$tokd" --approved "retire delta, again"; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/c/projects/delta.json" ] && [ ! -e "$DM/rune.toml" ] && [ ! -e "$DM/dusk.toml" ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 1 ] && jq -e '.projects | has("delta") | not' "$T/c/agents.json" >/dev/null; } \
+  && ok "after the cause is cleared a new plan finishes the removal, and the log ends with the line removed" || no "second apply: rc=$rc $(out)"
+before=$(alpha_all)
+
 # --- nobody but the lead: a member's run, a member mark, a coordinator label
 mkdir -p "$T/memrun"; : > "$T/memrun/ability"; : > "$T/memrun/refs.before"
 for how in "run directory" "member mark" "coordinator label"; do
