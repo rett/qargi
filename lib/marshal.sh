@@ -12,7 +12,8 @@
 #                                                answers from the cache) and records marshal:unreachable-ok in the audit log. The shell API below never refuses for this.
 #   marshal.sh status [NAME|--all] --json, check [NAME] --json   one document each (lib/kinds/qargi-marshal-status.json and qargi-marshal-check.json; qargi help json KIND
 #                                                lists the fields): on standard output alone, exit 0 only after a complete valid document, remote says whether the answer was checked
-#   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
+#   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py). With --json
+#                                                and --write the document goes to standard output first, then the file is made, then the sentence goes to standard error
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
 #   marshal.sh enable --integrity off|advisory|strict [--project P] [--plan TOKEN --approved WORDS]   set how records are signed

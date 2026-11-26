@@ -274,6 +274,69 @@ call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --json
 refusal marshal-remote-unreachable 3 && ok "check --json (refs, remote unreachable, no override): exit 3, the line, no document" || no "check refs unreachable: $(refusal marshal-remote-unreachable 3; out)"
 mv "$ORIGIN.gone" "$ORIGIN"
 
+# ================================================================ (7) handoff --json: remote, backend_fallback, integers, the write
+NOW=$((1000000 + 40))
+call L marshal handoff --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.kind == "qargi-handoff" and .backend == "local" and .remote == "none" and .backend_fallback == false and .truncated == false' "$T/o" >/dev/null \
+  && ok "handoff --json (local): a valid document, remote none, no fallback" || no "handoff local: rc=$RC $(cat "$T/v"; head -c 400 "$T/e")"
+call L marshal handoff f1 --json
+[ "$RC" = 0 ] && valid qargi-handoff && [ "$(jq '.features | length' "$T/o")" = 1 ] && ok "handoff NAME --json (local): a valid document with one feature" || no "handoff f1: rc=$RC $(cat "$T/v")"
+jq '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}' "$T/m/a/c/projects/app.json" > "$T/m/a/c/p.tmp" && mv "$T/m/a/c/p.tmp" "$T/m/a/c/projects/app.json"
+call XE a QARGI_MARSHAL_MONO=3000 marshal handoff --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.backend == "refs" and .remote == "not-asked" and .backend_fallback == false' "$T/o" >/dev/null \
+  && ok "handoff --json (refs): a valid document, remote not-asked (the handoff never fetches), no fallback" || no "handoff refs: rc=$RC $(cat "$T/v"; head -c 400 "$T/e")"
+call XE a QARGI_MARSHAL_MONO=3500.4 marshal handoff r1 --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.features[0].record.minutes_since_renewal | type == "number"' "$T/o" >/dev/null \
+  && ! grep -Eq '"minutes_since_renewal": [0-9]+\.[0-9]' "$T/o" && ok "handoff --json (refs): minutes_since_renewal is an integer with the monotonic clock held" || no "handoff refs minutes: rc=$RC $(cat "$T/v"; jq -c '.features[0].record' "$T/o")"
+# the shared records cannot be read: the local records are shown and the field says so
+cp -a "$T/m/a/s" "$T/s2"; jq '.integrity = "advisory"' "$T/s2/marshal/app.enabled" > "$T/s2/sw.tmp" && mv "$T/s2/sw.tmp" "$T/s2/marshal/app.enabled"; echo garbage > "$T/s2/features/.accepted-app.json"
+call XE a QARGI_STATE="$T/s2" marshal handoff --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.backend == "local" and .backend_fallback == true and .remote == "none" and ([.notes[] | select(test("shared records cannot be read"))] | length) == 1' "$T/o" >/dev/null \
+  && ok "handoff --json: the shared records cannot be read: backend local, backend_fallback true, the sentence in notes" || no "handoff fallback: rc=$RC $(cat "$T/v"; jq -c '[.backend, .backend_fallback, .remote, .notes]' "$T/o")"
+echo '{"backend": "refs", "remote": "origin", "integrity": "sometimes"}' > "$T/s2/marshal/app.enabled"
+call XE a QARGI_STATE="$T/s2" marshal handoff --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.backend == "local" and .backend_fallback == true and ([.notes[] | select(test("switch cannot be used"))] | length) == 1' "$T/o" >/dev/null \
+  && ok "handoff --json: a switch file that cannot be used is a fallback too" || no "handoff bad switch: rc=$RC $(jq -c '[.backend, .backend_fallback, .notes]' "$T/o")"
+# the environment record is read only for the types the document declares
+mkdir -p "$L0/s/env"
+cat > "$L0/s/env/app.json" <<'ENV'
+{"check": {"verdict": "ok", "exit": 1.5, "missing": 2, "expected": true, "time": "2026-01-01T00:00:00Z", "head": "abc", "doctor_command": 5, "builtin_minimum": 1.0},
+ "apply": {"exit": 0, "time": 7, "command": "make bootstrap", "head": "abc", "allow_root": false}}
+ENV
+call L marshal handoff --json
+[ "$RC" = 0 ] && valid qargi-handoff && jq -e '.environment.check == {"verdict": "ok", "missing": 2, "time": "2026-01-01T00:00:00Z", "head": "abc", "at_head": false} and .environment.apply == {"exit": 0, "command": "make bootstrap", "head": "abc", "allow_root": false, "at_head": false}' "$T/o" >/dev/null \
+  && ok "handoff --json: a float, a boolean for a number or a number for text in the env record is left out, the rest is kept" || no "handoff env: rc=$RC $(cat "$T/v"; jq -c '.environment' "$T/o")"
+rm -rf "$L0/s/env"
+# a record that holds a value the document does not allow: exit 70, no document; the text form is as before
+jq '.rev = 1.5' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
+call L marshal handoff --json
+[ "$RC" = 70 ] && [ ! -s "$T/o" ] && grep -q '^qargi: defect: ' "$T/e" && ! grep -q Traceback "$T/e" && ok "handoff --json: a record with \"rev\": 1.5 is exit 70 and no document" || no "handoff rev 1.5: rc=$RC $(head -c 300 "$T/o"; cat "$T/e")"
+call L marshal handoff
+[ "$RC" = 0 ] && grep -q '^== ' "$T/o" && ok "handoff (text): the same record gives the note as before" || no "handoff text rev 1.5: rc=$RC $(out | head -c 300)"
+jq '.rev = 1' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
+
+# --json --write: the document on stdout first, then the file, then the sentence on stderr
+W=$T/scratch; mkdir -p "$W"
+call L marshal handoff --json --write "$W/note.json"
+[ "$RC" = 0 ] && valid qargi-handoff && cmp -s "$T/o" "$W/note.json" && [ "$(stat -c %a "$W/note.json")" = 600 ] && grep -q "^wrote $W/note.json " "$T/e" && ! grep -q wrote "$T/o" \
+  && ok "handoff --json --write: stdout is the document alone, the file holds the same bytes (mode 600), the sentence is on stderr" || no "handoff json write: rc=$RC $(cat "$T/v"; head -c 300 "$T/e")"
+call L marshal handoff --write "$W/note.txt"
+[ "$RC" = 0 ] && grep -q "^wrote $W/note.txt " "$T/o" && [ -s "$W/note.txt" ] && ok "handoff --write (text): the sentence stays on stdout" || no "handoff text write: rc=$RC $(out)"
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal handoff --json --write "$W/closed.json" >&- 2>"$T/e"; RC=$?
+[ "$RC" != 0 ] && [ ! -e "$W/closed.json" ] && ! grep -q Traceback "$T/e" && ok "handoff --json --write with stdout closed: a non-zero exit and no file" || no "handoff closed stdout: rc=$RC file=$(ls "$W") $(cat "$T/e")"
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal handoff --json --write "$W/full.json" >/dev/full 2>"$T/e"; RC=$?
+[ "$RC" = 1 ] && [ ! -e "$W/full.json" ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "handoff --json --write to a full stdout: exit 1 and no file" || no "handoff full stdout: rc=$RC file=$(ls "$W") $(cat "$T/e")"
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal handoff --json >&- 2>"$T/e"; RC=$?
+[ "$RC" != 0 ] && ok "handoff --json with stdout closed: a non-zero exit ($RC)" || no "handoff --json closed: rc=$RC $(cat "$T/e")"
+# the file cannot be made after the document was written: a refusal naming the file, exit 1, and the document stays on stdout
+mkdir -p "$W/ro"; chmod 555 "$W/ro"
+call L marshal handoff --json --write "$W/ro/note.json"
+if [ "$(id -u)" != 0 ]; then
+  [ "$RC" = 1 ] && jq -e '.kind == "qargi-handoff"' "$T/o" >/dev/null && grep -q 'marshal-handoff-file' "$T/e" && grep -q "ro/note.json" "$T/e" \
+    && ok "handoff --json --write: a file that cannot be made after the document was written is a refusal (exit 1) naming the file" || no "handoff write fails late: rc=$RC $(head -c 200 "$T/o"; cat "$T/e")"
+fi
+chmod 755 "$W/ro"
+
 # ================================================================ (8) --no-write: nothing is written and nothing is fetched
 # a local record whose branch is gone: status and check mark it abandoned (and write the record); with --no-write the record stays byte for byte
 NOW=$((1000000 + 50))
