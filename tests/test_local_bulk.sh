@@ -171,7 +171,13 @@ out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok2=$(sed -n '
 { [ -n "$tok2" ] && [ "$tok2" != "$tok" ]; } && ok "a run that changed since the plan (a file added to its out/) makes a new token" || no "the token did not move: $tok $tok2"
 out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok" --approved "go" 2>&1); rcs=$?
 { [ $rcs != 0 ] && [ -d "$LM1" ] && [ -d "$LM2" ]; } && ok "so the old token is stale: nothing is removed" || no "stale token (rc=$rcs): $out"
-tok=$tok2
+# a file rewritten at the same length leaves the byte total as it was (and, on a file system whose directories keep one size, every size): the token moves all the same
+echo s > "$LM2/out/report.md"; touch -d "2001-01-01 00:00:00" "$LM2/out/report.md"   # a fixed other mtime: no wait for the clock to move
+out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok4=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ -n "$tok4" ] && [ "$tok4" != "$tok2" ]; } && ok "a run whose file was rewritten at the same length (same total bytes) makes a new token" || no "the token did not move for a same-length rewrite: $tok2 $tok4"
+out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok2" --approved "go" 2>&1); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$LM1" ] && [ -d "$LM2" ]; } && ok "and the token from before the rewrite is stale: nothing is removed" || no "stale token after a rewrite (rc=$rcs): $out"
+tok=$tok4
 # an archive that is there already and is not this run's is never replaced: that run is kept, the other goes
 mkdir -p "$S/runs-archive"; chmod 700 "$S/runs-archive"; echo garbage > "$S/runs-archive/$(basename "$LM2").tar.gz"
 out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok" --approved "the owner said archive and remove them" 2>&1); rcs=$?

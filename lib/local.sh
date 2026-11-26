@@ -651,7 +651,7 @@ legacy_kept_line() {
 clean_legacy() {
   local scr d cl rp rc i n total=0 tok pj p1 sz sizes lv arch apath abytes afiles rest rr why err rm_n=0 kept_n=0 ecode=0
   local n_life=0 n_unap=0 n_url=0 n_unm=0 n_live=0
-  local -a cand=() mp=() merged_ok=() elig=() szs=()
+  local -a cand=() mp=() merged_ok=() elig=() szs=() ents=() fps=()
   local -A LIVE=()
   scr=$(readlink -f "$1"); REG_BULK=1 reg_load
   for d in "$scr"/qargi.??????; do
@@ -676,7 +676,7 @@ clean_legacy() {
   fi
   if [ "${#elig[@]}" -gt 0 ]; then
     sizes=$(python3 -I "$(dirname "$0")/legacy_runs.py" size "${elig[@]}") || { echo "qargi: could not measure the legacy runs (legacy_runs.py size failed); nothing was planned or changed" >&2; exit 3; }
-    while read -r sz d; do szs+=("$sz"); total=$((total + sz)); done <<<"$sizes"
+    while read -r sz en fp d; do szs+=("$sz"); ents+=("$en"); fps+=("$fp"); total=$((total + sz)); done <<<"$sizes"   # SIZE ENTRIES FINGERPRINT PATH: the plan prints the size, the token covers the entries and the fingerprint
   fi
   echo "$((${#elig[@]} + n_unm + n_live)) legacy run(s) under $scr are applied; ${#elig[@]} of them merged, with no runner or member alive, and so in the plan ($total bytes in all)"
   for i in "${!elig[@]}"; do echo "  ${elig[i]}  ${szs[i]} bytes"; done
@@ -687,7 +687,7 @@ clean_legacy() {
   pj=''
   for d in "${elig[@]}"; do reg_val p1 "$d" project; if [[ $p1 =~ ^[a-z][a-z0-9]{0,23}$ ]]; then pj=$p1; break; fi; done
   [ -n "$pj" ] || pj=local
-  tok=$({ printf '%s\n' "$scr" "$DA_STATE/runs-archive"; for i in "${!elig[@]}"; do printf '%s %s\n' "${elig[i]}" "${szs[i]}"; done; } \
+  tok=$({ printf '%s\n' "$scr" "$DA_STATE/runs-archive"; for i in "${!elig[@]}"; do printf '%s %s %s %s\n' "${elig[i]}" "${szs[i]}" "${ents[i]}" "${fps[i]}"; done; } \
         | plan_token --basis "scratch:path archive:path runs:path" --verb "local clean" --target "$pj:legacy")
   if [ -z "$APPROVED" ]; then
     echo "plan: for each run above, archive its out/ (with its records, bundle, the lead's saved copy and its registry line) to $DA_STATE/runs-archive/NAME.tar.gz, read the archive back and check its size and its list of files, and only then remove the run (clone, bare copy, output, temporary directory) as qargi local clean RUN --discard does; nothing else is touched; ${#elig[@]} run(s); nothing changed"

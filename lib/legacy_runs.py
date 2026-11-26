@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """What `qargi local clean --applied --legacy` needs of Python: sizes, liveness, and the archive that comes before a legacy run is removed.
 
-  legacy_runs.py size RUN...                       one line for each run: its apparent size in bytes (the sum of what lstat says for every entry; no link followed) and its path
+  legacy_runs.py size RUN...                       one line for each run: its apparent size in bytes (the sum of what lstat says for every entry; no link followed), its number of entries, a
+                                                   fingerprint of the tree (sha256 over the sorted relative names, each with its lstat size and mtime in ns: it moves when a file is added, removed or
+                                                   rewritten, which the byte total need not do) and its path
   legacy_runs.py live RUN...                       the runs (one path to a line) that have a live runner or member: the runner and the member the run's dispatch.json records
                                                    (lib/local_run.py proc_of_run, the test `local run` and `local clean` use), and any process whose environment carries
                                                    QARGI_MEMBER_RUN=RUN (the mark the marshal reads to tell that a member is working)
@@ -19,19 +21,30 @@ import hashlib, io, json, os, stat, sys, tarfile
 RECORDS = ("refs.before", "refs.after", "refs.accepted", "refs.diff", "verified", "applied", "started", "ability", "class", "profile", "task.md", "run.bundle")
 
 
-def size_of(path):
-    total = 0
+def measure(path):
+    """(bytes, entries, fingerprint) of a run's tree, lstat only (no link is followed): bytes is the sum of st_size over the root and every entry below it; entries counts those below
+    the root; the fingerprint is the sha256 over the sorted relative names (the root is ".") each with its st_size and st_mtime_ns. The sum alone does not move when a file is added or
+    rewritten at the same length on a file system whose directories keep one size (ext4), so the plan token covers the fingerprint: a run whose files changed is another token."""
     try:
-        total += os.lstat(path).st_size
+        st = os.lstat(path)
     except OSError:
-        return 0
+        return 0, 0, hashlib.sha256().hexdigest()
+    total = st.st_size
+    rows = [(b".", st.st_size, st.st_mtime_ns)]
     for base, dirs, files in os.walk(path, followlinks=False):
         for n in dirs + files:
+            full = os.path.join(base, n)
             try:
-                total += os.lstat(os.path.join(base, n)).st_size
+                st = os.lstat(full)
             except OSError:
-                pass
-    return total
+                continue
+            total += st.st_size
+            rows.append((os.fsencode(os.path.relpath(full, path)), st.st_size, st.st_mtime_ns))
+    rows.sort()
+    h = hashlib.sha256()
+    for name, size, mtime in rows:
+        h.update(name + b"\0%d\0%d\n" % (size, mtime))
+    return total, len(rows) - 1, h.hexdigest()
 
 
 def member_marks():
@@ -255,7 +268,8 @@ def main(argv):
     cmd, rest = argv[0], argv[1:]
     if cmd == "size":
         for r in rest:
-            print("%d %s" % (size_of(r), r))
+            total, n, fp = measure(r)
+            print("%d %d %s %s" % (total, n, fp, r))
         return 0
     if cmd == "live":
         for r, why in live(rest):
