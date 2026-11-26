@@ -1,0 +1,103 @@
+{
+  "registry": 1,
+  "kind": "qargi-marshal-status",
+  "schema": 1,
+  "status": "pinned",
+  "since": "0.3.9",
+  "stream": "stdout",
+  "verbs": ["marshal status --json", "marshal status NAME --json"],
+  "about": "The features of a project as the marshal records them: one row each, or one row for the feature named. `lease` and `minutes_since_renewal` mean what `lease_clock` says. wall (local records): the wall clock, whole minutes since `renewed_at`; a record without a readable `renewed_at` reads as stale. observed-here (shared refs records): how long this machine saw the record's commit unchanged on its own monotonic clock; a first read on a machine reports 0 minutes, a missing age reads as live, and two hosts can give different answers for one record. `remote` says whether the answer was checked against the remote of the shared records: none (the local backend has no remote), checked (the fetch ran and worked), unchecked (the fetch was tried and failed, the answer is from the cache this machine fetched last), not-asked (--no-fetch or a member run). A reader that builds on the answer must read `remote`. `rev` is the revision of the record, not a lease revision. The values of a local record are shown as the record holds them: a record that holds a value the shape does not allow makes the verb exit 70 and print no document.",
+  "writes": "On the local backend a record whose branch is gone is marked abandoned. On the shared refs backend it fetches the shared records into this machine's cache and updates this machine's own observation cache and, with integrity on, its acceptance marks; the shared records are never changed.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "project", "backend", "remote", "features", "agent_unattributed"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-marshal-status"},
+      "project": {"type": "string"},
+      "backend": {"enum": ["local", "refs"], "x-since": "0.3.9", "description": "Where the records live: this host's files or the shared refs of the project's remote."},
+      "remote": {"enum": ["checked", "unchecked", "not-asked", "none"], "x-since": "0.3.9", "description": "Whether the answer was checked against the remote of the shared records."},
+      "features": {"type": "array", "items": {"$ref": "#/$defs/feature"}, "description": "One row for each open feature (with NAME, the one named)."},
+      "agent_unattributed": {"type": "array", "items": {"$ref": "#/$defs/agent"}, "description": "The agent branches of no open feature that are merged neither into develop nor into a feature branch; said once, not under each feature."}
+    },
+    "$defs": {
+      "lead": {
+        "type": ["object", "null"],
+        "required": ["id", "user", "host", "since"],
+        "properties": {
+          "id": {"type": "string"},
+          "user": {"type": "string"},
+          "host": {"type": "string"},
+          "since": {"type": "string"},
+          "worktree": {"type": "string", "x-when": "The lead record names its work tree (a digest of its path)."},
+          "succeeds": {"type": "string", "x-when": "The lead took over as the successor of an earlier lead of the same host, user and work tree."}
+        }
+      },
+      "agent": {
+        "type": "object",
+        "required": ["branch", "base"],
+        "properties": {
+          "branch": {"type": "string"},
+          "base": {"type": "string", "description": "The branch the run was prepared against; empty when none is recorded."}
+        }
+      },
+      "task": {
+        "type": "object",
+        "required": ["run", "slug", "role", "started", "verified", "applied", "cleaned", "closed", "directory_gone", "state"],
+        "properties": {
+          "run": {"type": "string"},
+          "slug": {"type": "string"},
+          "role": {"type": "string"},
+          "started": {"type": "string"},
+          "verified": {"type": "boolean"},
+          "applied": {"type": "boolean"},
+          "cleaned": {"type": "boolean"},
+          "closed": {"type": "boolean"},
+          "directory_gone": {"type": "boolean", "x-since": "0.3.9", "description": "The run directory no longer exists."},
+          "state": {"type": "string", "x-text": true, "description": "A sentence made of the booleans above, such as: verified, applied, directory gone."}
+        }
+      },
+      "worktree": {
+        "type": "object",
+        "required": ["path", "branch"],
+        "properties": {
+          "path": {"type": "string"},
+          "branch": {"type": "string"}
+        }
+      },
+      "feature": {
+        "type": "object",
+        "required": ["feature", "project", "status", "lead", "lease", "lease_clock", "minutes_since_renewal", "ttl_minutes", "renewed_at", "rev", "branch", "ghost", "updated_by", "purpose", "goal", "plan", "note", "finished_at"],
+        "properties": {
+          "feature": {"type": "string"},
+          "project": {"type": "string"},
+          "status": {"enum": ["planned", "active", "blocked", "verifying", "released", "finished", "abandoned", "unled"], "description": "unled: the feature has a branch and no record."},
+          "lead": {"$ref": "#/$defs/lead"},
+          "lease": {"enum": ["live", "stale", "none"], "description": "none: the feature has no lead."},
+          "lease_clock": {"enum": ["wall", "observed-here"], "x-since": "0.3.9", "description": "What `lease` and `minutes_since_renewal` are measured on."},
+          "minutes_since_renewal": {"type": ["integer", "null"], "description": "Whole minutes; null when the feature has no lead or the age is unknown."},
+          "ttl_minutes": {"type": "integer"},
+          "renewed_at": {"type": ["string", "null"], "description": "The time of the last renewal as the record holds it; null when it was never renewed."},
+          "rev": {"type": "integer", "description": "The revision of the record."},
+          "branch": {"type": "boolean", "description": "The branch feature/NAME exists in this repository."},
+          "ghost": {"type": "boolean", "description": "The record is abandoned and its branch is gone."},
+          "updated_by": {"type": "string"},
+          "purpose": {"type": "string", "x-text": true},
+          "goal": {"type": "string", "x-text": true},
+          "plan": {"type": "string", "x-text": true},
+          "note": {"type": "string", "x-text": true},
+          "finished_at": {"type": ["string", "null"]},
+          "provisional": {"type": "boolean", "x-when": "Shared refs backend: true while a claim has not reached the remote."},
+          "integrity": {"enum": ["signed", "unsigned", "INVALID", "cannot verify"], "x-open": true, "x-when": "The project's integrity setting is not off."},
+          "integrity_note": {"type": "string", "x-text": true, "x-when": "The project's integrity setting is not off."},
+          "signer": {"type": "string", "x-when": "The project's integrity setting is not off; empty when the record is not signed."},
+          "tasks": {"type": "array", "items": {"$ref": "#/$defs/task"}, "x-when": "Present for every row of marshal status."},
+          "agent_branches": {"type": "array", "items": {"type": "string"}, "x-when": "Present for every row of marshal status: the agent branches prepared against the feature and not merged into it."},
+          "worktrees": {"type": "array", "items": {"$ref": "#/$defs/worktree"}, "x-when": "Present for every row of marshal status."},
+          "overlap": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}, "x-when": "Present for every row of marshal status: the other open features that change the same files, with the files."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin"}]
+}
