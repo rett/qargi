@@ -14,6 +14,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A coordinator label may run `qargi role card ROLE` (a read-only verb): it is listed among the verbs `qargi help coordinator` allows.
 - `qargi review check` with no patches and no report now says, under the same `FAIL no patches found ...` line, that a read-only member whose report is not stored yet has not failed its review, and what to do: a member whose file tool is refused for `report.md` writes the text under another name in OUT and runs `qargi local report RUN --from NAME` (RUN is OUT's parent, given in the message), and a member that cannot write at all puts the report in its final message, which the lead stores (`qargi review save RUN`). The check still fails without a report.
 - The refusal catalogue lint (`python3 lib/refusal.py check`) requires `exit` to be an integer (a float such as `1.0` would have printed `"exit":1.0`) and reserves the code prefix `pack-` for the codes a provider pack prints; `docs/reference/refusals.md` says so.
 
