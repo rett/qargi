@@ -13,10 +13,10 @@ when the hook command names no provider; `--provider NAME` reads it from the bar
 (the shipped ones and the library's), and a provider whose definition has no usable hook data refuses every call, in the plain way (exit 2,
 reason on stderr), since it has no other. A refusal, a failure and an unknown class are given back in the provider's way.
 
-Publishing: git push, send-pack, http-push, send-email and imap-send (they mail or upload what they are given) and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
+Publishing: git push, send-pack, http-push, send-email and imap-send (they mail or upload what they are given), cvsexportcommit, daemon and instaweb, `p4 submit` and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
 push), the programs git-push, git-send-pack, git-http-push, git-receive-pack, git-send-email and git-imap-send, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
 changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias,
-runs a program or reads another configuration file (GIT_RUNS_CODE: alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand|askPass|gitProxy, include.path, includeIf.*.path,
+runs a program or reads another configuration file or tree (GIT_RUNS_CODE: alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand|askPass|gitProxy|worktree, include.path, includeIf.*.path,
 diff.external, credential.*, filter.*, gpg.*, url.*.insteadOf, remote.*.url|uploadpack ...), and `git config` that writes such a key for later (set, --add, --replace-all or
 KEY VALUE, in any scope or --file, after -C, the key read in any case), or that can write any key (--edit, a section renamed), or whose key a variable or xargs brings
 (config_refusal); `--exec-path=DIR`, and the variables GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
@@ -78,7 +78,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
     without a space), tee, cp, mv, rm, ln, install, rsync, touch, mkdir, chmod, chown, truncate, shred, patch,
     `sed|perl -i`, `awk -i inplace`, ex, vi, vim, ed, rename, sqlite3, setfacl, mkfifo, `dd of=`, a git command that changes the tree or the repository (`--work-tree` and GIT_WORK_TREE
-    name the place as -C does, `--git-dir` and GIT_DIR the repository of every git write; a top-level `--bare` the directory it is read in, for `git init` with no DIR), find with -delete or -exec (rooted above a protected directory too when it removes), the command after find -exec|-execdir|-ok|-okdir
+    name the place as -C does, `--git-dir` and GIT_DIR the repository of every git write, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and GIT_COMMON_DIR the same when given in front of the command; `export|declare|typeset|readonly|local` of GIT_DIR, GIT_WORK_TREE and those three is refused, as the guard reads one command at a time; a top-level `--bare` the directory it is read in, for `git init` with no DIR, or whenever an option it does not know may have taken the DIR), find with -delete or -exec (rooted above a protected directory too when it removes), the command after find -exec|-execdir|-ok|-okdir
     and parallel (a command of its own), ln of a protected location or a directory above one, and any argument of
     tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF, ${NAME:-x} and ${NAME%/} (by the value of NAME when the environment has it, else a write through it is
     refused) and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
@@ -312,8 +312,8 @@ INPLACE = {"sed", "perl"}                                   # with -i
 GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm", "mv", "stash", "merge", "rebase",
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
-              "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance", "rerere", "mergetool",
-              "update-server-info", "index-pack", "pack-objects", "commit-graph", "multi-pack-index"}
+              "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance", "mergetool",
+              "update-server-info", "index-pack"}              # (rerere, pack-objects, commit-graph and multi-pack-index write by their arguments: git_mutates)
 FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?\}"             # {fd} or {arr[i]} (the subscript may hold brackets and a blank, quoted in the command and bare in the words: {a[b[1]]}, {a["x y"]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
@@ -478,12 +478,15 @@ def word_then_subst(word, text):
     return False
 
 
+GIT_PLACE_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")   # the variables that say which repository, tree, index or object store a git command changes
+PLACES_EXPORTED = [True]                                     # judge an export of those variables here (not for a read-only member: it refuses any GIT_ assignment itself, ro-env-restricted, and that is the reason it names)
+GIT_PLACE_ASSIGN = tuple(n + "=" for n in GIT_PLACE_ENV if n != "GIT_WORK_TREE")                         # (GIT_WORK_TREE has its own list: trees)
 GIT_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")   # git's global options that take the next word
-GIT_PUSHERS = {"push", "send-pack", "http-push", "send-email", "imap-send"}             # the git subcommands that publish (send-email and imap-send mail the patches out)
-GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack", "git-send-email", "git-imap-send"}   # and the programs behind them, run by their own name
+GIT_PUSHERS = {"push", "send-pack", "http-push", "send-email", "imap-send", "cvsexportcommit", "daemon", "instaweb"}   # the git subcommands that publish (send-email and imap-send mail the patches out, cvsexportcommit commits to a CVS checkout, daemon and instaweb serve the repository); `p4 submit` is judged with them (git_words_refusal)
+GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack", "git-send-email", "git-imap-send", "git-cvsexportcommit", "git-daemon", "git-instaweb"}   # and the programs behind them, run by their own name
 # the git configuration keys that make git run a program, read another configuration file, or give a command or a remote another name: refused in
 # `git -c KEY=V`, `--config-env KEY=V` and every `git config` that writes one (one list; git reads the section and the key whatever their case)
-GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy|alternaterefscommand)|"
+GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy|alternaterefscommand|worktree)|"
                            r"diff\.external|pager\..*|sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|"
                            r"(?:diff|merge)tool\..*\.cmd|submodule\..*\.update|uploadpack\..*|receivepack\..*|url\..*\.(?:insteadof|pushinsteadof)|"
                            r"remote\..*\.(?:receivepack|uploadpack|vcs|url|pushurl)|protocol\.(?:ext\.)?allow)$", re.I)
@@ -542,6 +545,8 @@ def git_words_refusal(pre, rest, redirs):
         return "git %s is not available to an agent" % sub
     if sub == "svn" and "dcommit" in args:
         return "git svn dcommit is not available to an agent"
+    if sub == "p4" and "submit" in args:
+        return "git p4 submit is not available to an agent"
     nonopt = [t for t in args if not t.startswith("-")]
     if sub == "remote" and nonopt[:1] and nonopt[0] in REMOTE_CHANGES:
         return "changing a git remote is not available to an agent"
@@ -612,7 +617,7 @@ def program_blocked(toks, i, depth):
     rest = toks[i + 1:]
     if prog in ("gh", "ssh", "scp", "sftp"):
         return "%s is not available to an agent" % prog
-    if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
+    if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest or prog in ("git-p4", "git-p4.py") and "submit" in rest:
         return "%s is not available to an agent" % prog
     if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
         return "rsync to or from another host is not available to an agent"
@@ -620,6 +625,11 @@ def program_blocked(toks, i, depth):
         why = git_refusal(toks[:i], rest)
         if why:
             return why
+    if prog in ASSIGN_BUILTINS and PLACES_EXPORTED[0]:           # export GIT_DIR=...: every later git command of the shell would change that repository, which the guard reads per command only
+        for name in env_names(toks, i):
+            if name in GIT_PLACE_ENV:
+                return ("%s exported or declared (%s) names the repository or the tree of every later git command, which the guard reads for each command alone, and is not available to an agent: "
+                        "give the place to the command (-C, --git-dir, --work-tree)" % (name, prog))
     inner = shell_string(prog, rest) if depth < 3 else None
     return blocked(inner, depth + 1) if inner is not None else None
 
@@ -1878,10 +1888,11 @@ def write_targets(toks, i):
                 gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
                 chdir = git_chdir(opts)                                               # all the -C options, each against the one before it
                 trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
-                gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]   # the repository git changes, a relative one against the -C options
+                gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith(GIT_PLACE_ASSIGN)]   # the repository git changes (also where its index, objects or common directory are said to be), a relative one against the -C options
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                     new_dir, separate, sure, words = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True, [])
+                    known = sure                                                      # the operands were read (no option the guard does not know): new_dir is DIR, or there is none
                     if sub == "init" and gitdirs:                                     # git init uses that git directory as the repository (git clone ignores it): the place git runs is judged too
                         sure = False
                         targets += [("git init", g) for d in (chdir, git_under(chdir, new_dir) if new_dir is not None else chdir) for g in (git_under(d, v) for v in gitdirs)]    # a relative one from the -C options, and from DIR
@@ -1889,7 +1900,7 @@ def write_targets(toks, i):
                         targets += [("git init", git_under(chdir, g)) for g in words]  # an option the guard does not know may take the next word: DIR may be any of the operands, so each is judged
                         for n, (name, _) in enumerate(opts):
                             if name == "--bare":                                      # git sets GIT_DIR to the directory the shell is in (or the -C options before --bare give) when it reads --bare, and init with no DIR writes the repository there; with a DIR it writes DIR only
-                                if new_dir is None:
+                                if new_dir is None or not known:                  # no DIR, or an option the guard does not know may have taken it: the repository may be written where --bare was read
                                     sure = False
                                     targets.append(("git init", git_chdir(opts[:n]) or "."))
                     if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
@@ -1985,7 +1996,8 @@ def git_new_tree(sub, args):
 
 def git_mutates(sub, args):
     """True when `git SUB ARGS` changes the repository though SUB is not one of GIT_WRITES (a subcommand that reads or writes by its arguments): bisect (it checks out
-    commits), symbolic-ref with a value or -d, reflog expire|delete, hash-object -w, unpack-objects and lfs (all but the listing ones)."""
+    commits), symbolic-ref with a value or -d, reflog expire|delete, hash-object -w, unpack-objects, rerere (but status, diff, remaining), commit-graph and multi-pack-index (but
+    verify), pack-objects without --stdout, and lfs (all but the listing ones)."""
     first = next((a for a in args if not a.startswith("-")), "")
     if sub == "bisect":
         return first not in ("log", "visualize", "view", "replay")
@@ -1997,6 +2009,14 @@ def git_mutates(sub, args):
         return any(a == "--write" or (re.fullmatch(r"-[A-Za-z]+", a) is not None and "w" in a) for a in args)
     if sub == "unpack-objects":
         return True
+    if sub == "rerere":
+        return first not in ("status", "diff", "remaining")                     # rerere with no word records the resolutions
+    if sub == "commit-graph":
+        return first != "verify"
+    if sub == "multi-pack-index":
+        return first != "verify"
+    if sub == "pack-objects":
+        return "--stdout" not in args                                           # --stdout sends the pack to standard output (a redirection is judged as one); without it a pack file is written
     if sub == "lfs":
         return first not in ("ls-files", "status", "env", "version", "locks", "logs", "help")
     return False
@@ -4297,6 +4317,7 @@ def decide_call(call):
     if why:
         return "qargi guard: %s. %s." % (why, MCP_NOTE)
     hint = TEXT_HINT if call.kind == "shell" and QUOTED.search(call.command or "") else ""
+    PLACES_EXPORTED[0] = not is_review(run_dir(call.cwd or ""))
     why = blocked(call.command) if call.kind == "shell" else None
     if why:
         return framed(coded(why, "member-push"), "qargi guard: %s. Agents never push; return patches instead.%s" % (why, hint))

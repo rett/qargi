@@ -2155,7 +2155,7 @@ TOPICS = {
         "lead's git configuration and session files. "
         "It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. "
         "The install record is install.json, install.d and install.lock. "
-        "Reading stays allowed except the lead's signing key. It refuses git push, git send-email and git imap-send, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host. A git write is judged where -C, --work-tree or --git-dir name it. Text check, not a sandbox.",
+        "Reading stays allowed except the lead's signing key. It refuses git push, send-email, imap-send, p4 submit, daemon, remote changes, -c or config of keys that run programs (alias.*, core.worktree), exporting GIT_DIR, rsync to a host. A git write is judged where -C, --work-tree or --git-dir name it. Text check, not a sandbox.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
