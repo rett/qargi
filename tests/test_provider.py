@@ -3244,6 +3244,7 @@ class RunHome(LibraryBase):
         good = link()
         self.assertEqual(P.home_problems(good), [])
         self.assertEqual([m for m in fails(self.with_home(good), "fakecli") if "dispatch.home" in m], [])
+        self.assertEqual(P.home_problems(link(expiry={"path": "tokens.access_token", "encoding": "jwt-exp", "margin_seconds": 0})), [])     # the margin is optional, 0 included
         cases = (
             (link(extra=1), "dispatch.home.link[0].private.extra: additional property is not allowed"),
             (link(set={}), "private.set: {} is not an object of one to 8"),
@@ -3255,6 +3256,10 @@ class RunHome(LibraryBase):
             (link(expiry={"path": "tokens.access_token"}), "private.expiry: missing required property 'encoding'"),
             (link(expiry={"path": "a b", "encoding": "jwt-exp"}), "private.expiry.path: 'a b' is not a dotted path of keys"),
             (link(expiry={"path": "a", "encoding": "jwt-exp", "skew": 1}), "private.expiry.skew: additional property is not allowed"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": -1}), "private.expiry.margin_seconds: -1 is not a whole number of seconds from 0 to 86400"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": 86401}), "private.expiry.margin_seconds: 86401 is not a whole number of seconds from 0 to 86400"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": True}), "private.expiry.margin_seconds: true is not a whole number of seconds"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": "900"}), "private.expiry.margin_seconds: '900' is not a whole number of seconds"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": {"set": self.PRIVATE["set"]}}]}, "private: missing required property 'expiry'"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": []}]}, "private: [] is not an object {set, expiry}"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.yaml", "to": "auth.yaml", "private": self.PRIVATE}]}, "the source '~/.fakecli/auth.yaml' of a private copy is a JSON file"),

@@ -95,7 +95,7 @@
                       "from": {"type": "string"},
                       "to": {"type": "string"},
                       "private": {
-                        "description": "Makes the link a private copy of a JSON source for a runtime that refreshes the sign-in it is given in place: the runs that share the source then need no lock and overlap. qargi local run reads the source, puts each text of set at its dotted path (a placeholder the runtime cannot refresh with), reads when the value at expiry.path ends (encoding jwt-exp: the exp claim of a JWT, no signature checked) and refuses the run (runtime-signin-expiring) when that is less than the run's bound plus 900 seconds away. It writes the result as a regular file TO of the run home (mode 600, made exclusively, never a link) and removes it when the run ends; nothing is written back to the source, and the copy is a note when the runtime changed it. The source is a JSON object whose name ends in .json; paths are keys joined by dots.",
+                        "description": "Makes the link a private copy of a JSON source for a runtime that refreshes the sign-in it is given in place: the runs that share the source then need no lock and overlap. qargi local run reads the source, puts each text of set at its dotted path (a placeholder the runtime cannot refresh with), reads when the value at expiry.path ends (encoding jwt-exp: the exp claim of a JWT, no signature checked) and refuses the run (runtime-signin-expiring) when that is less than the run's own time bound plus expiry.margin_seconds (default 900) away. It writes the result as a regular file TO of the run home (mode 600, made exclusively, never a link) and removes it when the run ends; nothing is written back to the source, and the copy is a note when the runtime changed it. The source is a JSON object whose name ends in .json; paths are keys joined by dots.",
                         "type": "object",
                         "additionalProperties": false,
                         "required": ["set", "expiry"],
@@ -107,7 +107,8 @@
                             "required": ["path", "encoding"],
                             "properties": {
                               "path": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,5}$"},
-                              "encoding": {"enum": ["jwt-exp"]}
+                              "encoding": {"enum": ["jwt-exp"]},
+                              "margin_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "seconds the token must outlast the run's own time bound by (default 900)"}
                             }
                           }
                         }

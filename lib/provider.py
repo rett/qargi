@@ -437,6 +437,8 @@ PRIVATE_ENCODINGS = ("jwt-exp",)                        # how the value at expir
 PRIVATE_PATH = re.compile(r"^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,5}$")   # a dotted path of keys in a JSON object
 PRIVATE_TEXT = re.compile(r"^[ -~]{1,64}$")             # the plain text a private copy is given at a path: short, printable, one line
 PRIVATE_MAX = 8
+PRIVATE_MARGIN = 900                                    # expiry.margin_seconds when a definition names none: the seconds a copy's token must outlast a run's bound by
+PRIVATE_MARGIN_MAX = 86400
 HOME_LINK_DENIED = (                                    # under the user's home: never linked into a run, whatever the runtime says
     (".qargi", "qargi's own configuration, state and credentials"), (".ssh", "the user's ssh keys"), (".gnupg", "the user's keys"),
     (".netrc", "the user's stored logins"), (".git-credentials", "the user's stored git logins"), (".gitconfig", "the user's git configuration"),
@@ -472,7 +474,7 @@ def home_link_problem(src):
 def private_problems(ln, at):
     """The findings of the `private` of one link entry (at names it, dispatch.home.link[N]): {set: {PATH: TEXT}, expiry: {path, encoding}}. The link is then
     a private copy: qargi local run reads the source (a JSON object), puts each TEXT at its dotted PATH, checks that the value at expiry.path (read by
-    expiry.encoding) outlasts the run's bound, and writes the result as a file of the run home that it removes when the run ends; the source is never
+    expiry.encoding) outlasts the run's bound plus expiry.margin_seconds (default PRIVATE_MARGIN), and writes the result as a file of the run home that it removes when the run ends; the source is never
     written. Both keys are required: a copy that cannot refresh must say how long it lasts."""
     pv = ln.get("private")
     where = "%s.private" % at
@@ -495,10 +497,13 @@ def private_problems(ln, at):
         if not isinstance(ex, dict):
             bad.append("%s.expiry: %s is not an object {path, encoding}" % (where, _show(ex)))
         else:
-            bad += ["%s.expiry.%s: additional property is not allowed" % (where, k) for k in ex if k not in ("path", "encoding")]
+            bad += ["%s.expiry.%s: additional property is not allowed" % (where, k) for k in ex if k not in ("path", "encoding", "margin_seconds")]
             bad += ["%s.expiry: missing required property '%s'" % (where, k) for k in ("path", "encoding") if k not in ex]
             if "path" in ex and (not isinstance(ex["path"], str) or not PRIVATE_PATH.match(ex["path"])):
                 bad.append("%s.expiry.path: %s is not a dotted path of keys" % (where, _show(ex["path"])))
+            m = ex.get("margin_seconds", PRIVATE_MARGIN)
+            if type(m) is not int or not 0 <= m <= PRIVATE_MARGIN_MAX:
+                bad.append("%s.expiry.margin_seconds: %s is not a whole number of seconds from 0 to %d" % (where, _show(m), PRIVATE_MARGIN_MAX))
             if "encoding" in ex and ex["encoding"] not in PRIVATE_ENCODINGS:
                 bad.append("%s.expiry.encoding: %s is not one of %s" % (where, _show(ex["encoding"]), ", ".join(PRIVATE_ENCODINGS)))
     frm = ln.get("from")
