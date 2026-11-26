@@ -50,8 +50,10 @@ import paths  # noqa: E402
 NAME_RE = re.compile(r"^[a-z][a-z0-9]{0,23}$")
 FMT = "%Y-%m-%dT%H:%M:%SZ"
 CTRL = re.compile(r"[\x00-\x1f\x7f]")
-MAX = 200                       # a value of a refusal is one line of at most this many characters
+MAX = 200                       # a value of a refusal is one line of at most this many characters (refusal.py VALUE_MAX): a text that is longer is cut, so the path to fix comes first in it
 GIT_TIMEOUT = 20
+NOTHING_LINKED = 4              # project_link.py plan --empty-status: the plan has nothing to unlink
+NO_RUNTIME = 2                  # project_link.py: the project has no runtime that links (provider.NoProvider)
 
 
 def text(s):
@@ -125,7 +127,7 @@ def members_of(conf, name, repo):
         rp = (rec.get("render") or {}).get("path") if isinstance(rec.get("render"), dict) else ""
         copy = ""
         # a copy is the render's path under config/agents/NAME: a path that leaves it is no copy of ours
-        if isinstance(rp, str) and rp and not os.path.isabs(rp) and ".." not in rp.split("/"):
+        if isinstance(rp, str) and rp and not os.path.isabs(rp) and not {"", ".", ".."} & set(rp.split("/")):
             copy = os.path.join(conf, "agents", name, rp)
         out.append({"name": text(n), "roles": [text(r) for r in rec.get("roles", []) if isinstance(r, str)] if isinstance(rec.get("roles"), list) else [],
                     "file": text(f), "file_exists": bool(f) and os.path.isfile(f), "in_repo": inside(f, repo), "copy": text(copy), "copy_exists": bool(copy) and os.path.isfile(copy)})
@@ -135,12 +137,12 @@ def members_of(conf, name, repo):
 def features(repo, bad):
     if not repo or not is_repo(repo):
         return []
-    out = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*")
+    out = git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/feature/*")      # the full name: the short one of a branch that a tag of the same name hides is heads/feature/x
     if out is None:
-        bad.add("the feature branches of the repository %s (git for-each-ref failed or took more than %d s)" % (repo, GIT_TIMEOUT),
-                "make git -C %s for-each-ref refs/heads/feature/* work" % repo)
+        bad.add("%s: git for-each-ref failed or took over %d s" % (repo, GIT_TIMEOUT),
+                "make git for-each-ref refs/heads/feature/* work in %s" % repo)
         return []
-    return sorted(b[len("feature/"):] for b in out if b.startswith("feature/"))
+    return sorted(b[len("refs/heads/feature/"):] for b in out if b.startswith("refs/heads/feature/"))
 
 
 def runs(state, name, repo, bad):
@@ -163,11 +165,11 @@ def runs(state, name, repo, bad):
     except FileNotFoundError:
         return []
     except OSError as e:
-        bad.add("the registry of runs %s (%s)" % (path, e.strerror or type(e).__name__), "make %s readable (qargi local list reads it)" % path)
+        bad.add("%s: the registry of runs (%s)" % (path, e.strerror or type(e).__name__), "qargi local list reads it: make %s readable" % path)
         return []
     if skipped:
-        bad.add("%d line(s) of the registry of runs %s are not JSON, so a run of the project may be among them" % (skipped, path),
-                "repair or remove those lines of %s (qargi local list names them)" % path)
+        bad.add("%s: %d line(s) of the registry are not JSON" % (path, skipped),
+                "qargi local list names the lines: repair or remove them in %s" % path)
     rp = os.path.realpath(repo) if repo else ""
     out = []
     for run, r in last.items():
@@ -192,7 +194,7 @@ def listing(path, what, fix, bad):
     except FileNotFoundError:
         return []
     except OSError as e:
-        bad.add("%s %s (%s)" % (what, path, e.strerror or type(e).__name__), fix)
+        bad.add("%s: %s (%s)" % (path, what, e.strerror or type(e).__name__), fix)
         return []
 
 
@@ -200,7 +202,7 @@ def leases(state, name, ttl, bad):
     """The features of the project whose marshal record names a lead whose lease is live (or whose time cannot be read)."""
     fdir = os.path.join(state, "features")
     out = []
-    entries = listing(fdir, "the marshal records in", "make %s readable (qargi marshal status --project %s reads it)" % (fdir, name), bad)
+    entries = listing(fdir, "the marshal records", "qargi marshal status --project %s reads it: make %s readable" % (name, fdir), bad)
     pat = re.compile(r"^%s-([a-z0-9]+(?:-[a-z0-9]+)*)\.json$" % re.escape(name))
     for fn in entries:
         m = pat.match(fn)
@@ -237,7 +239,7 @@ def shared(state, name, bad):
     doc = load(sw, None)
     if isinstance(doc, dict) and doc.get("backend") == "local":
         return
-    bad.add("the marshal leases of %s: it is on the shared refs backend (the switch %s), whose leases are in refs of the remote, not in the records of this machine" % (name, sw),
+    bad.add("%s: the shared refs backend of %s (its leases are in refs of the remote)" % (sw, name),
             "qargi marshal status --project %s shows them; release each (qargi marshal release FEATURE --project %s), then qargi marshal disable --project %s" % (name, name, name))
 
 
@@ -246,7 +248,7 @@ def cuts(state, name, bad):
     rdir = os.path.join(state, "release")
     out = []
     prefix, suffix = name + "-", ".cut.json"
-    for fn in listing(rdir, "the release cut records in", "make %s readable (qargi release status --project %s reads it)" % (rdir, name), bad):
+    for fn in listing(rdir, "the release cut records", "qargi release status --project %s reads it: make %s readable" % (name, rdir), bad):
         if not (fn.startswith(prefix) and fn.endswith(suffix)) or len(fn) <= len(prefix) + len(suffix):
             continue
         rec = load(os.path.join(rdir, fn), None)
@@ -266,8 +268,8 @@ def linked(name, repo, bad):
     trees = [repo]
     listed = git(repo, "worktree", "list", "--porcelain")
     if listed is None:
-        bad.add("the work trees of the repository %s (git worktree list failed or took more than %d s)" % (repo, GIT_TIMEOUT),
-                "make git -C %s worktree list work" % repo)
+        bad.add("%s: git worktree list failed or took over %d s" % (repo, GIT_TIMEOUT),
+                "make git worktree list work in %s" % repo)
         listed = []
     for line in listed:
         if line.startswith("worktree "):
@@ -283,13 +285,19 @@ def linked(name, repo, bad):
             if os.path.exists(tok):
                 os.unlink(tok)
             try:
-                subprocess.run([sys.executable, "-I", os.path.join(HERE, "project_link.py"), "plan", "unlink", name, "", tok], cwd=real, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+                r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "project_link.py"), "plan", "unlink", name, "", tok, "--empty-status"], cwd=real,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
             except (OSError, subprocess.SubprocessError) as e:
-                bad.add("the links of project %s in the work tree %s (the plan of project unlink did not run: %s)" % (name, real, type(e).__name__),
+                bad.add("%s: the plan of project unlink did not run (%s)" % (real, type(e).__name__),
                         "run qargi project unlink %s inside %s and see what it says" % (name, real))
                 continue
-            if os.path.isfile(tok) and os.path.getsize(tok) > 0:
+            # nothing linked is the plan's own status (4), and a runtime the project has none of (2) links nothing; any other failure (a runtime that cannot be composed or
+            # resolved, a sealed definition that changed, a file system error) is a plan that could not be made, not "nothing linked"
+            if r.returncode not in (0, NOTHING_LINKED, NO_RUNTIME):
+                bad.add("%s: the plan of project unlink failed (status %d)" % (real, r.returncode),
+                        "run qargi project unlink %s inside %s and see what it says" % (name, real))
+                continue
+            if r.returncode == 0 and os.path.isfile(tok) and os.path.getsize(tok) > 0:
                 out.append(text(real))
     return out
 
@@ -303,7 +311,7 @@ def instances(conf, name, bad):
     path = os.path.join(conf, "instances.json")
     doc = load(path, {})
     if not isinstance(doc, dict):
-        bad.add("the registry of instances %s is not a JSON object that can be read" % path, "repair %s by hand (qargi instances list reads it)" % path)
+        bad.add("%s: the registry of instances is not a JSON object" % path, "qargi instances list reads it: repair %s by hand" % path)
         return []
     return sorted(text(k) for k in doc if isinstance(k, str) and k.startswith(name + "-"))
 
@@ -332,8 +340,8 @@ def scan(name):
         answers = None
     if not isinstance(answers, dict):
         answers = {}
-        bad.add("the stored answers %s are not a JSON object, so the repository, the cloud binding and the lease length of the project are not known" % ap,
-                "repair %s by hand (qargi project validate %s says what is wrong)" % (ap, name))
+        bad.add("%s: the stored answers are not a JSON object" % ap,
+                "qargi project validate %s says what is wrong: repair %s by hand" % (name, ap))
     repo = repo_of(answers)
     mz = answers.get("marshal")
     ttl = mz.get("lease_minutes") if isinstance(mz, dict) else None

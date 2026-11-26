@@ -216,7 +216,7 @@ echo '{}' > "$T/c/instances.json"
 mkdir "$REG"; before=$(alpha_all)
 unread "a registry of runs that cannot be read" "$REG" "qargi local list"
 rmdir "$REG"; printf '{"run":"%s","project":"beta"}\nthis is not json\n' "$T/runs/qargi.eee555" > "$REG"; before=$(alpha_all)
-unread "a registry line that is not JSON" "1 line(s) of the registry of runs" "$REG"
+unread "a registry line that is not JSON" "1 line(s) of the registry are not JSON" "$REG"
 rm -f "$REG"
 mv "$T/s/features" "$T/s/features.keep"; echo x > "$T/s/features"; before=$(alpha_all)
 unread "a directory of marshal records that cannot be listed" "$T/s/features" "qargi marshal status --project alpha"
@@ -224,6 +224,16 @@ rm -f "$T/s/features"; mv "$T/s/features.keep" "$T/s/features"
 mv "$T/s/release" "$T/s/release.keep"; echo x > "$T/s/release"; before=$(alpha_all)
 unread "a directory of release cuts that cannot be listed" "$T/s/release" "qargi release status --project alpha"
 rm -f "$T/s/release"; mv "$T/s/release.keep" "$T/s/release"; before=$(alpha_all)
+# a plan of project unlink that fails is not "nothing linked": a library definition that changed after it was sealed makes the plan exit 1, and the link it could not read is not forgotten
+(cd "$T/ralpha" && t=$($DA project link alpha | tokplan) && $DA project link alpha --plan "$t" --approved test >/dev/null 2>&1); [ -L "$T/ralpha/.fake/agents/forge.toml" ] && ok "setup: the checkout of alpha is linked again" || no "setup link (2): $(ls -A "$T/ralpha")"
+cp "$LIB/definition.json" "$T/def.keep"; jq '.agents.reserved_names = ["fake-builtin", "other"]' "$T/def.keep" > "$LIB/definition.json"
+before=$(alpha_all)
+unread "a link whose plan cannot be made (the sealed definition changed)" "the plan of project unlink failed (status 1)" "$T/ralpha" "run qargi project unlink alpha inside"
+cp "$T/def.keep" "$LIB/definition.json"
+run "$DA" project remove alpha; rc=$?
+{ refused $rc "project-remove-linked" "$T/ralpha"; } && ok "with the definition as sealed the link is found again (project-remove-linked)" || no "linked after restore: rc=$rc $(out)"
+(cd "$T/ralpha" && t=$($DA project unlink alpha | tokplan) && $DA project unlink alpha --plan "$t" --approved test >/dev/null 2>&1)
+rm -rf "$HOME/.fake"; before=$(alpha_all)
 # git in the repository fails: a shim that stands for a repository whose refs cannot be read (every other git command is the real one)
 REALGIT=$(command -v git); mkdir "$T/shim"
 printf '#!/bin/sh\nfor a in "$@"; do case $a in for-each-ref|worktree) exit 128;; esac; done\nexec %s "$@"\n' "$REALGIT" > "$T/shim/git"; chmod +x "$T/shim/git"
@@ -253,7 +263,7 @@ open(conf + "/instances.json", "w").write("[1]\n")      # not an object (the hel
 assert PR.instances(conf, "alpha", bad) == [] and len(bad.items) == 1 and "instances.json" in bad.items[0][0], bad.items
 open(conf + "/instances.json", "w").write("{}\n")
 bad = PR.Unreadable()
-assert PR.features(repo, bad) == [] and len(bad.items) == 1 and "for-each-ref" in bad.items[0][0] and "took more than 1 s" in bad.items[0][0], bad.items
+assert PR.features(repo, bad) == [] and len(bad.items) == 1 and "for-each-ref" in bad.items[0][0] and "took over 1 s" in bad.items[0][0], bad.items
 real = subprocess.run
 os.environ["PATH"] = os.environ["PATH"].split(os.pathsep, 1)[1]      # the real git again for the work trees
 for exc in (subprocess.TimeoutExpired("x", 1), OSError("no interpreter")):
@@ -266,6 +276,22 @@ for exc in (subprocess.TimeoutExpired("x", 1), OSError("no interpreter")):
     assert PR.linked("alpha", repo, bad) == [] and len(bad.items) >= 1 and "project unlink" in bad.items[0][0] and "run qargi project unlink alpha inside" in bad.items[0][1], bad.items
 PYEOF
 rm -rf "$T/shim" "$T/notrepo"; before=$(alpha_all)
+# the copy of a member's render is a file under the project's agents directory: a path of `.`, `x/.`, `a//b` or `x/` names no file there and is no copy of ours (the apply's own check says the same)
+mkdir -p "$T/unitconf"
+printf '{"projects":{"zz":{"a":{"file":"","render":{"path":"."}},"b":{"file":"","render":{"path":"x/."}},"c":{"file":"","render":{"path":"a//b"}},"d":{"file":"","render":{"path":"x/"}},"e":{"file":"","render":{"path":"ok.toml"}}}}}\n' > "$T/unitconf/agents.json"
+python3 -I - "${DA%/bin/qargi}/lib" "$T/unitconf" <<'PYEOF' && ok "a render path of '.', 'x/.', 'a//b' or 'x/' is no copy (only 'ok.toml' is)" || no "render path unit check"
+import sys
+sys.path.insert(0, sys.argv[1])
+import project_remove as PR
+ms, _ = PR.members_of(sys.argv[2], "zz", "")
+got = {m["name"]: m["copy"] for m in ms}
+assert [n for n, c in got.items() if c] == ["e"], got
+PYEOF
+rm -rf "$T/unitconf"
+# an open feature is found whatever a tag of the same name does to the short name of its branch (feature/x and a tag feature/x: git says heads/feature/x)
+git -C "$T/ralpha" branch feature/amb develop; git -C "$T/ralpha" tag feature/amb develop; before=$(alpha_all)
+hold "a feature branch hidden by a tag of the same name" project-remove-feature "amb"
+git -C "$T/ralpha" tag -d feature/amb >/dev/null; git -C "$T/ralpha" branch -D feature/amb >/dev/null; before=$(alpha_all)
 
 # a project on the shared refs backend: its leases are in refs of the remote, not in the records of this machine (state/features), so the switch file holds it
 mkdir -p "$T/s/marshal"; printf '{"backend":"refs","remote":"origin","words":"test"}\n' > "$T/s/marshal/alpha.enabled"; before=$(alpha_all)
@@ -334,6 +360,24 @@ run "$DA" project remove delta --plan "$tokd" --approved "retire delta, again"; 
 { [ $rc = 0 ] && [ ! -e "$T/c/projects/delta.json" ] && [ ! -e "$DM/rune.toml" ] && [ ! -e "$DM/dusk.toml" ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 1 ] && jq -e '.projects | has("delta") | not' "$T/c/agents.json" >/dev/null; } \
   && ok "after the cause is cleared a new plan finishes the removal, and the log ends with the line removed" || no "second apply: rc=$rc $(out)"
 before=$(alpha_all)
+
+# a failed write of the approved declarations is no "there was none": the entry stays, so the removal stops and says so (the state directory is read-only for the apply; not testable as root)
+if [ "$(id -u)" != 0 ]; then
+  make_repo "$T/rtheta"; lproj theta "$T/rtheta"
+  python3 -I "$SE" approved set theta '{"fds":"ci-like"}' --by test --state "$T/s" >/dev/null
+  run "$DA" project remove theta; tokt=$(tokof)
+  chmod 500 "$T/s"
+  run "$DA" project remove theta --plan "$tokt" --approved "retire theta"; rc=$?
+  chmod 700 "$T/s"
+  { [ $rc = 1 ] && grep -q "project remove stopped" "$T/e" && grep -q "could not be forgotten" "$T/e" && [ -f "$T/c/projects/theta.json" ] && jq -e '.projects | has("theta")' "$T/s/verify-env.json" >/dev/null \
+    && ! grep -q "^removed project" "$T/o"; } \
+    && ok "a write that fails when the approved declaration is forgotten stops the removal (exit 1): no 'removed', the answers and the entry stay" || no "failed forget: rc=$rc $(out)"
+  jq -e 'select(.verb == "project:remove" and (.detail | startswith("theta")) and (.detail | test("stopped after")))' "$T/s/audit.log" >/dev/null && ok "and the audit log says where it stopped" || no "failed forget audit: $(tail -2 "$T/s/audit.log")"
+  run "$DA" project remove theta; tokt=$(tokof)
+  run "$DA" project remove theta --plan "$tokt" --approved "retire theta, again"; rc=$?
+  { [ $rc = 0 ] && [ ! -e "$T/c/projects/theta.json" ] && jq -e '.projects | has("theta") | not' "$T/s/verify-env.json" >/dev/null; } && ok "with the directory writable again a new plan finishes it and the entry is gone" || no "forget again: rc=$rc $(out)"
+  before=$(alpha_all)
+else ok "(running as root: the read-only state directory case is skipped)"; fi
 
 # --- a runtime that keeps its member files in the checkout (link none, like .claude/agents/NAME.md of Claude Code): the apply deletes those files and says so
 LIB2=$T/c/packs/providers/fakein; mkdir -p "$LIB2"
