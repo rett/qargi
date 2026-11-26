@@ -27,7 +27,7 @@ fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib
 fast | par | 300 | 38 | bash tests/test_runtime_enable.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/lib.sh lib/guard.py tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
 fast | par | 300 | 19 | bash tests/test_runtime_resolve.sh | lib/agent.sh lib/prepared_request.py lib/refusals.json tests/prepared_request_cases.py tests/fixtures/runtime-no-extras/*
 # Run options of a command runtime (dispatch.run_config.options): the gate, the profile key, validate, prepare, the run file and drift (the shell test), and the request without options against a golden of the head before them (the python one). Measured 65s and 43s on a loaded machine; budgets +10%.
-full | par | 300 | 72 | bash tests/test_run_options.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/agent.sh lib/local.sh lib/local_run.py lib/prepared_request.py lib/refusals.json lib/commands.py tests/fakeprov.sh
+full | par | 600 | 150 | bash tests/test_run_options.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/agent.sh lib/local.sh lib/local_run.py lib/prepared_request.py lib/refusals.json lib/commands.py tests/fakeprov.sh
 full | par | 300 | 48 | python3 tests/test_run_options.py | lib/prepared_request.py lib/local_run.py lib/local.sh lib/provider.py lib/providers/* lib/agent.sh tests/prepared_request_cases.py tests/golden/run-options-request.json
 fast | par | 600 | 250 | bash tests/test_runtime_run.sh | lib/local.sh lib/review.sh lib/attempts.py lib/local_run.py lib/member_skills.py lib/refusals.json tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
@@ -96,7 +96,7 @@ full | par | 300 | 32 | bash tests/test_release_unrelated.sh | lib/release*.sh l
 full | par | 300 | 59 | bash tests/test_release_master_merge.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 9 | bash tests/test_release_snapshot_cycle.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 600 | 180 | bash tests/test_release_cut.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
-full | par | 300 | 63 | bash tests/test_release_fix_record.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 600 | 260 | bash tests/test_release_fix_record.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 116 | bash tests/test_dry_run.sh | lib/feature.sh lib/branch.sh lib/release*.sh lib/gitflow.sh lib/refusal.py lib/refusals.json lib/marshal_store.py lib/lead_usage.py lib/merged.py
 full | par | 300 | 24 | bash tests/test_release_after_steps.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 30 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py

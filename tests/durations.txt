@@ -137,7 +137,7 @@
 26 bash tests/test_resume_push.sh
 53 bash tests/test_release_master_merge.sh
 180 bash tests/test_release_cut.sh
-57 bash tests/test_release_fix_record.sh
+129 bash tests/test_release_fix_record.sh
 105 bash tests/test_dry_run.sh
 5 python3 tests/test_marshal_batch.py
 36 bash tests/test_marshal_batch.sh
@@ -157,7 +157,7 @@
 15 python3 tests/test_rolecard.py
 34 bash tests/test_runtime_enable.sh
 17 bash tests/test_runtime_resolve.sh
-65 bash tests/test_run_options.sh
+76 bash tests/test_run_options.sh
 43 python3 tests/test_run_options.py
 227 bash tests/test_runtime_run.sh
 60 bash tests/test_plan_record_sites.sh
