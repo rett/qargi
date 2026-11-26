@@ -391,6 +391,39 @@ class Import(Env):
         self.assertNotIn("would add or change", r.stderr)
         self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"]["run_options"], {"local": {"fakecx": ["image_generation"]}})
 
+    def test_the_archive_cannot_add_the_digest_of_an_approved_option(self):
+        # models.run_options.declared.RUNTIME.OPTION is the digest of the declaration the owner approved: an archive may keep it or drop an entry, never add or change one
+        src = os.path.join(self.conf, "projects", "alpha.json")
+        doc = jd(src)
+        d1, d2 = "a" * 64, "b" * 64
+        doc["models"] = {"provider": "claude-code", "run_options": {"local": {"fakecx": ["image_generation"]}, "declared": {"fakecx": {"image_generation": d1}}}}
+        self.write(src, json.dumps(doc))
+        a = self.export()
+        t, conf, state, fake = self.target()
+        stored = os.path.join(conf, "projects", "alpha.json")
+        own = {"project": "alpha", "models": {"provider": "claude-code", "run_options": {"local": {"fakecx": ["image_generation"]}, "declared": {"fakecx": {"image_generation": d2}}}},
+               "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}
+        # another digest stored: the stored one stays, whatever the archive says
+        self.write(stored, json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(jd(stored)["models"]["run_options"], own["models"]["run_options"])
+        self.assertIn("models.run_options", r.stderr)
+        # the same digest needs no note
+        own["models"]["run_options"]["declared"]["fakecx"]["image_generation"] = d1
+        self.write(stored, json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(stored)["models"]["run_options"], own["models"]["run_options"])
+        # an archive that dropped an option of a runtime (and its digest) only narrows what is stored
+        own["models"]["run_options"] = {"local": {"fakecx": ["image_generation", "other_option"]}, "declared": {"fakecx": {"image_generation": d1, "other_option": d2}}}
+        self.write(stored, json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(stored)["models"]["run_options"], doc["models"]["run_options"])
+
     def test_the_archive_cannot_set_the_answers_a_member_may_not_set(self):
         # ci.not_gates, methodology_accepted, review.reject_trailers, backlog.archive and backlog.section are refused to a member by the guard; an archive is untrusted data too
         src = os.path.join(self.conf, "projects", "alpha.json")

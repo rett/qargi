@@ -86,6 +86,8 @@ def run_options(project, runtime, profile, cls, comp=None):
         need(name in enabled, "the profile %s selects the option %s, which project %s has not enabled for the runtime %s (qargi provider enable %s --runtime %s --option %s)"
              % (profile, name, project, runtime, project, runtime, name))
         need(name in declared, "the definition of the runtime %s declares no option %s (dispatch.run_config.options)%s" % (runtime, name, GUIDANCE))
+        why = P.option_binding_problem(answers, runtime, name, declared)
+        need(why is None, "%s%s" % (why, GUIDANCE))
     return selected, enabled, declared
 
 
