@@ -1372,6 +1372,11 @@ PY
     remove_refuse_held "$scan"
     need_plan "$(remove_token "$scan")"
     nmt=$(jq -r '.members | length' <<<"$scan"); nm=0
+    # the members are read once, under the lock json_update takes on agents.json (an agent add or remove waits for it), and must be the ones the scan named: a member added in between is not removed unseen
+    exec {AGLK}>"$MEMBERS_FILE.lock" && flock "$AGLK" || fail "could not lock $MEMBERS_FILE; nothing of $n was removed"
+    mlist=$(jq -c --arg p "$n" '.projects[$p] // {} | to_entries[]' "$MEMBERS_FILE") || fail "$MEMBERS_FILE could not be read; nothing of $n was removed"
+    [ "$(jq -r .key <<<"$mlist" | sort | paste -sd,)" = "$(jq -r '.members[].name' <<<"$scan" | sort | paste -sd,)" ] \
+      || fail "the members of $n in $MEMBERS_FILE changed while the removal began; nothing of $n was removed (run project remove again for a new plan)"
     # the audit line is written before the first removal, so a removal that stops part way is in the log; the steps below stop with a second line that says where
     audit_log "project:remove" "$n ($nmt member(s)) begun: the members are removed one by one, then the approved declaration, then the stored answers"
     remove_stopped() { # WHAT: the removal stopped; what was already removed stays removed, the stored answers stay, and the audit log says so
@@ -1379,15 +1384,20 @@ PY
       fail "project remove stopped: $1; $nm of $nmt member(s) were removed and the stored answers of $n are still there (the audit log says so): run project remove again for a plan of what is left"
     }
     while IFS= read -r m; do
+      [ -n "$m" ] || continue
       mf=$(jq -r '.value.file // ""' <<<"$m"); rp=$(jq -r '.value.render.path // ""' <<<"$m")
       [ -z "$mf" ] || [ ! -f "$mf" ] || rm -f "$mf" || remove_stopped "the member file $mf of $(jq -r .key <<<"$m") could not be removed"
-      case $rp in ''|/*|..|../*|*/..|*/../*) ;; *) rm -f "$DA_CONF/agents/$n/$rp" || remove_stopped "the copy $DA_CONF/agents/$n/$rp of $(jq -r .key <<<"$m") could not be removed";; esac
+      case $rp in ''|/*|.|./*|*/.|*/./*|..|../*|*/..|*/../*|*//*|*/) ;; *) rm -f "$DA_CONF/agents/$n/$rp" || remove_stopped "the copy $DA_CONF/agents/$n/$rp of $(jq -r .key <<<"$m") could not be removed";; esac
       nm=$((nm + 1))
-    done < <(jq -c --arg p "$n" '.projects[$p] // {} | to_entries[]' "$MEMBERS_FILE")
+    done <<<"$mlist"
     rmdir "$DA_CONF/agents/$n" 2>/dev/null || true
-    [ "$(jq -r --arg p "$n" '.projects | has($p)' "$MEMBERS_FILE")" != true ] || json_update "$MEMBERS_FILE" 'del(.projects[$p])' --arg p "$n" || remove_stopped "the entries of the members in $MEMBERS_FILE could not be removed"
+    # (json_update would wait for the lock held here: the same update, made under it)
+    [ "$(jq -r --arg p "$n" '.projects | has($p)' "$MEMBERS_FILE")" != true ] \
+      || { jq --arg p "$n" 'del(.projects[$p])' "$MEMBERS_FILE" > "$MEMBERS_FILE.tmp" && chmod 600 "$MEMBERS_FILE.tmp" && mv "$MEMBERS_FILE.tmp" "$MEMBERS_FILE"; } || remove_stopped "the entries of the members in $MEMBERS_FILE could not be removed"
     frc=0; venv_py approved forget "$n" --state "$DA_STATE" >/dev/null || frc=$?
-    case $frc in 0|1) ;; *) remove_stopped "the approved declarations could not be written (verify-env.json), so none was forgotten";; esac
+    # exit 1 is "there was no entry", but a failed write (a traceback) exits 1 as well: when the scan found an entry (.approved is not null) only 0 is a removed one
+    if [ "$(jq -r '.approved == null' <<<"$scan")" = true ]; then ok_rc="0 1"; else ok_rc=0; fi
+    case " $ok_rc " in *" $frc "*) ;; *) remove_stopped "the approved declaration could not be forgotten (verify-env.json: the write failed or the entry was not there), so it was not";; esac
     rm -f "$PROJ_DIR/$n.json" || remove_stopped "the stored answers $PROJ_DIR/$n.json could not be removed"
     audit_log "project:remove" "$n ($nm member(s)) removed"
     echo "removed project $n: its stored answers and $nm member(s)"

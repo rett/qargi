@@ -147,6 +147,16 @@ out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); rcp=$?; tok=$(s
   && ok "the plan names the applied and merged legacy runs with their sizes and says what is done to each; the unmerged, the open and the one with a member alive are not in it" || no "plan (rc=$rcp): $out"
 { [ "$before" = "$(find "$SCR" "$S" -type f -printf '%p %T@ %s\n' | grep -v '/plans/' | sort | sha256sum)" ] && [ ! -e "$S/runs-archive/$(basename "$LM1").tar.gz" ]; } \
   && ok "and the plan changes nothing (no archive, no run touched)" || no "the plan changed a file"
+# a legacy_runs.py that fails to say who is alive, or how big the runs are, is no "nobody is alive": the plan stops (exit 3) and plans nothing (a copy of the tool whose helper fails)
+mkdir -p "$T/tool"; tar --exclude=./.git -C "$PWD" -cf - . | tar -C "$T/tool" -xf -
+printf 'import sys\nsys.exit(1 if sys.argv[1:2] == ["live"] else 0)\n' > "$T/tool/lib/legacy_runs.py"
+out=$("$T/tool/bin/qargi" local clean --applied --legacy --scratch "$SCR" 2>&1); rcb=$?
+{ [ $rcb = 3 ] && grep -q 'could not tell which legacy runs have a runner or a member alive' <<<"$out" && ! grep -q 'plan token' <<<"$out" && [ -d "$LM1" ]; } \
+  && ok "a liveness check that fails stops the plan (exit 3), with no plan and no token" || no "live fails (rc=$rcb): $out"
+printf 'import sys\nsys.exit(1 if sys.argv[1:2] == ["size"] else 0)\n' > "$T/tool/lib/legacy_runs.py"
+out=$("$T/tool/bin/qargi" local clean --applied --legacy --scratch "$SCR" 2>&1); rcb=$?
+{ [ $rcb = 3 ] && grep -q 'could not measure the legacy runs' <<<"$out" && ! grep -q 'plan token' <<<"$out"; } && ok "so does a size that fails" || no "size fails (rc=$rcb): $out"
+rm -rf "$T/tool"
 $DA plan show "$tok" 2>&1 | grep -q 'local clean' && ok "the plan is kept as a record (qargi plan show TOKEN) for the verb local clean" || no "plan show: $($DA plan show "$tok" 2>&1 | head -3)"
 $DA plan show "$tok" 2>&1 | grep -q 'bulkproj' && ok "its target names the project" || no "plan target: $($DA plan show "$tok" 2>&1 | head -5)"
 out=$($DA local clean --applied --legacy --scratch "$SCR" --approved "go" 2>&1); rcs=$?
@@ -177,6 +187,8 @@ lst=$(tar tzf "$A1" 2>&1)
 { [ ! -e "$LM1" ] && [ -d "$LU1" ] && [ -d "$LO1" ] && [ -d "$LX1" ] && [ -f "$LX1/out/manifest.json" ]; } && ok "the runs that were not in the plan are untouched" || no "a run outside the plan changed"
 [ ! -e "$S/runs/$(basename "$LM1")" ] && jq -e --arg r "$LM1" 'select(.run == $r and (.cleaned | type) == "string")' "$S/local-runs.jsonl" >/dev/null && ok "the removed run is marked cleaned in the registry and its saved copy is gone (it is in the archive)" || no "registry/saved copy of the removed run"
 jq -e 'select(.verb == "local:clean-legacy" and .approved == "the owner said archive and remove them")' "$S/audit.log" >/dev/null 2>&1 && ok "the removal is in the audit log with the words" || no "audit: $(tail -2 "$S/audit.log")"
+jq -s -e --arg r "$LM1" '[.[] | select(.verb == "local:clean-legacy")] | (map(.detail | startswith($r + " archived to")) | index(true)) as $i | ($i != null) and ($i < (length - 1)) and .[$i].approved == "the owner said archive and remove them"' "$S/audit.log" >/dev/null 2>&1 \
+  && ok "each run has its own audit line (its archive, with the words) before the summary line, written before its removal" || no "audit per run: $(grep clean-legacy "$S/audit.log" | cut -c1-200)"
 # the archive is read back before the run goes: a run whose archive cannot be made is not removed
 rm -f "$S/runs-archive/$(basename "$LM2").tar.gz"; mv "$S/runs-archive" "$S/ra.keep"; ln -s "$T/log" "$S/runs-archive"   # the archive directory is a link, not a directory
 out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok3=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
@@ -192,5 +204,77 @@ out=$(sed -n 1p "$S/local-runs.jsonl" | python3 -I lib/legacy_runs.py archive "$
 { [ $rca = 1 ] && grep -q 'is there already and its list does not match the files' <<<"$out"; } && ok "one that no longer matches the run's files is kept and refused, never replaced" || no "mismatch (rc=$rca): $out"
 out=$(python3 -I lib/legacy_runs.py live "$LX1" "$LM2" 2>&1)
 { grep -q "^$LX1	a process carries QARGI_MEMBER_RUN for it\$" <<<"$out" && ! grep -q "$LM2" <<<"$out"; } && ok "legacy_runs.py live names a run whose member carries QARGI_MEMBER_RUN, and no other" || no "live: $out"
+
+# --- the archive, checked harder: what a member can leave in out/, a damaged file, a rewrite of the same length, and the flush to disk
+U=$T/u; UR=$U/r/qargi.UNIT01; mkdir -p "$U/s/runs" "$UR/out"; printf 'aaaa' > "$UR/out/a"; ln "$UR/out/a" "$UR/out/b"; ln -s a "$UR/out/l"; printf 'x\n' > "$UR/refs.before"
+UA=$U/s/runs-archive/qargi.UNIT01.tar.gz
+arch() { printf '{"run":"x"}\n' | python3 -I lib/legacy_runs.py archive "$U/s" "$UR" 2>&1; }
+out=$(arch); rca=$?
+{ [ $rca = 0 ] && ! grep -q Traceback <<<"$out" && [ "$(tar tzvf "$UA" | grep -c '^-')" -ge 3 ] && ! tar tzvf "$UA" | grep -q '^h' && tar tzf "$UA" | grep -q 'out/a$' && tar tzf "$UA" | grep -q 'out/b$'; } \
+  && ok "a hard link in out/ is archived as a file of its own (each name has its content), and the archive checks" || no "hard link (rc=$rca): $out"
+cp "$UA" "$U/good.tar.gz"
+python3 -I -c '
+import sys
+p = sys.argv[1]
+d = bytearray(open(p, "rb").read())
+d[-8] ^= 1                      # the CRC32 of the gzip trailer
+open(p, "wb").write(d)' "$UA"
+out=$(arch); rca=$?
+{ [ $rca = 1 ] && grep -q 'is there already and the archive cannot be read back' <<<"$out"; } && ok "an archive whose gzip checksum is wrong fails the read-back (it was passed before: the tar ends before the trailer)" || no "crc (rc=$rca): $out"
+cp "$U/good.tar.gz" "$UA"; printf 'bbbb' > "$UR/out/a"
+out=$(arch); rca=$?
+{ [ $rca = 1 ] && grep -q 'is there already and its list does not match the files' <<<"$out"; } && ok "a file rewritten with the same length is not the archived one: its sha256 differs, the archive is kept and refused" || no "same length (rc=$rca): $out"
+printf 'aaaa' > "$UR/out/a"; out=$(arch); rca=$?
+[ $rca = 0 ] && ok "and with the content back the archive matches again" || no "content back (rc=$rca): $out"
+python3 -I -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])' "$UR/out/sock"
+rm -f "$UA"; out=$(arch); rca=$?
+{ [ $rca = 1 ] && grep -q 'sock is a socket: a socket cannot be archived' <<<"$out" && ! grep -q Traceback <<<"$out" && [ ! -e "$UA" ]; } && ok "a socket in out/ is refused with its name as the reason, no traceback and no archive" || no "socket (rc=$rca): $out"
+rm -f "$UR/out/sock"
+python3 -I - lib "$U/s" "$UR" <<'PYEOF' && ok "the archive file is flushed (fsync) before it is renamed into place, and the directory after" || no "fsync order"
+import os, stat, sys
+sys.path.insert(0, sys.argv[1])
+import legacy_runs as LR
+state, run = sys.argv[2], sys.argv[3]
+dest = os.path.join(state, "runs-archive", "qargi.UNIT01.tar.gz")
+if os.path.exists(dest):
+    os.unlink(dest)
+calls = []
+real = os.fsync
+def spy(fd):
+    calls.append(("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file", os.path.exists(dest)))
+    return real(fd)
+LR.os.fsync = spy
+LR.archive(state, run, "{}")
+assert calls == [("file", False), ("dir", True)], calls
+PYEOF
+
+# --- the cached snapshot of a remote is the answer to one question: the same URL asked with another credential is another question
+sed -n '/^snap_cached() {/,/^}/p; /^snapshot_url() {/p' lib/local.sh > "$T/snap.sh"
+cat > "$T/snaptest.sh" <<'EOF'
+. "$1"
+DA_STATE=$2; QARGI_SNAP_CACHE=$DA_STATE/verify.t; mkdir -p "$QARGI_SNAP_CACHE"
+snapshot_url_raw() { echo "asked ${2:-none}" >> "$DA_STATE/asks"; echo "refs-for-${2:-none}"; }
+a=$(snapshot_url https://example.net/r.git /c/one); b=$(snapshot_url https://example.net/r.git /c/two); c=$(snapshot_url https://example.net/r.git /c/one); n=$(snapshot_url https://example.net/r.git)
+echo "$a|$b|$c|$n|$(wc -l < "$DA_STATE/asks")"
+EOF
+mkdir -p "$T/sn"; out=$(bash "$T/snaptest.sh" "$T/snap.sh" "$T/sn" 2>&1)
+[ "$out" = "refs-for-/c/one|refs-for-/c/two|refs-for-/c/one|refs-for-none|3" ] && ok "a cached snapshot of a URL is keyed with the credential too (two credentials, two answers; the same one asked once)" || no "snapshot cache key: $out"
+
+# --- the warning of merged.py reaches the lead (a line of the ref journal that is not JSON)
+cp "$S/ref-journal.jsonl" "$T/journal.keep" 2>/dev/null || : > "$T/journal.keep"
+printf 'this line is not json\n' >> "$S/ref-journal.jsonl"
+out=$($DA local list --scratch "$SCR" 2>&1)
+cp "$T/journal.keep" "$S/ref-journal.jsonl"; [ -s "$T/journal.keep" ] || rm -f "$S/ref-journal.jsonl"
+{ [ "$(grep -c 'line of the ref journal' <<<"$out")" = 1 ]; } && ok "local list says once that the ref journal has a line that is not JSON (the warning of merged.py is not dropped)" || no "journal warning: $out"
+
+# --- a legacy run closed by hand with changed refs: its line does not send it to a plan that excludes it
+LC1=$(newrun lc1); $DA local close "$LC1" --applied-by-am >/dev/null 2>&1 || no "setup: local close of the run"
+legacy "$LC1"; stale "$LC1"
+out=$($DA local clean --applied --scratch "$SCR" 2>&1)
+{ grep -q "^kept $LC1: legacy run closed by hand (local close --applied-by-am), refs changed" <<<"$out" && grep -q 'clean --applied --legacy does not plan it' <<<"$out" && [ -d "$LC1" ]; } \
+  && ok "a run closed by hand and kept for its refs says so, and names the clean RUN --discard that works (the bulk form does not plan it)" || no "closed run line: $(grep "$LC1" <<<"$out")"
 kill_bg
 exit $fail

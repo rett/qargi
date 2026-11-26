@@ -552,6 +552,68 @@ class Review(HookCase):
             for cmd in ("git log --grep send-email", "git help send-email", "git show send-email", "git grep send-email"):
                 self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 0, cmd)
 
+    def test_a_bare_init_with_an_option_the_guard_does_not_know_may_write_where_bare_was_read(self):
+        """An init option the guard does not know may take the next word, so the word the guard reads as DIR may be that option's value and git then writes the repository where
+        --bare was read: judged there, from the clone, though the word is a place of TMP. A known flag (--shared=group) leaves DIR sure and only DIR is written."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git --bare -C %s init --newopt t" % tmp, "git --bare -C %s init -Z t" % tmp, "git --bare init --newopt %s/y" % tmp):
+            for cls in ((), ("--class", "read-only")):
+                self.assertEqual(self.call("Bash", {"command": cmd}, c, *cls).returncode, 2, (cmd, cls))
+        for cmd in ("git --bare -C %s init --shared=group t" % tmp, "git --bare -C %s init --shared t" % tmp, "git --bare init %s/y" % tmp, "git --bare -C %s init -q t" % tmp):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 0, cmd)
+
+    def test_the_variables_that_place_a_git_write_are_refused_when_exported_and_judged_in_front_of_a_command(self):
+        """GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and GIT_COMMON_DIR say which repository, tree, index or object store a git command changes. In front of one
+        command they are judged as places (GIT_DIR and GIT_WORK_TREE were; the other three are now); exported (export, declare -x, readonly, typeset, local) they would place every
+        later command, which the guard reads one at a time, so the export is refused. core.worktree names a tree as --work-tree does and is refused as a key that places git."""
+        self.ability("build")
+        s = os.path.join(self.t, "home", ".claude", "skills", "x")
+        os.makedirs(s, exist_ok=True)
+        for cmd in ("export GIT_DIR=%s/.git GIT_WORK_TREE=%s; git checkout -- ." % (s, s), "export GIT_WORK_TREE=%s; git checkout -- ." % s, "X=%s; export GIT_DIR=$X; git commit -m x" % s,
+                    "declare -x GIT_DIR=%s/.git" % s, "readonly GIT_DIR=%s/.git" % s, "typeset -x GIT_WORK_TREE=%s" % s, "GIT_DIR=%s/.git; export GIT_DIR" % s,
+                    "export GIT_INDEX_FILE=%s/i" % s, "export GIT_OBJECT_DIRECTORY=%s/o" % s, "export GIT_COMMON_DIR=%s/c" % s, "bash -c 'export GIT_DIR=%s/.git; git add .'" % s,
+                    "GIT_INDEX_FILE=%s/.git/index git add ." % s, "GIT_OBJECT_DIRECTORY=%s/.git/objects git add ." % s, "GIT_COMMON_DIR=%s/.git git add ." % s,
+                    "env GIT_INDEX_FILE=%s/.git/index git add ." % s, "git -c core.worktree=%s checkout -- ." % s, "git config core.worktree %s" % s,
+                    "git --git-dir=%s/.git -c core.worktree=%s reset --hard" % (self.clone, s)):
+            r = self.call("Bash", {"command": cmd})
+            self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+        for cmd in ("export FOO=1", "export GIT_AUTHOR_NAME=x", "GIT_INDEX_FILE=%s/idx git add ." % self.out, "GIT_OBJECT_DIRECTORY=%s/o git hash-object -w f" % self.out,
+                    "git status", "git config user.name x", "git -c core.bare=false status"):
+            r = self.call("Bash", {"command": cmd})
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+        self.ability("review")
+        tmp = os.path.join(self.run, "tmp")
+        os.makedirs(os.path.join(tmp, "y"))
+        for cmd in ("git --git-dir=%s/y/.git -c core.worktree=%s reset --hard" % (tmp, self.clone), "git -C %s/y config core.worktree %s" % (tmp, self.clone)):
+            r = self.call("Bash", {"command": cmd}, tmp)
+            self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+        r = self.call("Bash", {"command": "export GIT_WORK_TREE=%s" % tmp}, tmp)
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_a_read_of_a_cache_or_a_graph_is_no_git_write_and_the_publishing_commands_of_other_systems_are_refused(self):
+        """rerere (status, diff, remaining), commit-graph and multi-pack-index (verify) and pack-objects --stdout only read, and stay allowed under the read-only class; with no
+        such word, or any other, they write. git p4 submit, git cvsexportcommit, git daemon and git instaweb publish as a push does."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git -C %s rerere status" % c, "git -C %s rerere diff" % c, "git -C %s rerere remaining" % c, "git -C %s commit-graph verify" % c, "git -C %s multi-pack-index verify" % c,
+                    "git -C %s pack-objects --stdout --revs < /dev/null" % c, "git --git-dir=%s/.git rerere status" % c):
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 0, cmd)
+        for cmd in ("git -C %s rerere" % c, "git -C %s rerere clear" % c, "git -C %s rerere gc" % c, "git -C %s commit-graph write" % c, "git -C %s multi-pack-index write" % c,
+                    "git -C %s pack-objects base" % c, "git -C %s pack-objects --revs base" % c, "git --git-dir=%s/.git commit-graph write" % c):
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 2, cmd)
+        for cls in ("review", "build"):
+            self.ability(cls)
+            for cmd in ("git p4 submit", "git -C %s p4 submit --origin HEAD" % c, "git-p4 submit", "git cvsexportcommit -c HEAD", "git daemon --enable=receive-pack", "git instaweb",
+                        "git-daemon", "git-instaweb", "git-cvsexportcommit HEAD", "git --no-pager daemon"):
+                r = self.call("Bash", {"command": cmd})
+                self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+                self.assertIn("is not available to an agent", r.stderr, cmd)
+            for cmd in ("git p4 sync", "git help daemon", "git log --grep daemon", "git log --grep 'p4 submit'", "git show instaweb"):
+                self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 0, cmd)
+
     def test_the_clone_options_checkout_and_hardlinks_take_no_value(self):
         """--checkout and --hardlinks are the opposites of --no-checkout and --no-hardlinks: flags that take no value, so the operands are the ones read, and a clone from
         the clone to TMP is no change of the clone, and one into the clone is."""

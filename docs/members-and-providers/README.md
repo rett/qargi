@@ -52,10 +52,14 @@ guard finds its run; give a member that needs a write tool the write roles alone
 ## What the guard refuses
 
 The guard refuses `git push`, `git send-email`, `git imap-send`, `gh`,
-`ssh`, `scp`, `sftp` and changes to a git remote. A git write is judged at the place it changes: `-C DIR`,
-`--work-tree DIR` and `--git-dir DIR` (or `GIT_WORK_TREE`, `GIT_DIR`) name it, and a top-level `--bare` names the
-directory it is read in when `git init` has no DIR. The guard reads the text of a command and is a best-effort
-check, not a sandbox.
+`ssh`, `scp`, `sftp` and changes to a git remote; it refuses `git cvsexportcommit`, `git daemon`, `git instaweb` and
+`git p4 submit` as it refuses a push. A git write is judged at the place it changes: `-C DIR`,
+`--work-tree DIR` and `--git-dir DIR` (or `GIT_WORK_TREE`, `GIT_DIR` in front of the command; also `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY` and `GIT_COMMON_DIR` there) name it, and a top-level `--bare` names the directory it is read in
+when `git init` has no DIR or when an option the guard does not know may have taken the DIR. The guard reads one
+command at a time, so it refuses to `export` (or `declare -x`, `readonly`) `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR`, and a `git -c` or `git config` of `core.worktree`: give
+the place to the command. The guard reads the text of a command and is a best-effort check, not a sandbox.
 
 It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook

@@ -122,7 +122,7 @@ snap_cached() {
   fi
   "$@"
 }
-snapshot_url() { snap_cached url "$1" snapshot_url_raw "$@"; }
+snapshot_url() { snap_cached url "$1 ${2:-}" snapshot_url_raw "$@"; }   # the credential file is part of the key: another credential may read other refs
 snapshot() { snap_cached repo "$1" snapshot_raw "$@"; }
 
 # merged_tip REPO TIP [BRANCH [RUN]] -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
@@ -158,7 +158,7 @@ merged_prefetch() {
     ks+=("$d"); recs+=("$rp" "$atip" "$ab" "$ans")
   done
   [ "${#ks[@]}" -gt 0 ] || return 0
-  mapfile -t rcs < <(printf '%s\0' "${recs[@]}" | python3 -I "$(dirname "$0")/merged.py" --batch --state "$DA_STATE" 2>/dev/null)
+  mapfile -t rcs < <(printf '%s\0' "${recs[@]}" | python3 -I "$(dirname "$0")/merged.py" --batch --state "$DA_STATE")   # its warning (a journal that cannot be read) goes to the lead, once
   for i in "${!ks[@]}"; do
     case ${rcs[i]:-1} in 0|2) MRC[${ks[i]}]=${rcs[i]};; *) MRC[${ks[i]}]=1;; esac
   done
@@ -631,6 +631,10 @@ legacy_refs_verdict() {
 legacy_kept_line() {
   local d=$1 cl='' ab='' rc
   reg_val cl "$d" closed
+  if [ -n "$cl" ] && [ ! -f "$d/applied" ]; then   # closed by hand, no applied file: the bulk form plans only runs with one, so it names the one command that does
+    printf 'kept %s: legacy run closed by hand (local close --applied-by-am), refs changed or could not be compared since it was prepared; clean --applied --legacy does not plan it (no applied file): archive its out/ yourself, then qargi local clean %s --discard\n' "$d" "$d"
+    return 0
+  fi
   rc=${MRC[$d]:-1}; [ -z "$cl" ] || rc=0
   case $rc in
     0) printf 'kept %s: legacy run, refs changed or could not be compared since it was prepared; its work is merged: after its out/ is archived, qargi local clean %s --discard\n' "$d" "$d";;
@@ -645,7 +649,7 @@ legacy_kept_line() {
 # STATE/runs-archive/NAME.tar.gz, read back and checked against the files before anything is removed) and then removes the run as clean RUN --discard does. A run that is not
 # legacy, not applied, not merged, of a repository URL, or has a runner or member alive, or a run of another directory, is not in the plan and is never touched.
 clean_legacy() {
-  local scr d cl rp rc i n total=0 tok pj p1 sz arch apath abytes afiles rest rr why err rm_n=0 kept_n=0 ecode=0
+  local scr d cl rp rc i n total=0 tok pj p1 sz sizes lv arch apath abytes afiles rest rr why err rm_n=0 kept_n=0 ecode=0
   local n_life=0 n_unap=0 n_url=0 n_unm=0 n_live=0
   local -a cand=() mp=() merged_ok=() elig=() szs=()
   local -A LIVE=()
@@ -664,13 +668,15 @@ clean_legacy() {
     if [ "${MRC[$d]:-1}" = 0 ]; then merged_ok+=("$d"); else n_unm=$((n_unm + 1)); fi
   done
   if [ "${#merged_ok[@]}" -gt 0 ]; then
-    while IFS=$'\t' read -r d why; do [ -z "$d" ] || LIVE[$d]=$why; done < <(python3 -I "$(dirname "$0")/legacy_runs.py" live "${merged_ok[@]}" 2>/dev/null)
+    lv=$(python3 -I "$(dirname "$0")/legacy_runs.py" live "${merged_ok[@]}") || { echo "qargi: could not tell which legacy runs have a runner or a member alive (legacy_runs.py live failed); nothing was planned or changed" >&2; exit 3; }
+    while IFS=$'\t' read -r d why; do [ -z "$d" ] || LIVE[$d]=$why; done <<<"$lv"
     for d in "${merged_ok[@]}"; do
       if [ -n "${LIVE[$d]+x}" ]; then n_live=$((n_live + 1)); else elig+=("$d"); fi
     done
   fi
   if [ "${#elig[@]}" -gt 0 ]; then
-    while read -r sz d; do szs+=("$sz"); total=$((total + sz)); done < <(python3 -I "$(dirname "$0")/legacy_runs.py" size "${elig[@]}")
+    sizes=$(python3 -I "$(dirname "$0")/legacy_runs.py" size "${elig[@]}") || { echo "qargi: could not measure the legacy runs (legacy_runs.py size failed); nothing was planned or changed" >&2; exit 3; }
+    while read -r sz d; do szs+=("$sz"); total=$((total + sz)); done <<<"$sizes"
   fi
   echo "$((${#elig[@]} + n_unm + n_live)) legacy run(s) under $scr are applied; ${#elig[@]} of them merged, with no runner or member alive, and so in the plan ($total bytes in all)"
   for i in "${!elig[@]}"; do echo "  ${elig[i]}  ${szs[i]} bytes"; done
@@ -696,6 +702,7 @@ clean_legacy() {
       echo "kept $d: not archived, so not removed: $(sed -n 1p "$err" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-300)"; kept_n=$((kept_n + 1)); continue
     fi
     arch=${arch#archive }; afiles=${arch##* }; rest=${arch% *}; abytes=${rest##* }; apath=${rest% *}
+    audit_log "local:clean-legacy" "$d archived to $apath ($abytes bytes, $afiles entries); removing it"   # the line is there before the removal, so a run that was removed is in the log even when the verb is interrupted
     if why=$("$0" clean "$d" --discard 2>"$err" </dev/null); then
       echo "archived $d: $apath ($abytes bytes, $afiles entries)"; echo "$why"; rm_n=$((rm_n + 1))
     else
@@ -1469,7 +1476,7 @@ WRAP
         if [ ! -f "$d/applied" ] && [ -z "$cl" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
         if [ -z "$rp" ] && [ -z "$cl" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         # a legacy run whose refs comparison fails is kept whatever else is true of it: said here, in one line and with the one command to run, instead of by a clean of its own
-        if legacy_refs_verdict "$d"; then legacy_kept_line "$d"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); leg_n=$((leg_n + 1)); continue; fi
+        if legacy_refs_verdict "$d"; then legacy_kept_line "$d"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); [ ! -f "$d/applied" ] || leg_n=$((leg_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done

@@ -2537,42 +2537,9 @@ def option_binding_problem(answers, runtime, option, declared):
     if now is None:
         return None            # an option the definition no longer declares is its own finding
     was = run_option_digests_of(answers).get(runtime, {}).get(option)
-    again = "qargi provider disable PROJECT --runtime %s --option %s, then qargi provider enable PROJECT --runtime %s --option %s" % (runtime, option, runtime, option)
-    if was is None:
-        return "the option %s of the runtime %s has no recorded approval of its declaration (models.run_options.declared): approve it again (%s)" % (option, runtime, again)
-    if was != option_digest(now):
-        return "the definition of the runtime %s changed the option %s since the owner approved it (its declaration digest moved): read what it is now and approve it again (%s)" % (runtime, option, again)
-    return None
-
-
-def run_option_digests_of(answers):
-    """{runtime: {option: digest}} of models.run_options.declared of the answers: the digest of each enabled option's declaration (option_digest) as it was when the owner
-    approved it (qargi provider enable PROJECT --runtime NAME --option OPT). {} when the answer is absent or not an object of objects of strings."""
-    models = answers.get("models") if isinstance(answers, dict) else None
-    ro = models.get("run_options") if isinstance(models, dict) else None
-    dec = ro.get("declared") if isinstance(ro, dict) else None
-    out = {}
-    for rt, rec in (dec.items() if isinstance(dec, dict) else ()):
-        if isinstance(rt, str) and isinstance(rec, dict):
-            out[rt] = {k: v for k, v in rec.items() if isinstance(k, str) and isinstance(v, str)}
-    return out
-
-
-def option_digest(option):
-    """The digest of one option's declaration (dispatch.run_config.options.NAME of a definition: its settings, classes, flags, phrase, note and source), the one the plan of an
-    enable binds: the sha256 of its canonical JSON."""
-    return hashlib.sha256(json.dumps(option, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
-
-
-def option_binding_problem(answers, runtime, option, declared):
-    """Why the enabled OPTION of RUNTIME is not the one the owner approved, or None when it is: the answers keep the digest of its declaration as it was approved
-    (models.run_options.declared.RUNTIME.OPTION) and the definition declares it now with the same digest. An option with no recorded digest was not approved as declared:
-    it is disabled and enabled again."""
-    now = declared.get(option)
-    if now is None:
-        return None            # an option the definition no longer declares is its own finding
-    was = run_option_digests_of(answers).get(runtime, {}).get(option)
-    again = "qargi provider disable PROJECT --runtime %s --option %s, then qargi provider enable PROJECT --runtime %s --option %s" % (runtime, option, runtime, option)
+    again = ("take the option out of each profile that selects it (qargi project set PROJECT profiles.PROFILE.options with the list without it: a disable is refused while one does), "
+             "then qargi provider disable PROJECT --runtime %s --option %s, then qargi provider enable PROJECT --runtime %s --option %s, then select it in the profile again"
+             % (runtime, option, runtime, option))
     if was is None:
         return "the option %s of the runtime %s has no recorded approval of its declaration (models.run_options.declared): approve it again (%s)" % (option, runtime, again)
     if was != option_digest(now):
