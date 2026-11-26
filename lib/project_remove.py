@@ -12,8 +12,8 @@
 
 The answers file holds the stored answers; the members are the entries of the project in the members file (config/agents.json) with the written member file
 and the render's copy in config/agents/NAME/ that `qargi agent remove` would take away. The removal runs no git command that changes anything and touches
-the repository only through the member files listed in the plan: a runtime whose member files are not linked into the checkout (link none, for example
-.claude/agents/NAME.md of Claude Code) keeps them in it, and the apply deletes those files (the lines qargi wrote in .git/info/exclude for them stay). What is
+the repository only through the member files listed in the plan: a runtime whose member files are not linked into the checkout (link none, for example a member
+file in the runtime's agents directory) keeps them in it, and the apply deletes those files (the lines qargi wrote in .git/info/exclude for them stay). What is
 read from the repository is the list of its feature branches and of its work trees (git for-each-ref, git worktree list: reads).
 
 Held, in this order, each with the refusal code of lib/refusals.json that names the command that clears it:
