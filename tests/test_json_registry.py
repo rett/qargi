@@ -26,6 +26,7 @@ FIX = os.path.join("tests", "fixtures", "json")
 PREFIX_BASE = "qargi-refusal/"
 UNKNOWN_FIELD = "x_unknown_field_a_reader_ignores"
 FIXED_WORKTREE = "0123456789abcdef"
+SCRATCH_LENGTH = 64     # the length of the directory the scenario makes its scratch directory in (regen)
 RELEASE_TAG = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 # The rules of the broken files (design 5.2): id, the sentence, who must reject it (`both`: a reader and qargi's own validator; `writer`: qargi's validator
@@ -640,9 +641,19 @@ def regen(root, tool, check):
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
         regs[n], _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
     KINDS_SEEN[:] = sorted(regs)
-    raw = tempfile.mkdtemp(prefix="json-raw.")
+    base = os.path.realpath(tempfile.mkdtemp(prefix="j."))
+    raw = os.path.join(base, "raw")
+    # the size cut of a handoff counts bytes, so the paths the scenario prints must have the same length wherever it runs: its scratch directory is
+    # made inside a directory with a name padded to a fixed length
+    pad = SCRATCH_LENGTH - len(base) - 1
+    if pad < 1:
+        print("the temporary directory %s is too long (%d characters of %d): set TMPDIR to a shorter one" % (base, len(base), SCRATCH_LENGTH - 2))
+        shutil.rmtree(base, ignore_errors=True)
+        return 1
+    scratch = os.path.join(base, "p" * pad)
+    os.makedirs(scratch)
     try:
-        p = subprocess.run(["bash", os.path.join(tool, FIX, "scenario.sh"), raw], capture_output=True, text=True)
+        p = subprocess.run(["bash", os.path.join(tool, FIX, "scenario.sh"), raw], capture_output=True, text=True, env=dict(os.environ, TMPDIR=scratch))
         if p.returncode != 0:
             print("the scenario failed (exit %d): %s" % (p.returncode, (p.stdout + p.stderr)[-600:]))
             return 1
@@ -658,7 +669,7 @@ def regen(root, tool, check):
             for name, text in derived_files(kind, reg, valid).items():
                 files[os.path.join(vdir, name)] = text
     finally:
-        shutil.rmtree(raw, ignore_errors=True)
+        shutil.rmtree(base, ignore_errors=True)
     bad = 0
     for rel, text in sorted(files.items()):
         p = os.path.join(root, rel)

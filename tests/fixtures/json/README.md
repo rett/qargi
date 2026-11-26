@@ -28,6 +28,6 @@ scenario.sh                      how valid.json was made (qargi's own; a consume
 
 - `python3 tests/test_json_registry.py` is the static lint (six points: the registry files are well formed, every fixture is what `cases.json` says, every kind has its directory and its broken file for each rule that applies, the live registry is the frozen one plus additions that keep the integer, every field is in some valid fixture, the frozen files equal the ones at the last release tag).
 - `python3 tests/test_json_registry.py --self-test` breaks a scratch copy of the tree in turn and expects the lint to fail by the right point.
-- `python3 tests/test_json_registry.py --regen --tool CHECKOUT` runs the scenario in a checkout outside any run directory and writes the files; with `--check` it writes nothing and says whether the files are what the scenario makes now. `--freeze` copies the live registry files over the frozen ones, once, at the pin.
+- `python3 tests/test_json_registry.py --regen --tool CHECKOUT` runs the scenario in a checkout outside any run directory (in a scratch directory whose path has a fixed length, because the size cut of the handoff counts bytes) and writes the files; with `--check` it writes nothing and says whether the files are what the scenario makes now. `--freeze` copies the live registry files over the frozen ones, once, at the pin.
 
 When a kind changes in a way that raises its integer, the old `vN` directory stays (a consumer keeps qualifying its old reader against it) and a new `vN+1` directory is made.
