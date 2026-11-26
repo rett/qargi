@@ -276,6 +276,8 @@ COMMANDS = {
                                  "naming the one command that clears it: an open feature (project-remove-feature; qargi feature finish), an open run of the project (project-remove-run; qargi local clean), "
                                  "a live marshal lease (project-remove-lease; qargi marshal release), an open release cut (project-remove-release; qargi release finish), a work tree of the repository where project link left a link "
                                  "(project-remove-linked; qargi project unlink, run in it), a cloud binding (project-remove-cloud; qargi cloud unset) and a registered instance (project-remove-instances; qargi instances remove). "
+                                 "A source that exists and cannot be read holds it too (project-remove-unreadable: stored answers that are not a JSON object, git failing or too slow in the repository, a plan of project unlink that did not run, "
+                                 "instances.json, the registry of runs or a directory of the state that cannot be read), naming what and the one command or file to fix; a plan that says nothing holds it back has read all of them. "
                                  "When several hold it the first of those is the refusal and a note names the rest. A member never runs it: the guard refuses it, and so does the verb in a member's run directory or with the member mark in the environment. "
                                  "A coordinator session (QARGI_ACTOR) may not run it."),
                            examples=["qargi project remove acme", 'qargi project remove acme --plan TOKEN --approved "retire acme"']),

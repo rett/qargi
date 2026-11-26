@@ -13,16 +13,21 @@ and the render's copy in config/agents/NAME/ that `qargi agent remove` would tak
 is the list of its feature branches and of its work trees (git for-each-ref, git worktree list: reads).
 
 Held, in this order, each with the refusal code of lib/refusals.json that names the command that clears it:
-  project-remove-feature    an open feature: a branch feature/* of the repository (qargi feature list)
-  project-remove-run        an open run of the lead's registry for the project (a line of local-runs.jsonl that is not cleaned and not closed)
-  project-remove-lease      a marshal record of a feature of the project, neither finished nor abandoned, whose lead renewed it less than marshal.lease_minutes ago
-  project-remove-release    a cut record of a release (release/NAME-VERSION.cut.json) without the finish step
+  project-remove-feature     an open feature: a branch feature/* of the repository (qargi feature list)
+  project-remove-run         an open run of the lead's registry for the project (a line of local-runs.jsonl that is not cleaned and not closed)
+  project-remove-lease       a marshal record of a feature of the project, neither finished nor abandoned, whose lead renewed it less than marshal.lease_minutes ago
+  project-remove-release     a cut record of a release (release/NAME-VERSION.cut.json) without the finish step
   project-remove-linked      a work tree of the repository where `qargi project unlink NAME` would unlink something (project_link.py plan)
-  project-remove-cloud      the cloud answer (qargi cloud): a profile and a workspace
-  project-remove-instances  an entry of instances.json named NAME-...
+  project-remove-cloud       the cloud answer (qargi cloud): a profile and a workspace
+  project-remove-instances   an entry of instances.json named NAME-...
+  project-remove-unreadable  something that could hold the removal back and cannot be read although its source is there: the stored answers (not JSON, not an
+                             object), git in the repository (for-each-ref, worktree list), the plan of project unlink in a work tree (it did not run or took too
+                             long), instances.json, the registry local-runs.jsonl (the file or a line of it) and the directories features/ and release/ of the
+                             state; each names what and the one command or file that fixes it
 
-A thing that cannot be read is reported as held (a record that is not JSON, a lease whose time is not a time): the removal goes on only when nothing
-holds it. A repository that is gone or is not one has no feature and no work tree to look at. Run through lib/project.sh; python3 -I, standard library only."""
+A thing that cannot be read is reported as held: the removal goes on only when nothing holds it, so a plan that says nothing holds it back has read
+everything that could. A source that is not there holds nothing. A repository that is gone or is not one has no feature and no work tree to look at.
+Run through lib/project.sh; python3 -I, standard library only."""
 import calendar
 import hashlib
 import json
@@ -49,6 +54,16 @@ def text(s):
     return CTRL.sub("?", str(s))[:MAX]
 
 
+class Unreadable:
+    """What could not be read, each with what to fix: a hold of project-remove-unreadable (the two lists are one item for each thing)."""
+
+    def __init__(self):
+        self.items = []
+
+    def add(self, what, fix):
+        self.items.append((text(what), text(fix)))
+
+
 def load(path, default):
     try:
         with open(path, encoding="utf-8") as f:
@@ -68,6 +83,11 @@ def git(repo, *args):
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.decode("utf-8", "replace").splitlines() if r.returncode == 0 else None
+
+
+def is_repo(path):
+    """A directory that is a repository to look at: a checkout (a .git entry) or a bare one. A path that is not one has no feature and no work tree."""
+    return os.path.exists(os.path.join(path, ".git")) or (os.path.isfile(os.path.join(path, "HEAD")) and os.path.isdir(os.path.join(path, "objects")))
 
 
 def repo_of(answers):
@@ -97,25 +117,42 @@ def members_of(conf, name):
     return out
 
 
-def features(repo):
-    out = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*") if repo else None
-    return sorted(b[len("feature/"):] for b in out or [] if b.startswith("feature/"))
+def features(repo, bad):
+    if not repo or not is_repo(repo):
+        return []
+    out = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*")
+    if out is None:
+        bad.add("the feature branches of the repository %s (git for-each-ref failed or took more than %d s)" % (repo, GIT_TIMEOUT),
+                "make git -C %s for-each-ref refs/heads/feature/* work" % repo)
+        return []
+    return sorted(b[len("feature/"):] for b in out if b.startswith("feature/"))
 
 
-def runs(state, name, repo):
+def runs(state, name, repo, bad):
     """The runs of the lead's registry that belong to the project and are not cleaned or closed (the last line of a run is the run's)."""
     last = {}
+    path = os.path.join(state, "local-runs.jsonl")
+    skipped = 0
     try:
-        with open(os.path.join(state, "local-runs.jsonl"), encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
+                if not line.strip():
+                    continue
                 try:
                     r = json.loads(line)
                 except ValueError:
+                    skipped += 1
                     continue
                 if isinstance(r, dict) and isinstance(r.get("run"), str) and r["run"]:
                     last[r["run"]] = r
-    except OSError:
+    except FileNotFoundError:
         return []
+    except OSError as e:
+        bad.add("the registry of runs %s (%s)" % (path, e.strerror or type(e).__name__), "make %s readable (qargi local list reads it)" % path)
+        return []
+    if skipped:
+        bad.add("%d line(s) of the registry of runs %s are not JSON, so a run of the project may be among them" % (skipped, path),
+                "repair or remove those lines of %s (qargi local list names them)" % path)
     rp = os.path.realpath(repo) if repo else ""
     out = []
     for run, r in last.items():
@@ -133,14 +170,22 @@ def now():
         return int(time.time())
 
 
-def leases(state, name, ttl):
+def listing(path, what, fix, bad):
+    """The sorted names in a directory of the state: [] when it is not there, and a thing that could not be read when it is there and cannot be listed."""
+    try:
+        return sorted(os.listdir(path))
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        bad.add("%s %s (%s)" % (what, path, e.strerror or type(e).__name__), fix)
+        return []
+
+
+def leases(state, name, ttl, bad):
     """The features of the project whose marshal record names a lead whose lease is live (or whose time cannot be read)."""
     fdir = os.path.join(state, "features")
     out = []
-    try:
-        entries = sorted(os.listdir(fdir))
-    except OSError:
-        return []
+    entries = listing(fdir, "the marshal records in", "make %s readable (qargi marshal status --project %s reads it)" % (fdir, name), bad)
     pat = re.compile(r"^%s-([a-z0-9]+(?:-[a-z0-9]+)*)\.json$" % re.escape(name))
     for fn in entries:
         m = pat.match(fn)
@@ -163,16 +208,12 @@ def leases(state, name, ttl):
     return out
 
 
-def cuts(state, name):
+def cuts(state, name, bad):
     """The versions of the project's release cut records that did not reach finish."""
     rdir = os.path.join(state, "release")
-    try:
-        entries = sorted(os.listdir(rdir))
-    except OSError:
-        return []
     out = []
     prefix, suffix = name + "-", ".cut.json"
-    for fn in entries:
+    for fn in listing(rdir, "the release cut records in", "make %s readable (qargi release status --project %s reads it)" % (rdir, name), bad):
         if not (fn.startswith(prefix) and fn.endswith(suffix)) or len(fn) <= len(prefix) + len(suffix):
             continue
         rec = load(os.path.join(rdir, fn), None)
@@ -183,13 +224,19 @@ def cuts(state, name):
     return out
 
 
-def linked(name, repo):
+def linked(name, repo, bad):
     """The work trees of the repository (it too) where qargi project unlink NAME would unlink something: project_link.py plans it and writes
-    a token only when there is something to do. A work tree it cannot plan for (no provider, no checkout) has nothing it links."""
-    if not repo:
+    a token only when there is something to do. A work tree it cannot plan for (no provider, no checkout: it exits without a token) has nothing it
+    links; one where it did not run or took too long is a thing that could not be read."""
+    if not repo or not is_repo(repo):
         return []
     trees = [repo]
-    for line in git(repo, "worktree", "list", "--porcelain") or []:
+    listed = git(repo, "worktree", "list", "--porcelain")
+    if listed is None:
+        bad.add("the work trees of the repository %s (git worktree list failed or took more than %d s)" % (repo, GIT_TIMEOUT),
+                "make git -C %s worktree list work" % repo)
+        listed = []
+    for line in listed:
         if line.startswith("worktree "):
             trees.append(line[len("worktree "):])
     seen, out = set(), []
@@ -205,7 +252,9 @@ def linked(name, repo):
             try:
                 subprocess.run([sys.executable, "-I", os.path.join(HERE, "project_link.py"), "plan", "unlink", name, "", tok], cwd=real, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError) as e:
+                bad.add("the links of project %s in the work tree %s (the plan of project unlink did not run: %s)" % (name, real, type(e).__name__),
+                        "run qargi project unlink %s inside %s and see what it says" % (name, real))
                 continue
             if os.path.isfile(tok) and os.path.getsize(tok) > 0:
                 out.append(text(real))
@@ -217,9 +266,11 @@ def bound(answers):
     return isinstance(c, dict) and bool(c.get("profile")) and bool(c.get("workspace_id"))
 
 
-def instances(conf, name):
-    doc = load(os.path.join(conf, "instances.json"), {})
+def instances(conf, name, bad):
+    path = os.path.join(conf, "instances.json")
+    doc = load(path, {})
     if not isinstance(doc, dict):
+        bad.add("the registry of instances %s is not a JSON object that can be read" % path, "repair %s by hand (qargi instances list reads it)" % path)
         return []
     return sorted(text(k) for k in doc if isinstance(k, str) and k.startswith(name + "-"))
 
@@ -241,27 +292,33 @@ def scan(name):
             raw = f.read()
     except OSError:
         sys.exit("qargi: no stored answers for %s (qargi project list)" % name)
+    bad = Unreadable()
     try:
         answers = json.loads(raw)
     except ValueError:
-        answers = {}
+        answers = None
     if not isinstance(answers, dict):
         answers = {}
+        bad.add("the stored answers %s are not a JSON object, so the repository, the cloud binding and the lease length of the project are not known" % ap,
+                "repair %s by hand (qargi project validate %s says what is wrong)" % (ap, name))
     repo = repo_of(answers)
     mz = answers.get("marshal")
     ttl = mz.get("lease_minutes") if isinstance(mz, dict) else None
     ttl = ttl if isinstance(ttl, int) and not isinstance(ttl, bool) and 1 <= ttl <= 1440 else 15
     held = []
-    for code, field, found in (("project-remove-feature", "features", features(repo)), ("project-remove-run", "runs", runs(state, name, repo)),
-                               ("project-remove-lease", "features", leases(state, name, ttl)), ("project-remove-release", "versions", cuts(state, name)),
-                               ("project-remove-linked", "trees", linked(name, repo))):
+    for code, field, found in (("project-remove-feature", "features", features(repo, bad)), ("project-remove-run", "runs", runs(state, name, repo, bad)),
+                               ("project-remove-lease", "features", leases(state, name, ttl, bad)), ("project-remove-release", "versions", cuts(state, name, bad)),
+                               ("project-remove-linked", "trees", linked(name, repo, bad))):
         if found:
             held.append({"code": code, "values": {field: ",".join(x.replace(",", ";") for x in found)}})
     if bound(answers):
         held.append({"code": "project-remove-cloud", "values": {}})
-    inst = instances(conf, name)
+    inst = instances(conf, name, bad)
     if inst:
         held.append({"code": "project-remove-instances", "values": {"instances": ",".join(x.replace(",", ";") for x in inst)}})
+    if bad.items:
+        held.append({"code": "project-remove-unreadable", "values": {"what": ",".join(w.replace(",", ";") for w, _ in bad.items),
+                                                                      "fix": ",".join(f.replace(",", ";") for _, f in bad.items)}})
     return {"project": name, "answers": ap, "answers_sha": hashlib.sha256(raw).hexdigest(), "members": members_of(conf, name),
             "approved": approved(state, name), "held": held}
 

@@ -138,6 +138,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   | `project-remove-linked` | `project link` left a link in the repository's checkout or in one of its work trees | `qargi project unlink NAME`, run inside that work tree |
   | `project-remove-cloud` | the project has a cloud binding (the answer `cloud`) | `qargi cloud unset NAME` |
   | `project-remove-instances` | `instances.json` has an entry named `NAME-...` | `qargi instances remove INSTANCE` |
+  | `project-remove-unreadable` | something that could hold it back exists and cannot be read: the stored answers (not JSON, not an object), git in the repository (`for-each-ref`, `worktree list`), the plan of `project unlink` in a work tree, `instances.json`, the registry of runs (the file or a line of it), the `features/` or `release/` directory of the state | the command or file the refusal names |
 
   When several hold it the first of these is the refusal and a note names the others. A member never runs it (its guard refuses
   it, and so does the verb in a member's run directory), and a coordinator session (`QARGI_ACTOR`) may not.

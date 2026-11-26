@@ -191,6 +191,78 @@ run "$DA" project remove alpha; rc=$?
 { refused $rc "project-remove-feature" "two" && grep -q "note: also held: run, instances" "$T/e"; } && ok "with several holds the first is the refusal (feature) and a note names the others (run, instances)" || no "several holds: rc=$rc $(out)"
 git -C "$T/ralpha" branch -D feature/two >/dev/null; rm -f "$REG"; echo '{}' > "$T/c/instances.json"; before=$(alpha_all)
 
+# what cannot be read holds the project (project-remove-unreadable): a source that is there and fails is never "nothing holds it"; one that is not there holds nothing
+unread() { # LABEL WORDS...: both phases refuse with project-remove-unreadable naming every word, no plan token, no "nothing holds it back", nothing changed
+  local label=$1 s; shift
+  for s in plan apply; do
+    if [ $s = plan ]; then run "$DA" project remove alpha; else run "$DA" project remove alpha --plan "$tok0" --approved go; fi; rc=$?
+    refused $rc "project-remove-unreadable" "could not be read" "$@" && ! grep -q "^plan token\|nothing holds it back" "$T/o" && [ "$before" = "$(alpha_all)" ] || { no "$label ($s): rc=$rc $(out)"; return; }
+  done
+  ok "$label: refused with project-remove-unreadable in the plan and in the apply (exit 2), names $*, nothing changed"
+}
+cp "$T/c/projects/alpha.json" "$T/alpha.json.keep"
+printf '{"schema":1,"project":' > "$T/c/projects/alpha.json"; before=$(alpha_all)
+unread "stored answers that are not JSON" "$T/c/projects/alpha.json" "qargi project validate alpha"
+printf '["not","an","object"]\n' > "$T/c/projects/alpha.json"; before=$(alpha_all)
+unread "stored answers that are not an object" "$T/c/projects/alpha.json" "qargi project validate alpha"
+cp "$T/alpha.json.keep" "$T/c/projects/alpha.json"
+printf '{oops' > "$T/c/instances.json"; before=$(alpha_all)
+unread "an instances.json that is not JSON" "$T/c/instances.json" "qargi instances list"
+echo '{}' > "$T/c/instances.json"
+mkdir "$REG"; before=$(alpha_all)
+unread "a registry of runs that cannot be read" "$REG" "qargi local list"
+rmdir "$REG"; printf '{"run":"%s","project":"beta"}\nthis is not json\n' "$T/runs/qargi.eee555" > "$REG"; before=$(alpha_all)
+unread "a registry line that is not JSON" "1 line(s) of the registry of runs" "$REG"
+rm -f "$REG"
+mv "$T/s/features" "$T/s/features.keep"; echo x > "$T/s/features"; before=$(alpha_all)
+unread "a directory of marshal records that cannot be listed" "$T/s/features" "qargi marshal status --project alpha"
+rm -f "$T/s/features"; mv "$T/s/features.keep" "$T/s/features"
+mv "$T/s/release" "$T/s/release.keep"; echo x > "$T/s/release"; before=$(alpha_all)
+unread "a directory of release cuts that cannot be listed" "$T/s/release" "qargi release status --project alpha"
+rm -f "$T/s/release"; mv "$T/s/release.keep" "$T/s/release"; before=$(alpha_all)
+# git in the repository fails: a shim that stands for a repository whose refs cannot be read (every other git command is the real one)
+REALGIT=$(command -v git); mkdir "$T/shim"
+printf '#!/bin/sh\nfor a in "$@"; do case $a in for-each-ref|worktree) exit 128;; esac; done\nexec %s "$@"\n' "$REALGIT" > "$T/shim/git"; chmod +x "$T/shim/git"
+PATH=$T/shim:$PATH run "$DA" project remove alpha; rc=$?
+refused $rc project-remove-unreadable "could not be read" "for-each-ref" "worktree list" && ! grep -q "^plan token\|nothing holds it back" "$T/o" && [ "$before" = "$(alpha_all)" ] \
+  && ok "git that fails in the repository (for-each-ref, worktree list): refused with project-remove-unreadable, no plan" || no "git fails: rc=$rc $(out)"
+PATH=$T/shim:$PATH run "$DA" project remove alpha --plan "$tok0" --approved go; rc=$?
+refused $rc project-remove-unreadable "for-each-ref" && [ "$before" = "$(alpha_all)" ] && ok "the same in the apply: refused, nothing changed" || no "git fails (apply): rc=$rc $(out)"
+# a repository path that is not a repository has no feature and no work tree: nothing there fails to be read
+mkdir "$T/notrepo"; jq --arg r "$T/notrepo" '.repo.path = $r' "$T/alpha.json.keep" > "$T/c/projects/alpha.json"
+PATH=$T/shim:$PATH run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && ! grep -q "could not be read" "$T/e"; } && ok "a repository path that is not a repository holds nothing (and git is not asked)" || no "not a repository: rc=$rc $(out)"
+cp "$T/alpha.json.keep" "$T/c/projects/alpha.json"; before=$(alpha_all)
+# a git that takes too long, and a plan of project unlink that cannot run, are things that could not be read too (the clock and the process are replaced inside a copy of the module)
+printf '#!/bin/sh\nsleep 5\n' > "$T/shim/git"
+python3 -I - "${DA%/bin/qargi}/lib" "$T/ralpha" "$T/shim" <<'PYEOF' && ok "a git that takes too long, or a plan of project unlink that does not run, is reported as unreadable" || no "timeout/OSError unit checks"
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import project_remove as PR
+repo, shim = sys.argv[2], sys.argv[3]
+os.environ["PATH"] = shim + os.pathsep + os.environ["PATH"]
+PR.GIT_TIMEOUT = 1
+conf = os.path.dirname(repo) + "/c"
+bad = PR.Unreadable()
+assert PR.instances(conf, "alpha", bad) == [] and not bad.items
+open(conf + "/instances.json", "w").write("[1]\n")      # not an object (the help of the command line cannot read it either, so it is tried here)
+assert PR.instances(conf, "alpha", bad) == [] and len(bad.items) == 1 and "instances.json" in bad.items[0][0], bad.items
+open(conf + "/instances.json", "w").write("{}\n")
+bad = PR.Unreadable()
+assert PR.features(repo, bad) == [] and len(bad.items) == 1 and "for-each-ref" in bad.items[0][0] and "took more than 1 s" in bad.items[0][0], bad.items
+real = subprocess.run
+os.environ["PATH"] = os.environ["PATH"].split(os.pathsep, 1)[1]      # the real git again for the work trees
+for exc in (subprocess.TimeoutExpired("x", 1), OSError("no interpreter")):
+    def boom(*a, **k):
+        if a and isinstance(a[0], list) and a[0][0] == "git":
+            return real(*a, **k)
+        raise exc
+    PR.subprocess.run = boom
+    bad = PR.Unreadable()
+    assert PR.linked("alpha", repo, bad) == [] and len(bad.items) >= 1 and "project unlink" in bad.items[0][0] and "run qargi project unlink alpha inside" in bad.items[0][1], bad.items
+PYEOF
+rm -rf "$T/shim" "$T/notrepo"; before=$(alpha_all)
+
 # a cloud binding: it is an answer of the project, so it is tried on a project of its own
 lproj gamma "$T/ralpha"; jq '.cloud = {profile:"p1", workspace_id:"wrkspc_01ABCDEFGHIJK"}' "$T/c/projects/gamma.json" > "$T/g" && mv "$T/g" "$T/c/projects/gamma.json"
 g0=$(sha256sum "$T/c/projects/gamma.json")

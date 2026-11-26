@@ -1046,6 +1046,16 @@
       "fields": {"name": "label", "instances": "name-list"},
       "message": "project remove is refused: {name} has registered instance(s): {instances}",
       "next": {"lead": "remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again", "host": "remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again"}
+    },
+    "project-remove-unreadable": {
+      "rule": "A project is not removed while something that could hold it back cannot be read",
+      "why": "a source that exists and cannot be read may name a feature, run, lease, cut, work tree or instance of the project, so a removal over it would be a guess",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "what": "name-list", "fix": "name-list"},
+      "message": "project remove is refused: {name} cannot be checked, because it could not be read: {what}",
+      "next": {"lead": "fix it, one item at a time: {fix}; then run project remove again", "host": "fix it, one item at a time: {fix}; then run project remove again"}
     }
   }
 }

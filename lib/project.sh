@@ -1305,20 +1305,23 @@ PY
     [ -f "$PROJ_DIR/$n.json" ] || refuse project-remove-unknown name="$n"
     members_shape_ok || fail "$MEMBERS_FILE is not in the current shape (qargi upgrade); nothing was planned or removed"
     scan=$(python3 -I "$(dirname "$(readlink -f "$0")")/project_remove.py" scan "$n") || exit 1
-    if [ "$(jq -r '.held | length' <<<"$scan")" != 0 ]; then
-      # the first thing that holds the project is the refusal; the others are named beside it, so one run says what to clear
-      [ "$(jq -r '.held | length' <<<"$scan")" = 1 ] || echo "qargi: note: also held: $(jq -r '[.held[1:][].code | sub("^project-remove-"; "")] | join(", ")' <<<"$scan")" >&2
-      held=$(jq -r '.held[0].code' <<<"$scan")
-      hv() { jq -r --arg k "$1" '.held[0].values[$k] // ""' <<<"$scan"; }   # the values the scan names for the refusal, one text for each field (a list is joined by commas)
-      [ "$held" != project-remove-feature ] || refuse project-remove-feature name="$n" features="$(hv features)"
-      [ "$held" != project-remove-run ] || refuse project-remove-run name="$n" runs="$(hv runs)"
-      [ "$held" != project-remove-lease ] || refuse project-remove-lease name="$n" features="$(hv features)"
-      [ "$held" != project-remove-release ] || refuse project-remove-release name="$n" versions="$(hv versions)"
-      [ "$held" != project-remove-linked ] || refuse project-remove-linked name="$n" trees="$(hv trees)"
+    remove_refuse_held() { # SCAN: refuse with the first hold the scan names (nothing when it names none); the others are named beside it, so one run says what to clear
+      local held
+      [ "$(jq -r '.held | length' <<<"$1")" != 0 ] || return 0
+      [ "$(jq -r '.held | length' <<<"$1")" = 1 ] || echo "qargi: note: also held: $(jq -r '[.held[1:][].code | sub("^project-remove-"; "")] | join(", ")' <<<"$1")" >&2
+      held=$(jq -r '.held[0].code' <<<"$1")
+      hv() { jq -r --arg k "$1" '.held[0].values[$k] // ""' <<<"$2"; }   # the values the scan names for the refusal, one text for each field (a list is joined by commas)
+      [ "$held" != project-remove-feature ] || refuse project-remove-feature name="$n" features="$(hv features "$1")"
+      [ "$held" != project-remove-run ] || refuse project-remove-run name="$n" runs="$(hv runs "$1")"
+      [ "$held" != project-remove-lease ] || refuse project-remove-lease name="$n" features="$(hv features "$1")"
+      [ "$held" != project-remove-release ] || refuse project-remove-release name="$n" versions="$(hv versions "$1")"
+      [ "$held" != project-remove-linked ] || refuse project-remove-linked name="$n" trees="$(hv trees "$1")"
       [ "$held" != project-remove-cloud ] || refuse project-remove-cloud name="$n"
-      [ "$held" != project-remove-instances ] || refuse project-remove-instances name="$n" instances="$(hv instances)"
+      [ "$held" != project-remove-instances ] || refuse project-remove-instances name="$n" instances="$(hv instances "$1")"
+      [ "$held" != project-remove-unreadable ] || refuse project-remove-unreadable name="$n" what="$(hv what "$1")" fix="$(hv fix "$1")"
       fail "project remove: the scan named a hold this verb does not know ($held); nothing was changed"
-    fi
+    }
+    remove_refuse_held "$scan"
     # the token covers the answers (their hash), the approved declaration and each member: it does not depend on what could hold the removal, so a token stays good after a refusal
     tok=$({ printf '%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$scan")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$scan")"
             jq -r '.members[] | [.name, (.roles | join(",")), .file, .copy] | join("|")' <<<"$scan"; } \

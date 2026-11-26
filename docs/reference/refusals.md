@@ -71,6 +71,7 @@ compares them with that page.
 | [`project-remove-linked`](#project-remove-linked) | project-remove | 2 | live | A project whose work tree is linked is not removed |
 | [`project-remove-cloud`](#project-remove-cloud) | project-remove | 2 | live | A project bound to a cloud workspace is not removed |
 | [`project-remove-instances`](#project-remove-instances) | project-remove | 2 | live | A project with registered instances is not removed |
+| [`project-remove-unreadable`](#project-remove-unreadable) | project-remove | 2 | live | A project is not removed while something that could hold it back cannot be read |
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
 | [`runtime-option-unacknowledged`](#runtime-option-unacknowledged) | project-rule | 1 | live | The owner's approval of a run option says what it opens |
@@ -395,6 +396,15 @@ compares them with that page.
 - Fields: `name` (label), `instances` (name-list).
 - Message: `project remove is refused: {name} has registered instance(s): {instances}`
 - Next, for a lead: remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again
+
+### project-remove-unreadable
+
+- Rule: A project is not removed while something that could hold it back cannot be read.
+- Why: a source that exists and cannot be read may name a feature, run, lease, cut, work tree or instance of the project, so a removal over it would be a guess.
+- Exit 2, live.
+- Fields: `name` (label), `what` (name-list), `fix` (name-list).
+- Message: `project remove is refused: {name} cannot be checked, because it could not be read: {what}`
+- Next, for a lead: fix it, one item at a time: {fix}; then run project remove again
 
 ## Class project-rule
 
