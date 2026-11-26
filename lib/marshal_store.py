@@ -60,8 +60,11 @@ marshal.sh); it refuses an unsigned head whose lead is not the lead of the recor
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
+The refusals of status and check (not of the other verbs) print, on standard error, the contract line and the block of lib/refusals.json, then the sentence
+above: marshal-feature-unknown, marshal-feature-held, marshal-remote-unreachable (exit 3) and, for every other refusal, marshal-refused. The exit status is the
+exception's, whatever the rendering does: when it fails for any reason only the sentence is printed (report_refusal), so a refusal is never taken for a defect.
 Run through lib/marshal.sh; python3 -I, standard library only."""
-import argparse, calendar, fcntl, hashlib, json, os, pwd, re, socket, subprocess, sys, time
+import argparse, calendar, fcntl, hashlib, io, json, os, pwd, re, socket, subprocess, sys, time
 
 FMT = "%Y-%m-%dT%H:%M:%SZ"
 STATUSES = ("planned", "active", "blocked", "verifying", "released", "finished", "abandoned")
@@ -70,10 +73,15 @@ CAP = 2000
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 ID_RE = re.compile(r"^[A-Za-z0-9._@:+-]{1,128}$")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+CTRL_ALL_RE = re.compile(r"[\x00-\x1f\x7f]+")        # every control character, a newline and a tab too
 
 
 class Refuse(Exception):
-    """A refusal: message to stderr, exit 1."""
+    """A refusal: message to stderr, exit 1. A raise site that has a code of lib/refusals.json of its own sets `code` and `pairs` (the fields of the
+    code as (name, text) pairs); every other site stays as it is and is the generic code marshal-refused when a verb prints the block (report_refusal)."""
+    def __init__(self, message="", code=None, pairs=()):
+        super().__init__(message)
+        self.code, self.pairs = code, list(pairs)
 
 
 class Unreachable(Refuse):
@@ -1316,7 +1324,7 @@ def v_status(ctx, a):
         check_name(a.name)
         rec = ctx.be.get(ctx, a.name)
         if rec is None and not branch_exists(ctx, a.name):
-            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name), "marshal-feature-unknown", [("feature", a.name)])
         items = gather(ctx, [a.name])
     else:
         items = listed(ctx, a.history)
@@ -1638,14 +1646,16 @@ def v_check(ctx, a):
         check_name(a.name)
         rec = ctx.be.get(ctx, a.name)
         if rec is None and not branch_exists(ctx, a.name):
-            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name), "marshal-feature-unknown", [("feature", a.name)])
         if rec is not None:
             rec = ghost_fix(ctx, a.name, rec)
         ld = lead_of(rec)
         if ld and ld["id"] != ctx.id:
-            st, _ = lease(ctx, rec)
+            st, mins = lease(ctx, rec)
             if st == "live":
-                raise Refuse(led_by_msg(ctx, a.name, rec))
+                # the lead's id is the one value another machine or a hand edit chooses: report_refusal passes it as a field only when it is one clean line
+                raise Refuse(led_by_msg(ctx, a.name, rec), "marshal-feature-held",
+                             [("feature", a.name), ("lead", clean(ld["id"])), ("minutes", "" if mins is None else str(mins)), ("ttl", str(ctx.ttl))])
         elif ld and a.renew:
             rec = renew_own(ctx, a.name, rec)
         d = describe(ctx, a.name, rec, {})
@@ -1665,6 +1675,73 @@ def v_check(ctx, a):
             print("qargi: warning: " + w, file=sys.stderr)
     if not items:
         print("no open features")
+
+
+BLOCK_VERBS = ("status", "check")      # the verbs whose refusals print the contract line and the block of lib/refusals.json; the others keep the plain line
+
+
+def refusal_mod():
+    """lib/refusal.py (the catalogue of refusals and its renderer), loaded by path (python -I does not put this directory on sys.path)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("refusal", os.path.join(os.path.dirname(os.path.realpath(__file__)), "refusal.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def refusal_block(code, pairs, verb, project, out):
+    """The contract line and the block of CODE written into OUT. A literal refusal.refuse("CODE", ...) for each code: the lint of the catalogue finds a raise
+    only in that form. A code that is none of these is the generic one."""
+    refusal = refusal_mod()
+    if code == "marshal-feature-unknown":
+        return refusal.refuse("marshal-feature-unknown", pairs, verb=verb, project=project, out=out)
+    if code == "marshal-feature-held":
+        return refusal.refuse("marshal-feature-held", pairs, verb=verb, project=project, out=out)
+    if code == "marshal-handoff-file":
+        return refusal.refuse("marshal-handoff-file", pairs, verb=verb, project=project, out=out)
+    if code == "marshal-remote-unreachable":
+        return refusal.refuse("marshal-remote-unreachable", pairs, verb=verb, project=project, out=out)
+    return refusal.refuse("marshal-refused", [], verb=verb, project=project, out=out)
+
+
+def refusal_code(e, a):
+    """(code, pairs) of a refusal: the code its raise site set, the one of the remote that was not reached, else the generic one."""
+    if isinstance(e, Unreachable):
+        return "marshal-remote-unreachable", ([("feature", a.name)] if getattr(a, "name", None) else [])
+    return (e.code or "marshal-refused"), e.pairs
+
+
+def report_refusal(e, a, verb):
+    """Print a refusal on standard error: the contract line and the block (lib/refusal.py), then the sentence the marshal has always printed.
+    Nothing here changes the exit status, which the caller takes from the exception: the block is made in a buffer, and when making it fails for
+    any reason (the catalogue cannot be read, a value is not a clean line, a defect) none of it is printed, no traceback either, and the plain line
+    stands alone. A value another machine or a hand edit chose (a lead id) is a field only when it is one clean line of the field's type; else the
+    field is left out and the block says `?`. The sentence is one line: a control character in it (a lead id with a newline) becomes a space."""
+    block = ""
+    try:
+        refusal = refusal_mod()
+        code, pairs = refusal_code(e, a)
+        spec = refusal.load()["codes"][code]["fields"]
+        buf = io.StringIO()
+        refusal_block(code, [(k, v) for k, v in pairs if k in spec and isinstance(v, str) and refusal.value_problem(spec[k], v) is None],
+                      verb, a.project, buf)
+        block = buf.getvalue()
+    except Exception:
+        block = ""
+    try:
+        sys.stderr.write("%sqargi: %s\n" % (block, CTRL_ALL_RE.sub(" ", str(e))))
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def refused(a, e, rc):
+    """The end of a verb the marshal refused: the block for the verbs that have one, else the plain line; the status RC is the exception's."""
+    if a.verb in BLOCK_VERBS:
+        report_refusal(e, a, "marshal " + a.verb)
+    else:
+        print("qargi: %s" % e, file=sys.stderr)
+    return rc
 
 
 def usage_exit(msg):
@@ -1735,11 +1812,9 @@ def main(argv):
             return usage_exit("marshal %s is not available in a member run: a member never changes the shared marshal or pushes; the lead does" % a.verb)
         globals()["v_" + a.verb](ctx, a)
     except Unreachable as e:
-        print("qargi: %s" % e, file=sys.stderr)
-        return 3
+        return refused(a, e, 3)
     except Refuse as e:
-        print("qargi: %s" % e, file=sys.stderr)
-        return 1
+        return refused(a, e, 1)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
     except Exception:          # a bug is not a refusal: exit 70, so a caller never mistakes it for "another lead holds this"

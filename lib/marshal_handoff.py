@@ -487,14 +487,14 @@ def collect(a, argv_name):
             M.check_name(argv_name)
             rec = ctx.be.get(ctx, argv_name)
             if rec is None and not M.branch_exists(ctx, argv_name):
-                raise M.Refuse("no feature %s in %s (no branch feature/%s and no record)" % (argv_name, ctx.project, argv_name))
+                raise M.Refuse("no feature %s in %s (no branch feature/%s and no record)" % (argv_name, ctx.project, argv_name), "marshal-feature-unknown", [("feature", argv_name)])
             return [argv_name]
         return [n for n in ctx.be.names(ctx, False)
                 if M.is_open(M.describe(ctx, n, M.unled(ctx, n, ctx.be.get(ctx, n)), {}, derived=False))]
     try:
         names = get_features(ctx)
     except M.Refuse as e:
-        if argv_name and str(e).startswith("no feature "):
+        if argv_name and e.code == "marshal-feature-unknown":
             raise
         notes.append("the shared records cannot be read (%s): the local records of this host are shown" % line(str(e), 200))
         ns.backend = "local"
@@ -1120,21 +1120,21 @@ def main(argv):
         if a.write:
             why = write_refusal(a.write, a.conf, a.state, a.repo)
             if why:
-                raise M.Refuse(why)
+                raise M.Refuse(why, "marshal-handoff-file")
         F = collect(a, a.name)
         text = render_json(F) if a.json else render_text(F)
         if a.write:
             try:
                 write_note(a.write, text)
             except OSError as e:
-                raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e))
+                raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e), "marshal-handoff-file")
             record_written(a, M, F, text)
             print("wrote %s (%d bytes, mode 600); read it, add your own lines marked as the lead's addition, and give it to the new session" % (a.write, len(text.encode())))
         else:
             sys.stdout.write(text)
     except M.Refuse as e:
-        print("qargi: %s" % e, file=sys.stderr)
-        return 1
+        M.report_refusal(e, a, "marshal handoff")        # the contract line and the block, then the sentence; the status is the exception's
+        return 3 if isinstance(e, M.Unreachable) else 1
     except pv().NoProvider as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 2
