@@ -393,7 +393,8 @@ def plan_home(disp, run, runtime, doc=None):
     h = disp.get("home")
     if h is None:
         return None
-    bad = P.home_problems(h, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else ())
+    argv0 = disp["argv"][0] if isinstance(disp.get("argv"), list) and disp["argv"] and isinstance(disp["argv"][0], str) else None
+    bad = P.home_problems(h, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), command=argv0)
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     why = P.home_source_problem(doc if doc is not None else {"dispatch": disp}, runtime)
@@ -422,7 +423,7 @@ def plan_home(disp, run, runtime, doc=None):
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
     return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "copies": copies, "missing": missing, "notes": notes, "start": {},
-            "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "copy_len": {}, "expires": {},
+            "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "copy_len": {}, "expires": {}, "refreshed": {}, "refresh_tried": set(), "locked": set(),
             "residue": [], "declared": [ln["from"] for ln in h.get("link", [])], "from": {ln["to"]: ln["from"] for ln in h.get("link", [])},
             "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime}
 
@@ -515,44 +516,56 @@ def lock_name(path, home, runtime):
     return LOCK_NAME
 
 
+def lock_one(path, home, runtime, sig):
+    """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
+    that finds it held says so (a note on standard error) and waits for it, a signal ending the wait (Interrupted). The file is made when it is missing
+    (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock."""
+    shown = lock_name(path, home, runtime)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
+             "make its directory writable for you" % (runtime, shown, e.strerror or e))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            fail("the lock file %s is not a regular file; remove it" % shown)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            pass
+        print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
+              file=sys.stderr, flush=True)
+        sig.armed = True
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(LOCK_POLL)
+        finally:
+            sig.armed = False
+        sig.check()
+        print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def take_lock(home, runtime, sig):
     """Hold an exclusive flock on each lock file of the run home (lock_files) until release_lock: the runs that share a sign-in run one at a time,
-    for a runtime refreshes the sign-in it was given, and two runs refreshing one file race on its token. A run that finds the lock held says so
-    (a note on standard error) and waits for it, a signal ending the wait (Interrupted). The file is made when it is missing (mode 600) and never
-    followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock. Returns the open files."""
+    for a runtime refreshes the sign-in it was given, and two runs refreshing one file race on its token. Returns the open files; the paths held are
+    home["locked"], so the refresh of a private link (refresh_signin) does not ask for a lock this run holds already."""
     held = []
     try:
         for path in lock_files(home):
-            shown = lock_name(path, home, runtime)
-            try:
-                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-            except OSError as e:
-                fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
-                     "make its directory writable for you" % (runtime, shown, e.strerror or e))
-            held.append(fd)
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                fail("the lock file %s is not a regular file; remove it" % shown)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                continue
-            except BlockingIOError:
-                pass
-            print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
-                  file=sys.stderr, flush=True)
-            sig.armed = True
-            try:
-                while True:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        time.sleep(LOCK_POLL)
-            finally:
-                sig.armed = False
-            sig.check()
-            print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
+            held.append(lock_one(path, home, runtime, sig))
+            home["locked"].add(path)
     except BaseException:
         release_lock(held)
+        home["locked"].clear()
         raise
     return held
 
@@ -618,12 +631,12 @@ def signin_margin(home, to):
     return home["private"][to]["expiry"].get("margin_seconds", P.PRIVATE_MARGIN)
 
 
-def signin_refusal(home, to, left, plan):
+def signin_refusal(home, to, left, plan, cause=None):
     """The refusal runtime-signin-expiring (the catalogue's text; exit 1): the copy's token ends before the run could. It names the declared path, the seconds
     left, the bound used and where it comes from, the margin, whether the bound alone is longer than the time left, and the login that makes a new sign-in;
-    never a value."""
+    never a value. cause refresh-failed: the sign-in was refreshed once, or could not be, and still does not last."""
     frm, bound, margin = home["from"][to], plan["timeout_s"], signin_margin(home, to)
-    cause = "bound-exceeds" if bound > left else "margin"
+    cause = cause or ("bound-exceeds" if bound > left else "margin")        # refresh-failed: the run's refresh (refresh_signin) did not make the token last
     plain = ("the sign-in %s for %s member runs ends in %d s, less than the run's bound of %d s (set by %s) plus a margin of %d s (%s): no member is started; "
              "sign in again for members with %s, then start the run again" % (frm, home["runtime"], max(left, 0), bound, plan["timeout_from"], margin, cause, login_hint(home, to)))
     buf = io.StringIO()
@@ -662,52 +675,152 @@ def read_source(home, to, src):
     return data
 
 
-def prepare_copies(home, plan):
-    """For each private link of the run home ({to: bytes}): read the source once (read_source), put the placeholders in it, and check that the token it
-    names outlasts the run: its seconds left (kept in home["expires"], never the token) must be at least the run's own bound (plan timeout_s) plus the margin
-    of the declaration, else the refusal runtime-signin-expiring. Nothing is made here. A source that is not a JSON object, lacks a path or holds no token with
-    an expiry is a refusal (exit 2) that names the declared path, never a value."""
+def load_copy(home, to, src):
+    """(the bytes of the private copy `to`, the seconds its token has left): the source read once (read_source), parsed, the placeholders put in, the expiry
+    read from the value the source has at expiry.path (before the placeholders, so the order of `set` cannot hide it). A source that is not a JSON object, lacks
+    a path or holds no token with an expiry is a refusal (exit 2) that names the declared path, never a value."""
+    frm, spec = home["from"][to], home["private"][to]
+    how = "sign in again for members with %s" % login_hint(home, to)
+    data = read_source(home, to, src)
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except ValueError:
+        doc = None
+    if not isinstance(doc, dict):
+        fail("the sign-in %s for %s member runs is not a JSON object, which a private copy needs (a program may be writing it; try again, or if it is damaged, %s); "
+             "nothing is copied" % (frm, home["runtime"], how))
+    path = spec["expiry"]["path"]
+    ok, value = dig(doc, path)                           # the expiry is read from the source as read, before any placeholder is put in
+    exp = jwt_exp(value) if ok else None
+    for sp, text in spec["set"].items():
+        parent, _, key = sp.rpartition(".")
+        ok, at = dig(doc, parent) if parent else (True, doc)
+        if not ok or not isinstance(at, dict):
+            fail("the sign-in %s for %s member runs has no object at %s, where the private copy puts its placeholder; nothing is copied. %s" % (
+                frm, home["runtime"], parent, how[0].upper() + how[1:]))
+        at[key] = text
+    if exp is None:
+        fail("the sign-in %s for %s member runs has no token with an expiry at %s (%s); nothing is copied. %s" % (
+            frm, home["runtime"], path, spec["expiry"]["encoding"], how[0].upper() + how[1:]))
+    return (json.dumps(doc, indent=2) + "\n").encode("utf-8"), int(exp - time.time())
+
+
+def prepare_copies(home, plan, sig=None):
+    """For each private link of the run home ({to: bytes}): the copy and the seconds its token has left (load_copy; kept in home["expires"], never the token),
+    which must be at least the run's own bound (plan timeout_s) plus the margin of the declaration, else the refusal runtime-signin-expiring. With sig (the
+    runner) and a link that declares private.refresh, a token that would not last is refreshed once (refresh_signin) and read again; a second time in one run
+    it is not refreshed again, the refusal has the cause refresh-failed. Nothing is made here."""
     out = {}
     for to, src in home["copies"]:
-        frm, spec = home["from"][to], home["private"][to]
-        how = "sign in again for members with %s" % login_hint(home, to)
-        data = read_source(home, to, src)
-        try:
-            doc = json.loads(data.decode("utf-8"))
-        except ValueError:
-            doc = None
-        if not isinstance(doc, dict):
-            fail("the sign-in %s for %s member runs is not a JSON object, which a private copy needs (a program may be writing it; try again, or if it is damaged, %s); "
-                 "nothing is copied" % (frm, home["runtime"], how))
-        path = spec["expiry"]["path"]
-        ok, value = dig(doc, path)                       # the expiry is read from the source as read, before any placeholder is put in: the order of `set` cannot matter
-        exp = jwt_exp(value) if ok else None
-        for sp, text in spec["set"].items():
-            parent, _, key = sp.rpartition(".")
-            ok, at = dig(doc, parent) if parent else (True, doc)
-            if not ok or not isinstance(at, dict):
-                fail("the sign-in %s for %s member runs has no object at %s, where the private copy puts its placeholder; nothing is copied. %s" % (
-                    frm, home["runtime"], parent, how[0].upper() + how[1:]))
-            at[key] = text
-        if exp is None:
-            fail("the sign-in %s for %s member runs has no token with an expiry at %s (%s); nothing is copied. %s" % (
-                frm, home["runtime"], path, spec["expiry"]["encoding"], how[0].upper() + how[1:]))
-        left = int(exp - time.time())
-        if left < plan["timeout_s"] + signin_margin(home, to):
+        data, left = load_copy(home, to, src)
+        need = plan["timeout_s"] + signin_margin(home, to)
+        if left < need and "refresh" in home["private"][to]:
+            if to in home["refresh_tried"]:
+                raise signin_refusal(home, to, left, plan, "refresh-failed")
+            if sig is not None:
+                data, left = refresh_signin(home, to, src, plan, sig, data, left, need)
+        if left < need:
             raise signin_refusal(home, to, left, plan)
         home["expires"][to] = left
-        out[to] = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+        out[to] = data
     return out
+
+
+def refresh_argv(home, plan, spec, exe=None):
+    """The argv of the refresh command: the command the run itself starts (exe, the resolved plan exe; the declared word when none is given), the other elements with
+    {model} (the definition's default model) filled in and {scratch} (the working directory, set by the caller) left for it to fill."""
+    name = models_values(home["runtime"], None, None, plan["project"])[0]
+    return [exe or spec["argv"][0]] + [a.replace("{model}", name) for a in spec["argv"][1:]]
+
+
+def refresh_note(home, why):
+    print("qargi: note: the refresh of the sign-in of %s failed (%s); the sign-in is as the command left it" % (home["runtime"], why), file=sys.stderr, flush=True)
+
+
+def refresh_signin(home, to, src, plan, sig, data, left, need):
+    """The sign-in of the private link `to` would not last the run: take the lock beside its source (the one a plain link uses, unless this run holds it
+    already), read the source again (another run may have refreshed it while this one waited: when it lasts now, the lock is released and the run goes
+    on), else run the declared command once (private.refresh), read the source again and release the lock. The command makes the runtime use, and so refresh, the
+    real sign-in: its variable (dispatch.home.env) names the directory of the source, the prompt is its standard input, its output is discarded and never
+    printed (it can carry tokens), it runs in a scratch directory of its own with the environment a member run gets, and is stopped when it outlives timeout_seconds
+    or the runner is signalled. Returns the new (copy bytes, seconds left); a command that fails or times out, a source it leaves unchanged and a token that still
+    does not last (the larger of need and min_remaining_seconds) are the refusal runtime-signin-expiring with the cause refresh-failed. Never more than once for a link
+    in one run (home["refresh_tried"]). home["refreshed"][to] says whether the command ran and made the token last; nothing else of it is kept or printed."""
+    spec = home["private"][to]["refresh"]
+    frm = home["from"][to]
+    home["refresh_tried"].add(to)
+    lock = os.path.join(os.path.dirname(os.path.realpath(src)), LOCK_NAME)
+    fd = None if lock in home["locked"] else lock_one(lock, home, home["runtime"], sig)
+    scratch = None
+    try:
+        data2, left2 = load_copy(home, to, src)          # another run may have refreshed it while this one waited
+        if left2 >= need:
+            return data2, left2
+        print("qargi: refreshing the sign-in of %s (expires in %d s)" % (home["runtime"], max(left2, 0)), file=sys.stderr, flush=True)
+        before = digest_of(src)
+        tmp = (plan.get("env") or {}).get("TMPDIR")
+        scratch = tempfile.mkdtemp(prefix="qargi-refresh.", dir=tmp if tmp and os.path.isdir(tmp) else None)
+        work = os.path.join(scratch, "work")
+        for d in (work, os.path.join(scratch, "home"), os.path.join(scratch, "tmp")):
+            os.mkdir(d, 0o700)
+        env = child_env(scratch, os.path.join(scratch, "tmp"), plan["env_pass"], {"env": home["env"], "path": os.path.dirname(os.path.realpath(src))})
+        env.pop("GIT", None)
+        argv = [a.replace("{scratch}", work) for a in refresh_argv(home, plan, spec, plan["exe"])]
+        with open(os.path.join(scratch, "prompt"), "w", encoding="utf-8") as pf:
+            pf.write(spec["prompt"] + "\n")
+        why = None
+        try:
+            with open(os.path.join(scratch, "prompt"), "rb") as sin:
+                proc = subprocess.Popen(argv, cwd=work, env=env, stdin=sin, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
+                                        start_new_session=True, close_fds=True)
+        except OSError as e:
+            proc, why = None, "the command could not be started: %s" % (e.strerror or e)
+        if proc is not None:
+            try:
+                sig.armed = True
+                sig.check()
+                code = proc.wait(timeout=spec["timeout_seconds"])
+                sig.armed = False
+                if group_left(proc.pid):
+                    kill_group(proc)
+                if code != 0:
+                    why = "the command exited with status %d" % code
+            except subprocess.TimeoutExpired:
+                sig.armed = False
+                kill_group(proc)
+                why = "the command did not end in %d s" % spec["timeout_seconds"]
+            except BaseException:
+                sig.armed = False
+                kill_group(proc)
+                raise
+            finally:
+                sig.armed = False
+        data3, left3 = load_copy(home, to, src)
+        if why is None and digest_of(src) == before:
+            why = "the command left the sign-in file as it was"
+        if why is None and left3 < max(need, spec.get("min_remaining_seconds", 0)):
+            why = "the token it left ends in %d s, less than the %d s the run needs" % (max(left3, 0), max(need, spec.get("min_remaining_seconds", 0)))
+        if why is not None:
+            refresh_note(home, why)
+            raise signin_refusal(home, to, left3, plan, "refresh-failed")
+        home["refreshed"][to] = True
+        return data3, left3
+    finally:
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
+        if fd is not None:
+            os.close(fd)
 
 
 def private_record(home):
     """What dispatch.json says of the private copies: [{to, set (the dotted paths, never the texts), expires_in_seconds (when the run started), sha256 (of the
-    copy as written)}]; no value."""
+    copy as written), refreshed}]; no value."""
     out = []
     for to, _ in home["copies"]:
         one = {"to": to, "set": sorted(home["private"][to]["set"])}
         if to in home["expires"]:
             one["expires_in_seconds"] = home["expires"][to]
+        one["refreshed"] = home["refreshed"].get(to, False)   # whether this run refreshed the real sign-in (private.refresh); never a value
         if to in home["copy_sum"]:
             one["sha256"] = home["copy_sum"][to]         # of the copy as written, so a copy renamed in the run home is found again (local list, verify)
         out.append(one)
@@ -1507,6 +1620,13 @@ def dry(plan, run):
             print("HOME_LINKS=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["links"]))   # the file each link points at
         if plan["home"]["copies"]:                         # the file each private copy is made from, as the path only: its content is not read
             print("HOME_COPIES=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["copies"]))
+            for to, src in plan["home"]["copies"]:         # what a real run would do when the token would not last: nothing is read, locked or run here
+                rf = plan["home"]["private"][to].get("refresh")
+                if rf:
+                    print("HOME_REFRESH=%s: when the sign-in would not last the run (%d s of bound, plus the margin), a real run takes the lock beside the source, reads it again, "
+                          "and runs once %s with %s naming the source's directory, read-only in a scratch directory (timeout %d s, the token must then have %d s left besides "
+                          "the run's need); a dry run refreshes nothing" % (to, plan["timeout_s"], json.dumps(refresh_argv(plan["home"], plan, rf), separators=(",", ":")),
+                                                                         plan["home"]["env"], rf["timeout_seconds"], rf.get("min_remaining_seconds", 0)))
     rc = plan["run_config"]
     if rc:                                                 # the path and the tool names only: the file holds the servers' addresses
         if rc["data"] is None:
@@ -2466,18 +2586,18 @@ def run_it(plan, run, pending):
         sig.restore()
 
 
-def check_signin_early(plan):
+def check_signin_early(plan, sig):
     """A private copy whose token would end inside the run's bound refuses the run here, before anything is made or recorded: no attempt is consumed (no
     dispatch.json, so no --again is needed once the sign-in is made again). The runner checks again once it holds the locks of its plain links, for
     the wait has no bound; the copy is made from that second read."""
     home = plan.get("home")
     if home and home.get("copies"):
-        prepare_copies(home, plan)
+        prepare_copies(home, plan, sig)
         home["expires"].clear()
 
 
 def run_owned(plan, run, pending, sig):
-    check_signin_early(plan)
+    check_signin_early(plan, sig)
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -2549,7 +2669,7 @@ def run_started(plan, run, store, dispatch_state, sig):
             if home:
                 locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
                 drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
-                data = prepare_copies(home, plan) if home.get("copies") else {}   # a token that would end inside the run's bound is refused here
+                data = prepare_copies(home, plan, sig) if home.get("copies") else {}   # a token that would end inside the run's bound is refused here
                 made = make_home(run, home, data)        # the links and copies exist for the length of the run only
                 data.clear()
                 if home.get("copies"):                   # with the seconds each had left at the start and the sha256 of each copy as written, on disk before the member starts

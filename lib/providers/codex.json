@@ -138,7 +138,13 @@
           "to": "auth.json",
           "private": {
             "set": {"tokens.refresh_token": "qargi-no-refresh"},
-            "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}
+            "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"},
+            "refresh": {
+              "argv": ["codex", "exec", "--json", "--ephemeral", "--ignore-rules", "--strict-config", "--skip-git-repo-check", "-C", "{scratch}", "-m", "{model}", "--sandbox", "read-only"],
+              "prompt": "ok",
+              "min_remaining_seconds": 1800,
+              "timeout_seconds": 120
+            }
           }
         }
       ]

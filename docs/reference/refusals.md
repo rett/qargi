@@ -857,11 +857,11 @@ compares them with that page.
 ### runtime-signin-expiring
 
 - Rule: A member run starts only when its private copy of the sign-in outlasts the run.
-- Why: a private copy of a sign-in cannot be refreshed by the runtime (it holds a placeholder in place of the refresh token, so that runs sharing one sign-in do not race on it); a run that outlived the token in the copy would fail half way, after its member had spent its time.
+- Why: a private copy of a sign-in cannot be refreshed by the runtime (it holds a placeholder in place of the refresh token, so that runs sharing one sign-in do not race on it), only the real sign-in is, by the refresh the runtime declares or by a login; a run that outlived the token in the copy would fail half way, after its member had spent its time.
 - Exit 1, live.
-- Fields: `name` (label), `path` (path), `left` (count), `bound` (count), `bound_from` (enum:timeout-option,definition,default), `margin` (count), `cause` (enum:margin,bound-exceeds), `login` (name).
+- Fields: `name` (label), `path` (path), `left` (count), `bound` (count), `bound_from` (enum:timeout-option,definition,default), `margin` (count), `cause` (enum:margin,bound-exceeds,refresh-failed), `login` (name).
 - Message: `the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s (set by {bound_from}) plus a margin of {margin} s ({cause}): no member is started`
-- Next, for a lead: sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s
+- Next, for a lead: sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said
 
 ## Class verify-environment
 

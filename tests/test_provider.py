@@ -3183,11 +3183,61 @@ class RunHome(LibraryBase):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
     def test_the_codex_runtime_links_only_its_sign_in_as_a_private_copy(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [
+        home = copy.deepcopy(shipped("codex.json")["dispatch"]["home"])
+        refresh = home["link"][0]["private"].pop("refresh")
+        self.assertEqual(home, {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [
             {"from": "~/.codex-members/auth.json", "to": "auth.json",
              "private": {"set": {"tokens.refresh_token": "qargi-no-refresh"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}}}]})
-        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
+        self.assertEqual(refresh["argv"][:2], ["codex", "exec"])                                  # the runtime's own command, read-only, in a scratch directory
+        self.assertIn("{scratch}", refresh["argv"])
+        self.assertIn("read-only", refresh["argv"])
+        self.assertEqual(refresh["timeout_seconds"], 120)
+        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"], command="codex"), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
+
+    REFRESH = {"argv": ["fakecli", "exec", "-C", "{scratch}", "-m", "{model}"], "prompt": "ok", "timeout_seconds": 60, "min_remaining_seconds": 600}
+
+    def test_a_private_link_may_declare_the_refresh_of_the_real_sign_in(self):
+        """private.refresh: {argv, prompt, timeout_seconds, min_remaining_seconds?}; its shape is stated in schema-2.json and in provider.refresh_problems, and
+        argv[0] must be the runtime's own command (dispatch.argv[0]: fakecli here), so the approval of an executable covers it."""
+        def link(**rf):
+            r = dict(self.REFRESH, **rf)
+            for k in [k for k, v in rf.items() if v is None]:
+                r.pop(k)
+            pv = dict(self.PRIVATE, refresh=r)
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": pv}]}
+        self.assertEqual(P.home_problems(link(), command="fakecli"), [])
+        self.assertEqual([m for m in fails(self.with_home(link()), "fakecli") if "dispatch.home" in m], [])
+        self.assertEqual(P.home_problems(link(min_remaining_seconds=None), command="fakecli"), [])           # min_remaining_seconds is optional
+        cases = (
+            (link(extra=1), "private.refresh.extra: additional property is not allowed"),
+            (link(argv=None), "private.refresh: missing required property 'argv'"),
+            (link(prompt=None), "private.refresh: missing required property 'prompt'"),
+            (link(timeout_seconds=None), "private.refresh: missing required property 'timeout_seconds'"),
+            (link(argv=[]), "private.refresh.argv: [] is not a list of one to 40"),
+            (link(argv="fakecli exec"), "private.refresh.argv: 'fakecli exec' is not a list"),
+            (link(argv=["fakecli", 5]), "private.refresh.argv: [\"fakecli\", 5] is not a list"),
+            (link(argv=["fakecli", "a\nb"]), "private.refresh.argv:"),
+            (link(argv=["fakecli", "{secret}"]), "private.refresh.argv: {secret} is not a placeholder here ({model}, {scratch})"),
+            (link(argv=["fakecli", "{clone}"]), "private.refresh.argv: {clone} is not a placeholder here"),
+            (link(argv=["othercli", "exec"]), "is not the runtime's own command 'fakecli'"),
+            (link(prompt=""), "private.refresh.prompt: '' is not 1 to 200 printable characters on one line"),
+            (link(prompt="a\nb"), "private.refresh.prompt:"),
+            (link(timeout_seconds=0), "private.refresh.timeout_seconds: 0 is not a whole number of seconds from 1 to 600"),
+            (link(timeout_seconds=601), "private.refresh.timeout_seconds: 601 is not a whole number of seconds from 1 to 600"),
+            (link(timeout_seconds=True), "private.refresh.timeout_seconds: true is not a whole number"),
+            (link(min_remaining_seconds=-1), "private.refresh.min_remaining_seconds: -1 is not a whole number of seconds from 0 to 86400"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": dict(self.PRIVATE, refresh=[])}]},
+             "private.refresh: [] is not an object"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                self.assertTrue(any(needle in m for m in P.home_problems(home, command="fakecli")), P.home_problems(home, command="fakecli"))
+                if "own command" not in needle:                                                               # the schema states the shape, the command rule is the validator's
+                    f = fails(self.with_home(home), "fakecli")
+                    self.assertTrue(any("dispatch.home" in m for m in f), f)
+        f = fails(self.with_home(link(argv=["othercli", "exec"])), "fakecli")                             # and provider check asks the command rule too
+        self.assertTrue(any("is not the runtime's own command 'fakecli'" in m for m in f), f)
 
     def test_refusals(self):
         ok_link = [{"from": "~/.fakecli/auth.json", "to": "auth.json"}]

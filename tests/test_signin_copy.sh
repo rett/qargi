@@ -42,6 +42,25 @@ notext() { # TEXT: none of the dummy tokens is in the text
 cat > "$T/bin/fakesi" <<SH
 #!/usr/bin/env bash
 a=\$FAKESI_HOME/auth.json
+if [ "\${1:-}" = --refresh ]; then   # the refresh command (private.refresh): it says what it finds, never a token, then does what $T/refmode says to the source
+  { echo "ARGS=\$*"; echo "HOMEVAR=\$FAKESI_HOME"; echo "STDIN=\$(cat)"; echo "LEAK=\${FAKESI_LEAK:-no}"; echo "CWD=\$PWD"
+    echo "LOCKED=\$(flock -n "$MEM/.qargi-run.lock" true && echo no || echo yes)"
+    echo "MEMBERENV=\$([ -n "\${QARGI_MEMBER_RUN:-}" ] && echo yes || echo no)"; echo "PID=\$\$"; } >> "$T/refresh.log"
+  echo x >> "$T/refresh.count"
+  newtok() { python3 -c 'import base64, json, sys, time
+def b(o): return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+print("%s.%s.dummy-signature-new" % (b({"alg": "none"}), b({"exp": int(time.time()) + int(sys.argv[1]), "sub": "dummy"})))' "\$1"; }
+  put() { n=\$(newtok "\$1"); jq --arg a "\$n" '.tokens.access_token = \$a' "\$a" > "$T/refresh.tmp" && cat "$T/refresh.tmp" > "\$a"; printf '%s' "\$n" > "$T/want-access"; }
+  case \$(cat "$T/refmode") in
+    ok)      if [ -e "$T/refresh-gate" ]; then end=\$((SECONDS + 60)); until [ -e "$T/refresh-go" ] || [ "\$SECONDS" -ge "\$end" ]; do sleep 0.1; done; fi
+             put 864000;;
+    short)   put 300;;
+    fail)    exit 3;;
+    nochange) exit 0;;
+    hang)    sleep 60;;
+  esac
+  exit 0
+fi
 if [ -L "\$a" ]; then echo ISLINK=yes; else echo ISLINK=no; fi
 echo "FILEMODE=\$(stat -c %a "\$a")"
 echo "PLACEHOLDER=\$([ "\$(jq -r .tokens.refresh_token "\$a")" = qargi-no-refresh ] && echo yes || echo no)"
@@ -81,6 +100,12 @@ def fakeall "$(jq -n --argjson p "$PRIV" '[{from:"~/.fakesi-members/auth.json",t
 def fakemix "$(jq -n --argjson p "$PRIV" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p},{from:"~/.fakesi-members/settings.json",to:"settings.json"}]')"
 def fakemarg "$(jq -n '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:{set:{"tokens.refresh_token":"qargi-no-refresh"},expiry:{path:"tokens.access_token",encoding:"jwt-exp",margin_seconds:0}}}]')"
 def fakeplain '[{"from":"~/.fakesi-members/auth.json","to":"auth.json"}]'
+# private.refresh: the command that makes the runtime refresh the real sign-in (here the fake itself, told by --refresh); {scratch} and {model} are filled by qargi
+refr() { # TIMEOUT-SECONDS -> the private object with a refresh
+  jq -n --argjson p "$PRIV" --argjson t "$1" '$p + {refresh: {argv: ["fakesi", "--refresh", "{scratch}", "{model}"], prompt: "ok", min_remaining_seconds: 0, timeout_seconds: $t}}'; }
+def fakeref "$(jq -n --argjson p "$(refr 20)" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p}]')"
+def fakereft "$(jq -n --argjson p "$(refr 2)" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p}]')"
+def fakemixr "$(jq -n --argjson p "$(refr 20)" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p},{from:"~/.fakesi-members/settings.json",to:"settings.json"}]')"
 setprov() { proj rproj "$T/r" "$1"; }
 LOCKF=$MEM/.qargi-run.lock; DECL=\~/.fakesi-members/auth.json   # the source as the definition declares it: what a message names
 printf '{"k": 1}\n' > "$MEM/settings.json"
@@ -119,10 +144,10 @@ for r in "$R1" "$R2"; do
 done
 { [ "$(sum "$SRC")" = "$BEFORE" ] && [ "$(stat -c %a "$SRC")" = 600 ] && notokens "$R1/dispatch.json" "$R2/dispatch.json" "$T/p1.out" "$T/p2.out"; } \
   && ok "the source is byte for byte as it was, and no token is in an output or in dispatch.json" || no "source or record: $(cat "$R1/dispatch.json")"
-want='[{"expires_in_seconds":0,"set":["tokens.refresh_token"],"sha256":"x","to":"auth.json"}]'
+want='[{"expires_in_seconds":0,"refreshed":false,"set":["tokens.refresh_token"],"sha256":"x","to":"auth.json"}]'
 got=$(jq -c '.home.private | map(.expires_in_seconds |= (if . > 259000 and . <= 259200 then 0 else . end) | .sha256 |= (if test("^[0-9a-f]{64}$") then "x" else . end))' "$R1/dispatch.json")
 { [ "$got" = "$want" ] && [ "$(jq -c '.home | {links, private: (.private | length)}' "$R1/dispatch.json")" = '{"links":[],"private":1}' ]; } \
-  && ok "dispatch.json records home.private: the name, the paths set, the seconds left at the start and the sha256 of the copy as written, and no link" || no "record: $got $(jq -c .home "$R1/dispatch.json")"
+  && ok "dispatch.json records home.private: the name, the paths set, the seconds left at the start, whether the run refreshed the real sign-in (no), the sha256 of the copy as written, and no link" || no "record: $got $(jq -c .home "$R1/dispatch.json")"
 rm -f "$T/mode" "$T"/in.*
 
 # --- what the member does to its copy stays in the run home and is removed: nothing is written to the source ------------------------------
@@ -323,9 +348,88 @@ out=$($DA local clean "$K3" --discard 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ ! -e "$K3" ]; } && ok "and local clean --discard removes that run with the moved copy" || no "clean moved: rc=$rc $out"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
 
+# --- the automatic refresh of the real sign-in (private.refresh) ---------------------------------------------------------------------------------
+export FAKESI_LEAK=yes                      # a variable of the caller that the refresh command must not see (dispatch.env_pass names none)
+setprov fakeref; echo quick > "$T/mode"; echo ok > "$T/refmode"; rm -f "$T/refresh.log" "$T/refresh.count" "$T/refresh-gate" "$T/refresh-go"; rm -f "$LOCKF"
+signin 259200; prep rn1; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$T/refresh.count" ] && [ ! -e "$LOCKF" ] && ! grep -q 'refreshing the sign-in' <<<"$out" && [ "$(jq -r '.home.private[0].refreshed' "$RUN/dispatch.json")" = false ]; } \
+  && ok "a token that lasts the run is not refreshed: the command is not run, no lock file is made, the record says refreshed false" || no "no refresh needed: rc=$rc $out"
+signin 500; BEFORE=$(sum "$SRC"); OLDACC=$ACC; prep rn2; R=$RUN; task
+out=$($DA local run "$R" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qF 'HOME_REFRESH=auth.json: when the sign-in would not last the run' <<<"$out" && grep -qF '["fakesi","--refresh","{scratch}","fake-m-1"]' <<<"$out" \
+  && grep -qF 'a dry run refreshes nothing' <<<"$out" && [ ! -e "$T/refresh.count" ] && [ ! -e "$LOCKF" ] && [ "$(sum "$SRC")" = "$BEFORE" ] && notext "$out"; } \
+  && ok "a dry run prints what it would do (HOME_REFRESH=) and refreshes nothing: no command, no lock file, the source as it was" || no "dry refresh: rc=$rc $out"
+out=$($DA local prepare --repo "$T/r" --base main --slug rnprep --scratch "$T" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$T/refresh.count" ] && [ "$(sum "$SRC")" = "$BEFORE" ]; } && ok "local prepare never refreshes" || no "prepare refresh: rc=$rc $out"
+out=$($DA local run "$R" 2>&1); rc=$?
+NEWACC=$(jq -r .tokens.access_token "$SRC")
+{ [ "$rc" = 0 ] && grep -qE '^qargi: refreshing the sign-in of fakeref \(expires in [0-9]+ s\)$' <<<"$out" && [ "$(wc -l < "$T/refresh.count")" = 1 ] \
+  && [ "$NEWACC" != "$OLDACC" ] && [ "$(sum "$SRC")" != "$BEFORE" ] && [ "$(stat -c %a "$SRC")" = 600 ]; } \
+  && ok "a source about to expire is refreshed once by the declared command, and the run goes on" || no "refresh: rc=$rc $out $(cat "$T/refresh.log" 2>&1)"
+{ grep -qE "^ARGS=--refresh $T/.*/work fake-m-1\$" "$T/refresh.log" && grep -qxF "HOMEVAR=$MEM" "$T/refresh.log" && grep -qx 'STDIN=ok' "$T/refresh.log" && grep -qx 'LEAK=no' "$T/refresh.log" \
+  && grep -qE "^CWD=$T/.*/work\$" "$T/refresh.log" && grep -qx 'LOCKED=yes' "$T/refresh.log" && grep -qx 'MEMBERENV=yes' "$T/refresh.log"; } \
+  && ok "the command ran with the default model and a scratch directory, the variable of the home naming the source's directory, the prompt on its input, a scrubbed environment, and the source's lock held" || no "refresh facts: $(cat "$T/refresh.log")"
+PID=$(sed -n 's/^PID=//p' "$T/refresh.log")
+{ [ ! -d "$(sed -n 's/^CWD=//p' "$T/refresh.log")" ] && ! kill -0 "$PID" 2>/dev/null && flock -n "$LOCKF" true; } \
+  && ok "the scratch directory is gone, the command has ended and the lock is free again" || no "refresh cleanup: $(ls -lA "$MEM")"
+{ grep -q '^ACCESS=same$' "$R/out/transcript" && grep -q '^PLACEHOLDER=yes$' "$R/out/transcript" && [ "$(jq -r '.home.private[0].refreshed' "$R/dispatch.json")" = true ] \
+  && [ "$(jq -c '.home.private[0] | keys' "$R/dispatch.json")" = '["expires_in_seconds","refreshed","set","sha256","to"]' ] && [ "$(jq -r .outcome "$R/dispatch.json")" = ok ]; } \
+  && ok "the member got a copy of the refreshed token; dispatch.json says refreshed true and holds nothing else of it" || no "refresh record: $(cat "$R/out/transcript") $(jq -c .home "$R/dispatch.json")"
+{ ! grep -qF -e "$OLDACC" -e "$NEWACC" -e "$IDT" -e "$REFR" -e dummy-signature "$R/dispatch.json" "$R/out/transcript" "$R/out/transcript.err" && ! grep -qF -e "$OLDACC" -e "$NEWACC" -e "$IDT" -e "$REFR" -e dummy-signature <<<"$out"; } \
+  && ok "no token text is in dispatch.json, the transcripts or the output of a run that refreshed" || no "refresh leaked: $out"
+
+# a command that fails, one that changes nothing, one that leaves a token that still does not last, and one that does not end: refused, no second try
+refuse_case() { # LABEL MODE DEF TEXT: signin 500, the refresh in MODE is refused (exit 1, cause refresh-failed), nothing is recorded, the command ran once
+  signin 500; echo "$2" > "$T/refmode"; rm -f "$T/refresh.count" "$T/refresh.log"; setprov "$3"; prep "rf-$2"; task; B=$(sum "$SRC")
+  out=$($DA local run "$RUN" 2>&1); rc=$?
+  { [ "$rc" = 1 ] && grep -qF '[runtime-signin-expiring]' <<<"$out" && grep -qF '(refresh-failed)' <<<"$out" && grep -qF "$4" <<<"$out" && grep -qF 'FAKESI_HOME=~/.fakesi-members fakesi login' <<<"$out" \
+    && [ "$(wc -l < "$T/refresh.count")" = 1 ] && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$RUN/home/.fk" ] && notext "$out"; } \
+    && ok "$1: refused (runtime-signin-expiring, refresh-failed), the command ran once, nothing was made or recorded" || no "$1: rc=$rc $out $(cat "$T/refresh.count" 2>&1)"; }
+refuse_case "a failing refresh command" fail fakeref 'the command exited with status 3'
+[ "$(sum "$SRC")" = "$B" ] && ok "and the source is unchanged" || no "failing refresh changed the source"
+refuse_case "a command that changes nothing" nochange fakeref 'the command left the sign-in file as it was'
+refuse_case "a command that leaves a token that is too short" short fakeref 'the token it left ends in'
+PID=$(sed -n 's/^PID=//p' "$T/refresh.log")
+refuse_case "a command that does not end" hang fakereft 'the command did not end in 2 s'
+PID=$(sed -n 's/^PID=//p' "$T/refresh.log")
+wait_until '! kill -0 "$PID" 2>/dev/null' 10 && ok "the command that did not end was stopped with its group" || no "hang left $PID running"
+[ "$(sum "$SRC")" = "$B" ] && ok "a hung refresh leaves the source as it was" || no "hang changed the source"
+
+# two runs started together: the second waits for the lock, finds the source refreshed and does not run the command again; both finish
+setprov fakeref; echo ok > "$T/refmode"; echo quick > "$T/mode"; signin 500; rm -f "$T/refresh.count" "$T/refresh.log" "$T/refresh-go" "$LOCKF"; : > "$T/refresh-gate"
+prep rt1; R1=$RUN; task; prep rt2; R2=$RUN; task
+( $DA local run "$R1" > "$T/t1.out" 2>&1; echo $? > "$T/t1.rc" ) &
+wait_until '[ -s "$T/refresh.log" ]' 30
+( $DA local run "$R2" > "$T/t2.out" 2>&1; echo $? > "$T/t2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/t2.out"' 30
+: > "$T/refresh-go"; wait_until '[ -s "$T/t1.rc" ] && [ -s "$T/t2.rc" ]' 60
+{ [ "$(cat "$T/t1.rc")" = 0 ] && [ "$(cat "$T/t2.rc")" = 0 ] && [ "$(wc -l < "$T/refresh.count")" = 1 ] && [ "$(cat "$T"/t?.out | grep -c 'refreshing the sign-in')" = 1 ] \
+  && grep -q '^ACCESS=same$' "$R1/out/transcript" && grep -q '^ACCESS=same$' "$R2/out/transcript" \
+  && [ "$(jq -r '.home.private[0].refreshed' "$R1/dispatch.json")" = true ] && [ "$(jq -r '.home.private[0].refreshed' "$R2/dispatch.json")" = false ]; } \
+  && ok "two runs started together refresh once and both finish: the one that waited read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
+rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode"
+
+# a home with a plain link beside the private one holds the lock for the whole run: a refresh that is needed after the wait takes no second lock (no deadlock) and goes on
+setprov fakemixr; echo hold > "$T/mode"; echo ok > "$T/refmode"; signin 259200; rm -f "$T/hold-ready" "$T/hold-go" "$T/refresh.count" "$T/refresh.log" "$LOCKF"
+prep mr1; M1=$RUN; task; prep mr2; M2=$RUN; task
+( $DA local run "$M1" > "$T/r1.out" 2>&1; echo $? > "$T/r1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$M2" > "$T/r2.out" 2>&1; echo $? > "$T/r2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/r2.out"' 30
+signin 400
+: > "$T/hold-go"; wait_until '[ -s "$T/r1.rc" ] && [ -s "$T/r2.rc" ]' 60
+{ [ "$(cat "$T/r1.rc")" = 0 ] && [ "$(cat "$T/r2.rc")" = 0 ] && [ "$(wc -l < "$T/refresh.count")" = 1 ] && grep -qE '^qargi: refreshing the sign-in of fakemixr' "$T/r2.out" \
+  && [ "$(jq -r '.home.private[0].refreshed' "$M2/dispatch.json")" = true ] && grep -q '^ACCESS=same$' "$M2/out/transcript"; } \
+  && ok "a refresh needed once the lock of a plain link is held runs under that lock, takes no second one, and the run goes on" || no "refresh under held lock: $(cat "$T/r1.rc" "$T/r2.rc") $(cat "$T/r2.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF" "$T/refmode" "$T/refresh.log" "$T/refresh.count"; unset FAKESI_LEAK; signin 259200; setprov fakeall
+
 # --- the shipped runtime that declares it ------------------------------------------------------------------------------------------------------
-{ [ "$(jq -c '.dispatch.home.link[0].private' lib/providers/codex.json)" = '{"set":{"tokens.refresh_token":"qargi-no-refresh"},"expiry":{"path":"tokens.access_token","encoding":"jwt-exp"}}' ] \
+{ [ "$(jq -c '.dispatch.home.link[0].private | del(.refresh)' lib/providers/codex.json)" = '{"set":{"tokens.refresh_token":"qargi-no-refresh"},"expiry":{"path":"tokens.access_token","encoding":"jwt-exp"}}' ] \
   && [ "$(jq -r '.dispatch.home.link[0].from' lib/providers/codex.json)" = \~/.codex-members/auth.json ] && [ "$(jq '.dispatch.home.link | length' lib/providers/codex.json)" = 1 ]; } \
   && ok "codex declares its members' sign-in as a private copy with the placeholder and the access token's expiry (the default margin)" || no "codex descriptor: $(jq -c .dispatch.home lib/providers/codex.json)"
+{ [ "$(jq -r '.dispatch.home.link[0].private.refresh | .argv[0] == "codex" and .argv[1] == "exec" and (.argv | index("{scratch}")) != null and (.argv | index("{model}")) != null and (.argv | index("read-only")) != null and (.prompt | length) > 0 and .timeout_seconds == 120' lib/providers/codex.json)" = true ] \
+  && [ "$(jq -r '.dispatch.argv[0]' lib/providers/codex.json)" = codex ] && ! jq -e '.dispatch.home.link[0].private.refresh | tostring | test("token|secret|key"; "i")' lib/providers/codex.json >/dev/null; } \
+  && ok "and its refresh: the runtime's own read-only exec in a scratch directory with the default model, a short prompt, 120 s, no secret in it" || no "codex refresh: $(jq -c .dispatch.home.link[0].private.refresh lib/providers/codex.json)"
 rm -rf "$T"
 exit $fail
