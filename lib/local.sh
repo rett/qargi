@@ -1100,7 +1100,7 @@ case $verb in
           fi
           [ "$mrc" -ne 1 ] || exit 1   # another live lead holds the feature: the message is printed, no run is made
           [ "$mrc" -eq 0 ] || echo "qargi: warning: the marshal could not be asked (status $mrc); the run goes on" >&2
-          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.lead.id // empty' 2>/dev/null) || LEAD=''
+          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.features[0].lead.id // empty' 2>/dev/null) || LEAD=''
         fi;;
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")

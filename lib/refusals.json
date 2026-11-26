@@ -1056,6 +1056,56 @@
       "fields": {"name": "label", "what": "name-list", "fix": "name-list"},
       "message": "project remove is refused: {name} cannot be checked, because it could not be read: {what}",
       "next": {"lead": "fix it, one item at a time: {fix}; then run project remove again", "host": "fix it, one item at a time: {fix}; then run project remove again"}
+    },
+    "marshal-feature-unknown": {
+      "rule": "A feature the marshal is asked about exists",
+      "why": "a feature that has neither a branch feature/NAME nor a marshal record is not a feature of the project, so an answer about it would be a guess (most often a typo)",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {"feature": "name"},
+      "message": "no feature {feature}: there is no branch feature/{feature} and no marshal record for it",
+      "next": {"lead": "qargi marshal status --all lists the open features; a new feature is started with the feature start verb", "host": "qargi marshal status --all lists the open features; a new feature is started with the feature start verb"}
+    },
+    "marshal-feature-held": {
+      "rule": "A feature another live lead holds is not changed or taken",
+      "why": "a lead whose lease is live may still be working on the feature, so a second session on it would overwrite or duplicate that work",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {"feature": "name", "lead": "name", "minutes": "count", "ttl": "count"},
+      "message": "feature {feature} is led by {lead}, whose lease is live ({minutes} min since the last renewal, ttl {ttl} min)",
+      "next": {"lead": "wait until the lease is stale, or ask the lead to release the feature; with the owner's approval a stale lease is taken over with qargi marshal takeover {feature} --approved WORDS", "host": "wait until the lease is stale, or ask the lead to release the feature; with the owner's approval a stale lease is taken over with qargi marshal takeover {feature} --approved WORDS"}
+    },
+    "marshal-handoff-file": {
+      "rule": "A handoff note is written only to a new file outside every repository and the qargi directories, and never by a member",
+      "why": "a note may hold goals and plans that must not end up in a repository, a note that overwrote a file could destroy the lead's own work, and a member returns its findings in its task output",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {},
+      "message": "the handoff note was not written: the file is refused or cannot be made",
+      "next": {"lead": "name a new file in a scratch directory outside every repository and outside the qargi directories; the sentence after this block says what was wrong with the file", "host": "name a new file in a scratch directory outside every repository and outside the qargi directories; the sentence after this block says what was wrong with the file"}
+    },
+    "marshal-refused": {
+      "rule": "The marshal answers a call only when its own conditions hold",
+      "why": "the marshal keeps who leads which feature, and a call whose name, record, switch, identity, clock or repository is not usable would give an answer nobody can rely on",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {},
+      "message": "the marshal refused this call: the sentence after this block says why",
+      "next": {"lead": "read the sentence after this block and fix what it names; qargi marshal status shows the records", "host": "read the sentence after this block and fix what it names; qargi marshal status shows the records"}
+    },
+    "marshal-remote-unreachable": {
+      "rule": "A verb that needs the answer of the shared records does not go on from a cache without being told to",
+      "why": "the answer would come from what this machine fetched last, which may be out of date, and another lead may hold the feature on the remote",
+      "class": "marshal-remote",
+      "exit": 3,
+      "status": "live",
+      "fields": {"feature": "name"},
+      "message": "the remote of the shared marshal records could not be asked (feature: {feature}), so nothing was changed and the answer is not known",
+      "next": {"lead": "try again when the remote is reachable; if you know no other lead holds the feature, go on without the remote with --assume-unreachable-ok (audited as marshal:unreachable-ok)", "host": "try again when the remote is reachable; if you know no other lead holds the feature, go on without the remote with --assume-unreachable-ok (audited as marshal:unreachable-ok)"}
     }
   }
 }
