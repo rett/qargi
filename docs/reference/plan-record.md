@@ -28,6 +28,7 @@ The plans listed here keep it: the ones whose hashed input is plain lines or one
 | `instances init` (a change of the agent's model), `instances normalize`, `instances refresh-prompt` | the agent, or the instance | `agent`, `renames`, `prompt` |
 | `credential setup` | the repository (`owner/name`) | `grant` |
 | `skill accept`, `skill unaccept` | the skill | `accept`, `unaccept` |
+| `local clean --applied --legacy` | `legacy` | `scratch archive runs*` (a line for each run: its path and its size in bytes) |
 | `marshal key`, `marshal enable`, `marshal signers`, `marshal resign`, `marshal forget`, `marshal disable` | `marshal key`: the principal (control characters removed, at most 200 characters), under the project `machine`; the others: the remote, the signer, the feature, the feature, `shared-refs` | `words` |
 
 The plans not listed keep nothing yet (see [Plans that keep no record yet](#plans-that-keep-no-record-yet)): `qargi plan show` of their tokens is `plan-unknown`. Nothing is kept in a dry run (`QARGI_DRY=1`).
