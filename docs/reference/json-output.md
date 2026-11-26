@@ -16,7 +16,7 @@ A **document** is one JSON object that a verb prints for a program to read. A **
 
 ## The exit rule
 
-- **Exit 0 means a document.** A verb of a pinned kind exits 0 only after it wrote one complete, valid document to standard output. The writer checks the document against its registry file before it prints it: a document that fails the check (a hand-edited local record that holds a float where an integer is declared, say) is exit 70 with one line that names the rule and the path, never exit 0. Nothing but the document goes to standard output; warnings and advice go to standard error. A write that fails (a closed pipe, a full disk) is exit 1 with one plain line and no traceback.
+- **Exit 0 means a document.** A verb of a pinned kind exits 0 only after it wrote one complete, valid document to standard output. The writer checks the document against its registry file before it prints it: a document that fails the check (a hand-edited local record that holds a float where an integer is declared, say) is exit 70 with one line that names the rule and the path, never exit 0. Nothing but the document goes to standard output; warnings and advice go to standard error. A write that fails (a closed pipe, a full disk) is exit 1 with one plain line and no traceback. So is the file of the handoff verb's `--json --write FILE` when it cannot be made after the document was printed: exit 1, one plain line on standard error, no refusal line (a file that is refused before anything is printed, because it exists, its directory is missing or not writable, or it is inside a git work tree, is a refusal with an empty standard output).
 - **A rule that stops the verb is a refusal.** Standard output stays empty, standard error carries the `qargi-refusal` line (the kind below) and its block, then the sentence the verb printed before, and the exit status is the refusal's, never 0. A reader acts on the `code` and the `exit` of the line and never on a sentence.
 - **Other non-zero exits carry no document and no promise of a line**: exit 2 (a wrong call), exit 70 (a defect), and the stops of the layers in front of the verb (the gate of a coordinator label, the check that a profile matches). A reader that gets a non-zero exit and no refusal line reports "failed, cause unknown" and does not read standard output.
 - **The exit classes of a refusal** are 1 (a refusal), 2 (a guard's deny, or a verb that does not apply to the project), 3 (a refusal that a retry may cure: the remote of the shared records could not be asked, code `marshal-remote-unreachable`, class `marshal-remote`; nothing was changed) and 77 (a refusal of the lead seat, which is not built). The `exit` of the line is the exit status of the process.
@@ -54,7 +54,7 @@ Four fields tell a reader how far to trust an answer, and a program that builds 
 | --- | --- | --- |
 | `marshal-feature-unknown` | `marshal`, 1 | the feature has no branch and no record |
 | `marshal-feature-held` | `marshal`, 1 | another live lead holds the feature (`marshal check`) |
-| `marshal-handoff-file` | `marshal`, 1 | the file of `--write` is refused or cannot be written |
+| `marshal-handoff-file` | `marshal`, 1 | the file of `--write` is refused, or cannot be written in a call that has printed no document |
 | `marshal-remote-unreachable` | `marshal-remote`, 3 | the remote of the shared records cannot be asked (`marshal check` without `--assume-unreachable-ok`) |
 | `marshal-refused` | `marshal`, 1 | every other rule of the marshal that stops one of the three verbs; the sentence that follows says which |
 

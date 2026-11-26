@@ -328,14 +328,25 @@ env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$N
 [ "$RC" = 1 ] && [ ! -e "$W/full.json" ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "handoff --json --write to a full stdout: exit 1 and no file" || no "handoff full stdout: rc=$RC file=$(ls "$W") $(cat "$T/e")"
 env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal handoff --json >&- 2>"$T/e"; RC=$?
 [ "$RC" != 0 ] && ok "handoff --json with stdout closed: a non-zero exit ($RC)" || no "handoff --json closed: rc=$RC $(cat "$T/e")"
-# the file cannot be made after the document was written: a refusal naming the file, exit 1, and the document stays on stdout
+# a directory that is not writable is known before anything is printed: a refusal, exit 1, standard output empty, the file named in the sentence
 mkdir -p "$W/ro"; chmod 555 "$W/ro"
 call L marshal handoff --json --write "$W/ro/note.json"
 if [ "$(id -u)" != 0 ]; then
-  [ "$RC" = 1 ] && jq -e '.kind == "qargi-handoff"' "$T/o" >/dev/null && grep -q 'marshal-handoff-file' "$T/e" && grep -q "ro/note.json" "$T/e" \
-    && ok "handoff --json --write: a file that cannot be made after the document was written is a refusal (exit 1) naming the file" || no "handoff write fails late: rc=$RC $(head -c 200 "$T/o"; cat "$T/e")"
+  refusal marshal-handoff-file 1 && grep -q "ro/note.json" "$T/e" && [ ! -e "$W/ro/note.json" ] \
+    && ok "handoff --json --write: a directory that is not writable is a refusal before the document (marshal-handoff-file, exit 1, empty stdout)" || no "handoff write to a read-only directory: $(refusal marshal-handoff-file 1; head -c 200 "$T/o"; cat "$T/e")"
+  call L marshal handoff --write "$W/ro/note.txt"
+  refusal marshal-handoff-file 1 && ok "handoff --write (text): the same refusal" || no "handoff text write to a read-only directory: $(refusal marshal-handoff-file 1)"
 fi
 chmod 755 "$W/ro"
+# a file that cannot be made although every check passed (a name the file system refuses) is found after the document was printed: the document stays on
+# standard output, standard error has one plain line, the exit is 1 and there is no refusal line, so a refusal still means an empty standard output
+LONG=$(printf 'n%.0s' $(seq 1 300))
+call L marshal handoff --json --write "$W/$LONG"
+if [ "$RC" = 1 ] && valid qargi-handoff && ! grep -q '^qargi-refusal/1 ' "$T/e" && grep -q '^qargi: cannot write ' "$T/e" && ! grep -q Traceback "$T/e" && [ "$(wc -l <"$T/e")" = 1 ]; then
+  ok "handoff --json --write: a file that cannot be made after the document was printed is one plain line on stderr and exit 1, with no refusal line"
+else no "handoff write fails late: rc=$RC $(cat "$T/v"; head -c 200 "$T/o"; cat "$T/e")"; fi
+call L marshal handoff --write "$W/$LONG"
+refusal marshal-handoff-file 1 && ok "handoff --write (text): the same file is a refusal with empty stdout (nothing was printed before it)" || no "handoff text write fails: $(refusal marshal-handoff-file 1; head -c 200 "$T/o")"
 
 # ================================================================ (8) --no-write: nothing is written and nothing is fetched
 # a local record whose branch is gone: status and check mark it abandoned (and write the record); with --no-write the record stays byte for byte
