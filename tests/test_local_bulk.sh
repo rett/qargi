@@ -172,8 +172,7 @@ out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok2=$(sed -n '
 out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok" --approved "go" 2>&1); rcs=$?
 { [ $rcs != 0 ] && [ -d "$LM1" ] && [ -d "$LM2" ]; } && ok "so the old token is stale: nothing is removed" || no "stale token (rc=$rcs): $out"
 # a file rewritten at the same length leaves the byte total as it was (and, on a file system whose directories keep one size, every size): the token moves all the same
-sleep 1
-echo s > "$LM2/out/report.md"
+echo s > "$LM2/out/report.md"; touch -d "2001-01-01 00:00:00" "$LM2/out/report.md"   # a fixed other mtime: no wait for the clock to move
 out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok4=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
 { [ -n "$tok4" ] && [ "$tok4" != "$tok2" ]; } && ok "a run whose file was rewritten at the same length (same total bytes) makes a new token" || no "the token did not move for a same-length rewrite: $tok2 $tok4"
 out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok2" --approved "go" 2>&1); rcs=$?
