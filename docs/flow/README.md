@@ -117,7 +117,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   accepted deviations apart from the open gaps; adopt writes no accepted file and creates no accepted branch; an accepted
   deviation whose gap is gone reads "accepted, no longer applies".
 
-- `qargi project remove PROJECT` retires a project: it removes the stored answers, the project's members (what
+- `qargi project remove NAME` retires a project: it removes the stored answers, the project's members (what
   `qargi agent remove` takes away for each: the member file, the copy of its render in the configuration directory and its entry
   in `agents.json`) and the approved `verify.environment` declaration the state keeps for it, so that a project made later under
   the same name is not compared with it. The plan lists exactly those files and a token; the apply needs `--plan TOKEN --approved
@@ -138,7 +138,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   | `project-remove-unknown` | no stored answers for the name | `qargi project list` |
   | `project-remove-feature` | a branch `feature/*` of the repository is open | `qargi feature finish FEATURE` |
   | `project-remove-run` | a run of the project is not cleaned or closed | `qargi local clean RUN` |
-  | `project-remove-lease` | a marshal record has a lead that renewed it less than `marshal.lease_minutes` ago (a record that cannot be read counts) | `qargi marshal release FEATURE --project NAME` |
+  | `project-remove-lease` | a marshal record has a lead that renewed it less than `marshal.lease_minutes` ago (a record that cannot be read counts) | `qargi marshal release FEATURE --project NAME --note TEXT`, from the session that leads it (another lead's lease is released from that lead's session or waited out) |
   | `project-remove-release` | a release cut record has not reached `finish` | `qargi release finish VERSION --project NAME` |
   | `project-remove-linked` | `project link` left a link in the repository's checkout or in one of its work trees | `qargi project unlink NAME`, run inside that work tree |
   | `project-remove-cloud` | the project has a cloud binding (the answer `cloud`) | `qargi cloud unset NAME` |

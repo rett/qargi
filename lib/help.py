@@ -74,21 +74,26 @@ def verbs_of(cmd):
 
 
 def kind(t):
-    """The family of a value type: 'session:active' is a session, 'project:teams' a project."""
+    """The family of a value type: 'session:active' is a session, 'project:teams' a project, 'project:named' a project that is never inferred."""
     return t.split(":")[0] if isinstance(t, str) else t
+
+
+def implied(a):
+    """Whether the project word is filled in from the current directory when it is left out (see infer_project). The type project:named is a
+    project that is always named, never inferred: the verbs that remove one (project remove) take it, so NAME is a required word."""
+    return kind(a[1]) == "project" and a[1] != "project:named" and not (a[2] if len(a) > 2 else False)
 
 
 def argstr(args):
     out = []
     for a in args:
         name, optional = a[0], (a[2] if len(a) > 2 else False)
-        implied = kind(a[1]) == "project" and not optional   # filled in from the current directory (see infer_project)
-        out.append("[%s]" % name if (optional or implied) else name)
+        out.append("[%s]" % name if (optional or implied(a)) else name)
     return " ".join(out)
 
 
 def has_project_arg(args):
-    return any(kind(a[1]) == "project" and not (a[2] if len(a) > 2 else False) for a in args)
+    return any(implied(a) for a in args)
 
 
 def optstr(o):
@@ -793,7 +798,7 @@ def resolve(argv):
         if kind(a[1]) == "instance" and k < len(pos) and out[pos[k]] not in insts and out[pos[k]] in C.ROLES:
             out[pos[k]] = "%s-%s" % (P, out[pos[k]])
     required = [k for k, a in enumerate(args) if not (a[2] if len(a) > 2 else False)]
-    pk = next((k for k in required if kind(args[k][1]) == "project"), None)
+    pk = next((k for k in required if implied(args[k])), None)
     if not P:
         if pk is not None and len(pos) < len(required) and not (pk < len(pos) and os.path.exists(os.path.join(conf(), "projects", body[pos[pk]] + ".json"))) \
                 and not any(t in ("-h", "--help") for t in body):

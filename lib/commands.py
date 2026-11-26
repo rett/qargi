@@ -3,7 +3,8 @@ the bash completion. tests/test_help.py checks it against the scripts, so a flag
 without being described here fails the suite.
 
 A verb is  verb(summary, args=[(NAME, type[, optional])], opts=[opt(...)], desc=..., examples=[...])
-Argument and option value types drive completion: project, instance, team, role, session, pack-skill,
+Argument and option value types drive completion: project (left out inside the project's repository; project:named is always given, as
+the verbs that remove a project take it), instance, team, role, session, pack-skill,
 pack-tool, member, file, dir, none, or a tuple of fixed words."""
 
 TAGLINE = "A gathering place for agent work: dispatch, review, remember."
@@ -265,7 +266,7 @@ COMMANDS = {
                                "A real directory in the way is moved to NAME.qargi-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. "
                                "A member's guard refuses it.")),
             "unlink": verb("Undo project link in this work tree and restore the backups", [("PROJECT", "project", True)], [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED]),
-            "remove": verb("Retire a project: remove its stored answers and its members, behind a plan", [("NAME", "project")], [PLAN, APPROVED],
+            "remove": verb("Retire a project: remove its stored answers and its members, behind a plan", [("NAME", "project:named")], [PLAN, APPROVED],
                            desc=("Without --approved it prints the plan and a token and changes nothing. The plan lists exactly what the apply removes: the stored answers (~/.qargi/config/projects/NAME.json), "
                                  "the members of the project (what qargi agent remove takes away for each: the member file, the copy of its render under ~/.qargi/config/agents/NAME and its entry in agents.json), "
                                  "and the approved verify.environment declaration the state keeps for the project (verify-env.json), so that a project made again under the name is not compared with it. "
@@ -274,7 +275,7 @@ COMMANDS = {
                                  "The token covers the project, the hash of the answers file, the approved declaration, the hash of the project's raw record in agents.json (so a change the plan does not print is another token) and each member, and nothing that could hold the removal back, so it stays good after a refusal. "
                                  "Refused (exit 2, nothing changed, with a plan or with an apply) when the project has no stored answers (project-remove-unknown) and while something names it that the removal would strand, each refusal "
                                  "naming the one command that clears it: an open feature (project-remove-feature; qargi feature finish), an open run of the project (project-remove-run; qargi local clean), "
-                                 "a live marshal lease (project-remove-lease; qargi marshal release), an open release cut (project-remove-release; qargi release finish), a work tree of the repository where project link left a link "
+                                 "a live marshal lease (project-remove-lease; qargi marshal release FEATURE --project NAME --note TEXT from the session that leads it; another lead's lease is released from that lead's session or waited out), an open release cut (project-remove-release; qargi release finish), a work tree of the repository where project link left a link "
                                  "(project-remove-linked; qargi project unlink, run in it), a cloud binding (project-remove-cloud; qargi cloud unset) and a registered instance (project-remove-instances; qargi instances remove). "
                                  "A source that exists and cannot be read holds it too (project-remove-unreadable: stored answers that are not a JSON object, git failing or too slow in the repository, a plan of project unlink that did not run, "
                                  "instances.json, the registry of runs or a directory of the state that cannot be read, or a project on the shared refs backend of the marshal, whose switch file is there and whose leases are in refs of the remote and cannot be read in the state), naming what and the one command or file to fix; a plan that says nothing holds it back has read all of them. "

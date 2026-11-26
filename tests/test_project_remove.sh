@@ -82,7 +82,9 @@ run "$DA" project remove alpha --plan 000000000000 --approved go; rc=$?
 { [ $rc = 1 ] && grep -q "plan-stale" "$T/e" && [ "$before" = "$(alpha_all)" ]; } && ok "a wrong token is refused (plan-stale), nothing changed" || no "wrong token: rc=$rc $(out)"
 run "$DA" project remove alpha --bogus; rc=$?
 { [ $rc = 2 ] && grep -q "unknown option --bogus" "$T/e"; } && ok "an unknown option is a usage error (exit 2)" || no "bogus option: rc=$rc $(out)"
-run "$DA" project remove; rc=$?; { [ $rc = 2 ] && grep -q "which project" "$T/e"; } && ok "no name is a usage error (exit 2): the project is asked for" || no "no name: rc=$rc $(out)"
+run "$DA" project remove; rc=$?; { [ $rc = 2 ] && grep -q "remove needs a project name" "$T/e"; } && ok "no name is a usage error (exit 2): the name is asked for" || no "no name: rc=$rc $(out)"
+(cd "$T/ralpha" && run "$DA" project remove); rc=$?; { [ $rc = 2 ] && grep -q "remove needs a project name" "$T/e" && ! grep -q "^remove project" "$T/o"; } && ok "inside the project's repository the name is still asked for (it is never taken from the directory)" || no "no name in the repository: rc=$rc $(out)"
+run "$DA" help project remove; { grep -q "qargi project remove NAME \[OPTIONS\]" "$T/o" && ! grep -q "NAME can be left out\|PROJECT can be left out" "$T/o"; } && ok "the usage line shows NAME as a required word" || no "usage of remove: $(head -5 "$T/o")"
 run "$DA" project remove Bad_Name; rc=$?; [ $rc = 2 ] && ok "a name that is not a project name is a usage error (exit 2)" || no "bad name: rc=$rc $(out)"
 
 # --- an unknown project, for the plan and for an apply

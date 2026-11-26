@@ -359,7 +359,7 @@ compares them with that page.
 - Exit 2, live.
 - Fields: `name` (label), `features` (name-list).
 - Message: `project remove is refused: {name} has a live marshal lease on {features}`
-- Next, for a lead: give the lease up with qargi marshal release FEATURE --project NAME (or wait for it to lapse), then run project remove again
+- Next, for a lead: if this session leads the feature, give the lease up with qargi marshal release FEATURE --project NAME --note "why" (the note is what the next lead must know); another lead's lease is released from that lead's session or waited out (it lapses when its lead has not renewed it for marshal.lease_minutes), then run project remove again
 
 ### project-remove-release
 
