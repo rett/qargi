@@ -7,12 +7,14 @@
                                                    QARGI_MEMBER_RUN=RUN (the mark the marshal reads to tell that a member is working)
   legacy_runs.py archive STATE RUN                 STATE/runs-archive/NAME.tar.gz (NAME is the run's directory name): out/, the run's records and bundle, the lead's saved copy of it
                                                    (STATE/runs/NAME) and its registry line (read from standard input) in one archive; written beside it and moved into place only after
-                                                   it was read back in full and its list of entries (name, kind, size, link target) matched the list made from the files. An archive that
-                                                   is there already is checked the same way and kept when it matches; one that does not is never replaced.
+                                                   it was read back in full (the gzip checksum too) and its list of entries (name, kind, size, link target, sha256 of each file) matched
+                                                   the list made from the files, and after it and the directory were flushed to disk (fsync), so that removing the run next leaves a
+                                                   copy even if the machine stops. An archive that is there already is checked the same way and kept when it matches; one that does not is never replaced.
+                                                   A hard link in out/ is archived as a file of its own; a socket cannot be archived and is named as the reason.
                                                    Prints "archive PATH BYTES FILES" and exits 0; exits 1 with the reason on standard error.
 
 Read-only on the run, the saved copy and the state, except for the one archive it writes. python3 -I, standard library only."""
-import io, json, os, stat, sys, tarfile
+import hashlib, io, json, os, stat, sys, tarfile
 
 RECORDS = ("refs.before", "refs.after", "refs.accepted", "refs.diff", "verified", "applied", "started", "ability", "class", "profile", "task.md", "run.bundle")
 
@@ -81,19 +83,22 @@ def live(runs):
 
 
 def entries(run, saved, name, record_text):
-    """[(arcname, path or None, kind, size, link target)] in a fixed order: the records, out/, the saved copy, the registry line."""
+    """[(arcname, path or None, kind, size, link target, sha256 of a file's content)] in a fixed order: the records, out/, the saved copy, the registry line."""
     rows = []
 
     def add(arc, path):
         st = os.lstat(path)
         if stat.S_ISDIR(st.st_mode):
-            rows.append((arc, path, "dir", 0, ""))
+            rows.append((arc, path, "dir", 0, "", ""))
         elif stat.S_ISLNK(st.st_mode):
-            rows.append((arc, path, "link", 0, os.readlink(path)))
+            rows.append((arc, path, "link", 0, os.readlink(path), ""))
         elif stat.S_ISREG(st.st_mode):
-            rows.append((arc, path, "file", st.st_size, ""))
+            h, n = digest_of(path)
+            rows.append((arc, path, "file", n, "", h))
+        elif stat.S_ISSOCK(st.st_mode):
+            raise OSError("%s is a socket: a socket cannot be archived (tar has no entry for it); remove it, then archive the run again" % path)
         else:
-            rows.append((arc, path, "other", 0, ""))
+            rows.append((arc, path, "other", 0, "", ""))
 
     def tree(arc, path):
         add(arc, path)
@@ -101,7 +106,7 @@ def entries(run, saved, name, record_text):
             for n in sorted(os.listdir(path)):
                 tree(arc + "/" + n, os.path.join(path, n))
 
-    rows.append((name, None, "dir", 0, ""))
+    rows.append((name, None, "dir", 0, "", ""))
     for r in RECORDS:
         p = os.path.join(run, r)
         if os.path.lexists(p):
@@ -112,8 +117,21 @@ def entries(run, saved, name, record_text):
     if saved and os.path.isdir(saved) and not os.path.islink(saved):
         tree(name + "/saved", saved)
     data = record_text.encode()
-    rows.append((name + "/record.json", None, "file", len(data), ""))
+    rows.append((name + "/record.json", None, "file", len(data), "", hashlib.sha256(data).hexdigest()))
     return rows
+
+
+def digest_of(path):
+    """(sha256 hex, bytes read) of the file's content."""
+    h, n = hashlib.sha256(), 0
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(1 << 20)
+            if not b:
+                break
+            h.update(b)
+            n += len(b)
+    return h.hexdigest(), n
 
 
 def kind_of(ti):
@@ -127,33 +145,47 @@ def kind_of(ti):
 
 
 def check(dest, rows):
-    """None when the archive at DEST holds exactly ROWS (read back in full: the gzip checksum and every member), else the reason."""
+    """None when the archive at DEST holds exactly ROWS (read back in full: the gzip checksum, every member and the sha256 of each file), else the reason."""
     try:
         if os.path.getsize(dest) <= 0:
             return "the archive is empty"
         got = {}
         with tarfile.open(dest, "r:gz") as tf:
             for ti in tf:
+                h = ""
                 if ti.isreg():
                     f = tf.extractfile(ti)
-                    n = 0
+                    n, hh = 0, hashlib.sha256()
                     while True:
                         b = f.read(1 << 20)
                         if not b:
                             break
                         n += len(b)
+                        hh.update(b)
                     if n != ti.size:
                         return "%s reads back %d bytes, not %d" % (ti.name, n, ti.size)
-                got[ti.name] = (kind_of(ti), ti.size if ti.isreg() else 0, ti.linkname if ti.issym() else "")
+                    h = hh.hexdigest()
+                got[ti.name] = (kind_of(ti), ti.size if ti.isreg() else 0, ti.linkname if ti.issym() else "", h)
+            while tf.fileobj.read(1 << 20):      # the tar ends before the gzip trailer: read to its end, where the checksum of the whole stream is checked
+                pass
     except (OSError, tarfile.TarError, EOFError) as e:
         return "the archive cannot be read back: %s" % e
-    want = {arc: (kind, size, link) for arc, _p, kind, size, link in rows}
+    want = {arc: (kind, size, link, sha) for arc, _p, kind, size, link, sha in rows}
     if got != want:
         miss = sorted(set(want) - set(got))[:3]
         extra = sorted(set(got) - set(want))[:3]
         diff = sorted(k for k in set(got) & set(want) if got[k] != want[k])[:3]
         return "its list does not match the files (missing %s, unexpected %s, different %s)" % (miss, extra, diff)
     return None
+
+
+def sync(path, extra=0):
+    """fsync the file (or, with O_DIRECTORY, the directory) at path."""
+    fd = os.open(path, os.O_RDONLY | extra)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def archive(state, run, record_text):
@@ -175,7 +207,7 @@ def archive(state, run, record_text):
     old = os.umask(0o077)
     try:
         with tarfile.open(tmp, "w:gz") as tf:
-            for arc, path, kind, size, link in rows:
+            for arc, path, kind, size, link, sha in rows:
                 ti = tarfile.TarInfo(arc)
                 if path is None and arc.endswith("/record.json"):
                     data = record_text.encode()
@@ -188,7 +220,10 @@ def archive(state, run, record_text):
                     ti.mode = 0o700
                     tf.addfile(ti)
                     continue
+                tf.inodes.clear()                     # a second name of one inode is a file of its own, not a hard-link entry (the check reads kinds)
                 ti = tf.gettarinfo(path, arcname=arc)
+                if ti is None:
+                    raise OSError("%s cannot be archived (no tar entry for this kind of file)" % path)
                 ti.uid = ti.gid = 0
                 ti.uname = ti.gname = ""
                 if kind == "file":
@@ -199,7 +234,9 @@ def archive(state, run, record_text):
         why = check(tmp, rows)
         if why:
             raise OSError("the archive was not kept: %s" % why)
+        sync(tmp)                                  # the bytes are on disk before the name is, and the name before the run is removed
         os.rename(tmp, dest)
+        sync(adir, os.O_DIRECTORY)
     except BaseException:
         try:
             os.unlink(tmp)
