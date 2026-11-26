@@ -4,19 +4,13 @@
  "goal": "0.3.8: the Ataniq filings (project remove, local clean of legacy runs and its speed, review check text), the history of suite runs and reviews, and the lints and fixes from the 0.3.6/0.3.7 reviews",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-25T22:46:53Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-26T08:24:31Z",
- "finished_at": null,
+ "finished_at": "2026-11-26T08:48:33Z",
  "updated_by": "rett@arc",
- "rev": 15,
- "updated_at": "2026-11-26T08:24:31Z",
+ "rev": 16,
+ "updated_at": "2026-11-26T08:48:33Z",
  "feature": "release-038",
  "project": "qargi"
 }
