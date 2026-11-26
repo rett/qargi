@@ -235,6 +235,164 @@ def show_refusal(args):
     return "\n".join(out), 0
 
 
+JSON_RULE = ("Every JSON document qargi prints for a program to read names itself with two fields: `kind` (qargi-NAME) and `schema` (an integer). "
+             "A reader checks both and stops on a kind or a schema it does not know; it ignores fields it does not know. "
+             "The integer of a kind rises when a field is removed, renamed, retyped or changes meaning, and stays when a field is only added.")
+
+
+def json_kinds_dir():
+    import jsonkind as K
+    return K.KINDS_DIR
+
+
+def json_first_sentence(text):
+    """The first sentence of a registry file's `about`, on one line."""
+    import re
+    text = " ".join(text.split())
+    m = re.search(r"[.!?](\s|$)", text)
+    return text[:m.end()].strip() if m else text
+
+
+def json_type_text(node, defs):
+    """How a shape node reads in the field table: its type words (`array of T` for an array), or `enum a|b`, or `const X`."""
+    if "const" in node:
+        return "const " + json.dumps(node["const"])
+    if "enum" in node:
+        return "enum " + "|".join(json.dumps(w) if not isinstance(w, str) else w for w in node["enum"])
+    t = node.get("type")
+    if t == "array" and isinstance(node.get("items"), dict):
+        it = node["items"]
+        if "$ref" in it:
+            defn = defs.get(it["$ref"].rsplit("/", 1)[-1], {})
+            it = dict(defn, **{k: v for k, v in it.items() if k != "$ref"})
+        return "array of " + json_type_text(it, defs)
+    if isinstance(t, list):
+        return "|".join(t)
+    return t or ("null" if node.get("x-reserved") else "any")
+
+
+def json_sentence(node):
+    """The sentence of a field: its description, then the annotations that say something to a reader."""
+    out = []
+    if node.get("description"):
+        out.append(node["description"].strip())
+    if node.get("x-when"):
+        out.append("Present when: " + node["x-when"].strip())
+    if node.get("x-since"):
+        out.append("Since %s." % node["x-since"])
+    if node.get("x-reserved"):
+        out.append("Reserved: a reader ignores it.")
+    if node.get("x-text"):
+        out.append("Free text, not for parsing.")
+    if node.get("x-open"):
+        out.append("Open: a reader treats an unknown word as unknown.")
+    if node.get("x-ordered"):
+        out.append("The order has meaning.")
+    return " ".join(out)
+
+
+def json_fields(shape, defs, path="", seen=()):
+    """The rows (path, type, required, sentence) of a registry shape, depth first. A `$ref` is followed (the annotations beside it win over
+    the ones of its definition); a definition that leads back to itself is followed once. An array adds `[]` to the path of its items, a
+    map (`additionalProperties`) `.*`."""
+    import re
+    node = dict(shape)
+    ref = node.pop("$ref", None)
+    if ref is not None:
+        name = re.match(r"^#/\$defs/(.+)$", ref).group(1)
+        if name in seen:
+            return []
+        base = dict(defs[name])
+        base.update(node)
+        return json_fields(base, defs, path, seen + (name,))
+    rows = []
+    props = node.get("properties") or {}
+    req = node.get("required") or []
+    for key, sub in props.items():
+        sub_path = path + "." + key if path else key
+        res = dict(sub)
+        ref = res.get("$ref")
+        if ref is not None:
+            res = dict(defs[re.match(r"^#/\$defs/(.+)$", ref).group(1)], **{k: v for k, v in res.items() if k != "$ref"})
+        rows.append((sub_path, json_type_text(res, defs), key in req, json_sentence(res)))
+        rows += json_fields(sub, defs, sub_path, seen)
+    items = node.get("items")
+    if isinstance(items, dict):
+        rows += json_fields(items, defs, path + "[]", seen)
+    extra = node.get("additionalProperties")
+    if isinstance(extra, dict):
+        rows += json_fields(extra, defs, path + ".*", seen)
+    return rows
+
+
+def json_load(kind):
+    """The registry of one kind, parsed and format-checked."""
+    import jsonkind as K
+    reg, fs = K.load_registry(K.registry_path(kind))
+    if reg is None:
+        raise ValueError("%s: %s" % (kind, "; ".join("%s %s" % (f[0], f[1]) for f in fs[:3])))
+    return reg
+
+
+def show_json_list():
+    import jsonkind as K
+    kinds = K.kind_names()
+    out = [b("JSON documents"), "", wrap(JSON_RULE, 2), "", b("Kinds") + "  (qargi help json KIND; with --json the registry file itself)"]
+    if not kinds:
+        return "\n".join(out + ["  none"]), 0
+    w = max(len(k) for k in kinds) + 2
+    for k in kinds:
+        reg = json_load(k)
+        out.append(fill("(schema %d, %s) %s" % (reg["schema"], reg["status"], json_first_sentence(reg["about"])), width(), "  " + k.ljust(w), "  " + " " * w))
+    return "\n".join(out), 0
+
+
+def show_json_kind(kind):
+    reg = json_load(kind)
+    out = [b(kind) + "  (schema %d, %s, since %s)" % (reg["schema"], reg["status"], reg["since"]), "",
+           wrap("About: " + reg["about"], 2),
+           wrap("Printed by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " on " + reg["stream"] + ".", 2),
+           wrap("Writes: " + reg["writes"], 2), "",
+           b("Fields") + "  (path, type, required or optional within its parent; [] is an array item, .* a map value)"]
+    doc = reg["document"]
+    for path, typ, req, sentence in json_fields(doc, doc.get("$defs") or {}):
+        out.append("  %s  %s, %s" % (path, typ, "required" if req else "optional"))
+        if sentence:
+            out.append(wrap(sentence, 6))
+    return "\n".join(out), 0
+
+
+def show_json(args):
+    """qargi help json [KIND] [--json]: the rule and the kinds, the fields of one kind, or (--json) the registry file of the kind byte for byte.
+    Exit 2 on an unknown kind or an option it does not have; 1 when a registry file cannot be read."""
+    import jsonkind as K
+    flags = [a for a in args if a.startswith("-")]
+    words = [a for a in args if not a.startswith("-")]
+    if any(f != "--json" for f in flags):
+        print("qargi: help json takes the option --json only, not '%s'." % [f for f in flags if f != "--json"][0], file=sys.stderr)
+        return 2
+    if len(words) > 1 or (flags and not words):
+        print("qargi: %s qargi help json lists the kinds." % ("one kind at a time." if len(words) > 1 else "--json needs a KIND."), file=sys.stderr)
+        return 2
+    if words and words[0] not in K.kind_names():
+        print("qargi: no JSON kind '%s'. qargi help json lists the kinds." % words[0], file=sys.stderr)
+        return 2
+    try:
+        if flags:
+            with open(K.registry_path(words[0]), "rb") as f:
+                raw = f.read()
+            sys.stdout.flush()
+            sys.stdout.buffer.write(raw)
+            sys.stdout.buffer.flush()
+            return 0
+        text, rc = show_json_kind(words[0]) if words else show_json_list()
+    except (OSError, ValueError, KeyError) as e:
+        print("qargi: the registry of JSON kinds cannot be read (%s)" % e, file=sys.stderr)
+        return 1
+    print(text)
+    return rc
+
+
 def show(args):
     args = [a for a in args if a not in ("-h", "--help")]
     if args and args[0] == "--man":
@@ -252,6 +410,8 @@ def show(args):
             return 1
         print(text, file=sys.stderr if rc else sys.stdout)
         return rc
+    if name == "json":
+        return show_json(args[1:])
     if name in C.TOPICS:
         print(show_topic(name))
         return 0
