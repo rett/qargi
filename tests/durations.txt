@@ -15,10 +15,10 @@
 177 bash tests/test_marshal_handoff.sh
 88 bash tests/test_open_providers.sh
 170 bash tests/test_project.sh
-27 bash tests/test_project_remove.sh
+57 bash tests/test_project_remove.sh
 118 python3 tests/test_startup.py
 41 python3 tests/test_startup_modules.py
-136 python3 tests/test_guard.py
+115 python3 tests/test_guard.py
 143 bash tests/test_no_default_provider.sh
 162 bash tests/test_conformance_selftest.sh
 201 bash tests/test_local_run.sh
@@ -130,7 +130,7 @@
 29 bash tests/test_release_unrelated.sh
 8 bash tests/test_release_snapshot_cycle.sh
 21 bash tests/test_local_concurrency.sh
-24 bash tests/test_local_bulk.sh
+56 bash tests/test_local_bulk.sh
 18 bash tests/test_marshal_lease.sh
 0 python3 tests/test_docs_links.py
 17 bash tests/test_json_plans.sh
