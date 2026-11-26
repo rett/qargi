@@ -236,7 +236,11 @@ rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF"; signin 259200; BEFORE=$(s
 # --- however a run ends, the copy is gone ---------------------------------------------------------------------------------------------------
 # a runner that fails in a way nothing planned for, after the member started: the member is stopped and the copy removed (clear_home, the end of
 # run_started), the exception is not swallowed
-setprov fakeall; echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go"; prep crash1; task
+stop_member() { # stop the process group of the fake member the pid file names: only a non-empty file that names a live process is acted on, never a guess (kill -- -0 is the caller's own group)
+  local p; p=$(cat "$T/member.pid" 2>/dev/null) || return 0
+  [[ $p =~ ^[1-9][0-9]*$ ]] && kill -0 "$p" 2>/dev/null && kill -TERM -- "-$p" 2>/dev/null
+  return 0; }
+setprov fakeall; echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go" "$T/member.pid"; prep crash1; task
 got=$(python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
@@ -266,7 +270,7 @@ PY
 )
 { grep -q '^RAISED$' <<<"$got" && grep -q "^SEEN=\[True\] GONE=True OUTCOME=refused PRIVATE=\['auth.json'\]$" <<<"$got" && [ "$(sum "$SRC")" = "$BEFORE" ]; } \
   && ok "a crash of the runner after the member started: the member is stopped, the copy is removed, the error is not swallowed (clear_home at the end of run_started)" || no "crash: $got"
-kill -TERM -- -"$(cat "$T/member.pid" 2>/dev/null || echo 0)" 2>/dev/null; rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
+stop_member; rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
 # a signal ends the run as interrupted and the copy is removed
 echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go"; prep sig1; task; S1=$RUN
 ( $DA local run "$S1" > "$T/s.out" 2>&1; echo $? > "$T/s.rc" ) &
