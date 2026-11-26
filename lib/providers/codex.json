@@ -132,7 +132,16 @@
       "env": "CODEX_HOME",
       "dir": ".codex",
       "skills_dir": "skills",
-      "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]
+      "link": [
+        {
+          "from": "~/.codex-members/auth.json",
+          "to": "auth.json",
+          "private": {
+            "set": {"tokens.refresh_token": "qargi-no-refresh"},
+            "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}
+          }
+        }
+      ]
     },
     "run_config": {
       "in": "home",

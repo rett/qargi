@@ -19,7 +19,7 @@ How a project whose own local runtime is `claude-code` sends chosen tasks to `co
 
 ## 1. Enable the runtime
 
-`qargi provider enable PROJECT --runtime codex` prints the plan and a token and changes nothing. Read it: the executable it would resolve, the link source of the sign-in (`present`, not inside `~/.codex`), that runs sharing it run one at a time, the barrier note, that a read-only member there reads and reports and runs nothing that writes, that the model and effort are requested and not confirmed, the tool packs each role would get and that their MCP servers run outside the sandbox, and the reads warning:
+`qargi provider enable PROJECT --runtime codex` prints the plan and a token and changes nothing. Read it: the executable it would resolve, the link source of the sign-in (`present`, not inside `~/.codex`), that the runs sharing it overlap, each with a private copy of it that cannot refresh (a plain link would make them run one at a time), the barrier note, that a read-only member there reads and reports and runs nothing that writes, that the model and effort are requested and not confirmed, the tool packs each role would get and that their MCP servers run outside the sandbox, and the reads warning:
 
 ```
 reads: members on codex can read the real ~/.codex (sessions, history, sign-in) and whatever else this account can read: reads are not confined
@@ -46,7 +46,7 @@ MEMBER_SKILLS=none (not delivered to an extra runtime)
 
 ## 4. Run, take in, review
 
-Start the run as the run's runtime says: `qargi provider notes spawn --run RUN` prints it (`qargi local run RUN` for a command runtime). Runs that share the members' sign-in run one at a time, so a build and a review on `codex` queue. A run starts on the runtime it was prepared for.
+Start the run as the run's runtime says: `qargi provider notes spawn --run RUN` prints it (`qargi local run RUN` for a command runtime). Runs that share the members' sign-in overlap, each with a private copy of it, so a build and a review on `codex` run together; a run that would outlive the access token in the copy is refused before it starts (`runtime-signin-expiring`: sign in again with `CODEX_HOME=~/.codex-members codex login`). A run starts on the runtime it was prepared for.
 
 A review on `codex` is a **reading review**: its sandbox refuses every write, so the member cannot run tests, a build or `git apply`, and always runs read-only. Put the diff or the patch series on disk before the run, where the member can read it (never under `/dev`), name the files in the task block, run the tests and gates yourself and put their output beside the diff. The report can cite that output and verify none of it.
 

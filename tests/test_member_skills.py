@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 import prepared_request_cases
+from dummy_signin import signin
 from member_skills_fixture import DeliveryFixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -913,33 +914,34 @@ class MemberSkills(unittest.TestCase):
         self.configure('codex')
         self.pack('fixture')
         user_home = self.root / 'user-home'
-        auth = user_home / '.codex-members/auth.json'          # the members' sign-in the shipped definition links, never ~/.codex
+        auth = user_home / '.codex-members/auth.json'          # the members' sign-in the shipped definition copies, never ~/.codex
         auth.parent.mkdir(parents=True)
-        auth.write_text('harmless offline sign-in fixture\n')
+        fixture = signin()                                     # dummy tokens: a JWT-shaped access token that lives ten days
+        auth.write_text(fixture)
         auth.chmod(0o600)
         (auth.parent / 'config.toml').write_text('unrelated_user_setting = true\n')
         self.env['HOME'] = str(user_home)
         fake = self.bin / 'codex'
         fake.write_text('#!/usr/bin/env python3\nimport json,os,sys,tomllib\nfrom pathlib import Path\n'
             'home=Path(os.environ["CODEX_HOME"]); auth=home/"auth.json"\n'
-            'assert auth.is_symlink() and auth.read_text()=="harmless offline sign-in fixture\\n"\n'
+            'assert not auth.is_symlink() and json.loads(auth.read_text())["tokens"]["refresh_token"]=="qargi-no-refresh"\n'
             'config=tomllib.loads((home/"config.toml").read_text())\n'
             'assert config["approval_policy"]=="never" and config["web_search"]=="disabled"\n'
             'assert "unrelated_user_setting" not in config\n'
             'skills=sorted(str(p.relative_to(home/"skills")) for p in (home/"skills").rglob("*") if p.is_file())\n'
             'auth.unlink(); auth.write_text("harmless refreshed fixture\\n")\n'
             'Path(sys.argv[sys.argv.index("-o")+1]).write_text("DONE\\n")\n'
-            'print(json.dumps({"skills":skills,"auth_link":True,"config_in_home":True}))\n')
+            'print(json.dumps({"skills":skills,"auth_copy":True,"config_in_home":True}))\n')
         fake.chmod(0o755)
         self.prepare('--role', 'review')
         self.cmd('local', 'run', self.run)
         observed = self.transcript()
         self.assertEqual(observed['skills'], ['fixture/SKILL.md', 'fixture/reference.txt'])
-        self.assertTrue(observed['auth_link'] and observed['config_in_home'])
+        self.assertTrue(observed['auth_copy'] and observed['config_in_home'])
         home = self.run / 'home/.codex'
         self.assertFalse((home / 'skills').exists() or (home / 'auth.json').exists())
-        self.assertEqual((home / 'auth.json.from-run').read_text(), 'harmless refreshed fixture\n')
-        self.assertEqual(auth.read_text(), 'harmless offline sign-in fixture\n')
+        self.assertFalse((home / 'auth.json.from-run').exists())       # a private copy the member rewrote goes with the run: nothing is kept, nothing written back
+        self.assertEqual(auth.read_text(), fixture)
         self.assertTrue((home / 'config.toml').is_file())
         self.cmd('local', 'verify', self.run)
 

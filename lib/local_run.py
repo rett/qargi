@@ -30,7 +30,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
   dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused,
                        and so is what would hand on the user's own home, search path, code loaders, ssh agent or forge credentials
                        (provider.env_pass_problem).
-  dispatch.home        {env, dir, link: [{from, to}]}: the member's own home directory RUN/home/DIR, named by the variable env (a runtime that
+  dispatch.home        {env, dir, link: [{from, to, private}]}: the member's own home directory RUN/home/DIR, named by the variable env (a runtime that
                        reads its configuration and sign-in from a directory of its own). Each file `from` (~/PATH, under the user's home) is
                        linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
                        link's target is never printed by a run (--dry-run names each link and the real path it points at, HOME_LINKS=NAME<-PATH). A
@@ -40,12 +40,29 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex; ~/.codex
                        for any runtime, and the directory the lead's environment names in CODEX_HOME or the variable env, unless it is the directory
                        of the source itself), for a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem).
-                       The runs that share a source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's
+                       The runs that share a plain link's source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's
                        real file is held from before the links are made until they are removed; a run that finds it held says so on standard error
                        and waits, with no bound (a signal ends the wait); a directory that cannot be written refuses the run, which is never started
                        without the lock. The wait can be long and the file at the declared path can change in it, so each source is checked again
                        once the lock is held (recheck_source: the same rules, and the same real path as when the run was planned, else exit 2) and
                        the link is made to that checked real path, never to the declared one.
+                       A link that carries private ({set: {PATH: TEXT}, expiry: {path, encoding, margin_seconds}}) is a private copy, for a runtime that refreshes
+                       the sign-in it is given in place (two runs refreshing one file race on its token): the source is a JSON file, read once from one open
+                       descriptor; each TEXT is put at its dotted PATH (a placeholder in place of the refresh token, so the copy cannot refresh and cannot
+                       race); the value at expiry.path is read by expiry.encoding (jwt-exp: the exp claim, no signature checked) and a run whose bound (its
+                       timeout_s, or --timeout) plus margin_seconds (default 900) is more than that value has left is refused (exit 1, runtime-signin-expiring,
+                       naming the declared path, the seconds left, the bound and where it is set, the margin and the login that makes a new sign-in, never a
+                       value): before anything is made or recorded, so no attempt is consumed, and again once the locks are held, since a wait has no bound.
+                       A source that is not a JSON object, lacks a path or holds no token with an expiry is a refusal (exit 2). The copy is a regular file TO
+                       of the run home (mode 600, made exclusively, never a link) that is removed when the run ends, in every way it ends the runner can
+                       clean up after (a runner killed with SIGKILL leaves it: home_residue of lib/local.sh names it in local list and verify, local run --again
+                       replaces it and local clean removes it with the run). Nothing is written back to the source: what the runtime or the member writes to
+                       the copy stays in the run home and goes with it, and a copy that changed is a note (the name, never a value). A source whose every link
+                       is private takes no lock, so the runs that share it overlap; a plain link keeps its lock and its behaviour as described above. A
+                       private copy still hands the member a live access token in its own home, as the link did: the read barrier does not change, but the
+                       refresh token no longer reaches the member. The real sign-in is refreshed by the lead with the runtime's own login (an automatic
+                       refresh is a later change). --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
+                       [{to, set (the paths), expires_in_seconds (when the run started)}].
                        The directory is made and the links are removed without following a link a member may have put in the run
                        directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
                        source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
@@ -120,8 +137,10 @@ restored, so the lead knows not to run git in that clone (worktree_changes uses 
 --dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be
 run this way, 4 transport, 128+N interrupted by signal N.
 """
+import base64
 import errno
 import fcntl
+import io
 import json
 import os
 import re
@@ -138,6 +157,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import prepared_request as PR
+import refusal
 import refusal as RF
 import member_skills as MS
 import provider as P  # noqa: E402
@@ -194,6 +214,13 @@ class Drift(Stop):
     """The run drifted while it waited for the lock: a refusal (exit 1) that prints as qargi local run prints runtime-drift before it starts (text: that print)."""
     def __init__(self, msg, text):
         Stop.__init__(self, msg, 1)
+        self.text = text
+
+
+class Refused(Stop):
+    """A refusal of the catalogue (lib/refusals.json) raised while the run starts: text is what qargi prints for it (the contract line and the human lines)."""
+    def __init__(self, msg, text, code=1):
+        Stop.__init__(self, msg, code)
         self.text = text
 
 
@@ -373,7 +400,7 @@ def plan_home(disp, run, runtime, doc=None):
     if why:
         fail(why)
     home = os.path.realpath(os.path.expanduser("~"))
-    links, missing, notes = [], [], []
+    links, copies, missing, notes = [], [], [], []
     for ln in h.get("link", []):
         src = os.path.join(home, ln["from"][2:])
         if not os.path.lexists(src):
@@ -382,7 +409,10 @@ def plan_home(disp, run, runtime, doc=None):
         real, why = source_problem(src)
         if why:                                          # the message names the link, never where its source resolves to
             fail("dispatch.home.link of %s: the source of '%s' is refused: %s" % (runtime, ln["to"], why))
-        links.append((ln["to"], real))                   # the link will point at the real file checked here, never at a path that may be a link by then
+        if "private" in ln:
+            copies.append((ln["to"], real))              # a private copy: made from this real file when the run starts, never a link
+        else:
+            links.append((ln["to"], real))               # the link will point at the real file checked here, never at a path that may be a link by then
     # the runtime's own variable set in the lead's environment to another directory: the run home's links come from the sources the definition names,
     # so a sign-in kept in that other directory is not linked (said, never the value)
     mine = os.environ.get(h["env"])
@@ -391,7 +421,8 @@ def plan_home(disp, run, runtime, doc=None):
         notes.append("%s is set in your environment to another directory than the one the run home's links come from (%s): the run links %s from there, "
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
-    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {},
+    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "copies": copies, "missing": missing, "notes": notes, "start": {},
+            "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "expires": {},
             "residue": [], "declared": [ln["from"] for ln in h.get("link", [])], "from": {ln["to"]: ln["from"] for ln in h.get("link", [])},
             "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime}
 
@@ -551,8 +582,163 @@ def recheck_source(home, to, real):
              "after the plan); nothing is linked. Start the run again" % (frm, home["runtime"]))
 
 
-def make_home(run, home):
-    """Make RUN/home/DIR and its links; the names linked. A link that an earlier run left there is replaced; anything else in its place is a refusal.
+def dig(doc, path):
+    """(True, value) of the dotted path in a JSON object, else (False, None): each part must be a key of an object."""
+    cur = doc
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False, None
+        cur = cur[part]
+    return True, cur
+
+
+def jwt_exp(value):
+    """The exp claim (seconds since the epoch) of a JWT, read from its payload without checking a signature; None when the text is no JWT with a finite
+    number there. The token is read in memory only: nothing of it is printed or recorded."""
+    parts = value.split(".") if isinstance(value, str) else []
+    if len(parts) != 3 or not parts[1]:
+        return None
+    try:
+        exp = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))).get("exp")
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return exp if isinstance(exp, (int, float)) and not isinstance(exp, bool) and exp == exp and abs(exp) < 1e12 else None
+
+
+def login_hint(home, to):
+    """The command that signs in again for the declared source of the link `to` (VAR=DIR COMMAND login), from the definition's own data."""
+    disp = home["doc"].get("dispatch") if isinstance(home["doc"], dict) else None
+    argv = disp.get("argv") if isinstance(disp, dict) else None
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else home["runtime"]
+    return P.login_command({"env": home["env"]}, home["from"][to], cmd)
+
+
+def signin_margin(home, to):
+    """The seconds a private copy's token must outlast the run's bound by: expiry.margin_seconds of the link's declaration, else provider.PRIVATE_MARGIN."""
+    return home["private"][to]["expiry"].get("margin_seconds", P.PRIVATE_MARGIN)
+
+
+def signin_refusal(home, to, left, plan):
+    """The refusal runtime-signin-expiring (the catalogue's text; exit 1): the copy's token ends before the run could. It names the declared path, the seconds
+    left, the bound used and where it comes from, the margin, whether the bound alone is longer than the time left, and the login that makes a new sign-in;
+    never a value."""
+    frm, bound, margin = home["from"][to], plan["timeout_s"], signin_margin(home, to)
+    cause = "bound-exceeds" if bound > left else "margin"
+    plain = ("the sign-in %s for %s member runs ends in %d s, less than the run's bound of %d s (set by %s) plus a margin of %d s (%s): no member is started; "
+             "sign in again for members with %s, then start the run again" % (frm, home["runtime"], max(left, 0), bound, plan["timeout_from"], margin, cause, login_hint(home, to)))
+    buf = io.StringIO()
+    try:
+        refusal.refuse("runtime-signin-expiring", [("name", home["runtime"]), ("path", frm), ("left", str(max(left, 0))), ("bound", str(bound)),
+                                                   ("bound_from", plan["timeout_from"]), ("margin", str(margin)), ("cause", cause), ("login", login_hint(home, to))],
+                       verb="local run", project=plan["project"], out=buf)
+    except RF.Defect:
+        return Stop(plain, 2)
+    return Refused(plain, buf.getvalue())
+
+
+def read_source(home, to, src):
+    """The bytes of the source of the private link `to`, read once from one open descriptor (never twice, so a source another program writes in place is at
+    worst a half file that does not parse, a refusal, and never a half file in the run home). Checked again first (recheck_source)."""
+    recheck_source(home, to, src)
+    frm = home["from"][to]
+    fd = None
+    try:
+        fd = os.open(src, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            fail("the sign-in %s for %s member runs is not a regular file; nothing is copied" % (frm, home["runtime"]))
+        data = b""
+        while len(data) <= MAX_SIGNIN:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError as e:
+        fail("the sign-in %s for %s member runs cannot be read (%s); nothing is copied" % (frm, home["runtime"], e.strerror or e))
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if len(data) > MAX_SIGNIN:
+        fail("the sign-in %s for %s member runs is larger than %d bytes; nothing is copied" % (frm, home["runtime"], MAX_SIGNIN))
+    return data
+
+
+def prepare_copies(home, plan):
+    """For each private link of the run home ({to: bytes}): read the source once (read_source), put the placeholders in it, and check that the token it
+    names outlasts the run: its seconds left (kept in home["expires"], never the token) must be at least the run's own bound (plan timeout_s) plus the margin
+    of the declaration, else the refusal runtime-signin-expiring. Nothing is made here. A source that is not a JSON object, lacks a path or holds no token with
+    an expiry is a refusal (exit 2) that names the declared path, never a value."""
+    out = {}
+    for to, src in home["copies"]:
+        frm, spec = home["from"][to], home["private"][to]
+        how = "sign in again for members with %s" % login_hint(home, to)
+        data = read_source(home, to, src)
+        try:
+            doc = json.loads(data.decode("utf-8"))
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            fail("the sign-in %s for %s member runs is not a JSON object, which a private copy needs (a program may be writing it; try again, or if it is damaged, %s); "
+                 "nothing is copied" % (frm, home["runtime"], how))
+        for path, text in spec["set"].items():
+            parent, _, key = path.rpartition(".")
+            ok, at = dig(doc, parent) if parent else (True, doc)
+            if not ok or not isinstance(at, dict):
+                fail("the sign-in %s for %s member runs has no object at %s, where the private copy puts its placeholder; nothing is copied. %s" % (
+                    frm, home["runtime"], parent, how[0].upper() + how[1:]))
+            at[key] = text
+        path = spec["expiry"]["path"]
+        ok, value = dig(doc, path)
+        exp = jwt_exp(value) if ok else None
+        if exp is None:
+            fail("the sign-in %s for %s member runs has no token with an expiry at %s (%s); nothing is copied. %s" % (
+                frm, home["runtime"], path, spec["expiry"]["encoding"], how[0].upper() + how[1:]))
+        left = int(exp - time.time())
+        if left < plan["timeout_s"] + signin_margin(home, to):
+            raise signin_refusal(home, to, left, plan)
+        home["expires"][to] = left
+        out[to] = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+    return out
+
+
+def private_record(home):
+    """What dispatch.json says of the private copies: [{to, set (the dotted paths, never the texts), expires_in_seconds (when the run started)}]; no value."""
+    out = []
+    for to, _ in home["copies"]:
+        one = {"to": to, "set": sorted(home["private"][to]["set"])}
+        if to in home["expires"]:
+            one["expires_in_seconds"] = home["expires"][to]
+        out.append(one)
+    return out
+
+
+def make_copies(fd, home, data):
+    """Write each private copy as a regular file of the run home (the descriptor fd of RUN/home/DIR): mode 600, made exclusively and never through a link
+    (a file or link an earlier run left in its place is removed by its name first; a directory is a refusal). The names made go to home["copied"] as they are
+    made, so a failure part way is cleaned by clear_home; the sha256 of what was written stays in memory to tell a changed copy at the end."""
+    import hashlib
+    for to, _ in home["copies"]:
+        try:
+            st = os.lstat(to, dir_fd=fd)
+        except FileNotFoundError:
+            st = None
+        if st is not None:
+            if stat.S_ISDIR(st.st_mode):
+                fail("%s is in the run home and is a directory; remove it, or the run is refused" % os.path.join(home["path"], to))
+            os.unlink(to, dir_fd=fd)                     # a name only: an earlier run's copy (or a link a member put there) is replaced, never followed
+        cfd = os.open(to, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=fd)
+        home["copied"].append(to)
+        try:
+            body = memoryview(data[to])
+            while body:
+                body = body[os.write(cfd, body):]
+            os.fchmod(cfd, 0o600)
+        finally:
+            os.close(cfd)
+        home["copy_sum"][to] = hashlib.sha256(data[to]).hexdigest()
+
+
+def make_home(run, home, data=None):
+    """Make RUN/home/DIR and its links (and the private copies of data, prepare_copies); the names linked. A link that an earlier run left there is replaced; anything else in its place is a refusal.
     Called with the lock held (take_lock), so each source is checked again here, after any wait, and linked by the real path planned, never by a
     path that may have become a link since the first check."""
     for to, src in home["links"]:
@@ -574,6 +760,8 @@ def make_home(run, home):
             home["start"][to] = (src, digest_of(src))    # what the source was when the run started: in memory only
             os.symlink(src, to, dir_fd=fd)
             made.append(to)
+        if home.get("copies"):
+            make_copies(fd, home, data or {})
     except BaseException:
         try:
             clear_home(run, home, made)
@@ -626,12 +814,21 @@ def clear_home(run, home, names):
     """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a source written through its link,
     a file in place of a link (the runtime replaced it: kept as NAME.from-run, keep_replacement), or a run home a member replaced."""
     notes = []
-    if not names:
+    copies = home.get("copied", [])
+    if not names and not copies:
         return notes
     fd = home_dir_fd(run, home, False)
     if fd is None:
-        return sweep_home(run, home, names)
+        if copies:
+            notes.append("the run home %s is gone or not the directory the run made, so the private cop%s %s could not be looked for; %s still in the run "
+                         "directory if the member moved it (qargi local clean removes the run directory)" % (home["path"], "ies" if len(copies) > 1 else "y",
+                         ", ".join(copies), "they are" if len(copies) > 1 else "it is"))
+            home["copied"] = []
+        return notes + (sweep_home(run, home, names) if names else [])
     try:
+        for to in copies:
+            notes += clear_copy(fd, to, home)
+        home["copied"] = []
         for to in names:
             src = dict(home["links"]).get(to)
             real0, sum0 = home["start"].get(to, (None, None))
@@ -656,6 +853,45 @@ def clear_home(run, home, names):
     finally:
         os.close(fd)
     return notes
+
+
+def clear_copy(fd, to, home):
+    """Remove the private copy `to` of the run home (a name only, never through a link), with a note when it is not as qargi wrote it: gone, replaced by a
+    link or another kind of file, or changed (its sha256 is not the one written). What a runtime or a member wrote to it stays in the run home until it is
+    removed here, and is never written to the source; a note names the copy, never a value."""
+    try:
+        st = os.lstat(to, dir_fd=fd)
+    except FileNotFoundError:
+        return ["the private copy %s was removed from the run home during the run (by the runtime or the member); your sign-in is untouched" % to]
+    except OSError as e:
+        return ["the private copy %s in the run home could not be checked (%s); it was left in place" % (to, e.strerror or e)]
+    if stat.S_ISDIR(st.st_mode):
+        return ["the private copy %s in the run home is a directory now; it was left in place" % to]
+    changed = False
+    if stat.S_ISREG(st.st_mode):
+        import hashlib
+        try:
+            rfd = os.open(to, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd)
+            try:
+                h = hashlib.sha256()
+                while True:
+                    chunk = os.read(rfd, 65536)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                changed = h.hexdigest() != home["copy_sum"].get(to)
+            finally:
+                os.close(rfd)
+        except OSError:
+            changed = True
+    else:
+        changed = True
+    try:
+        os.unlink(to, dir_fd=fd)
+    except OSError as e:
+        return ["the private copy %s in the run home could not be removed (%s); remove it with qargi local clean" % (to, e.strerror or e)]
+    return (["the private copy %s was changed during the run (by the runtime or the member); it is removed with the run and never written to your sign-in" % to]
+            if changed else [])
 
 
 KEPT = ".from-run"   # a file a runtime put in place of a run home's link is kept in the run home under this suffix; qargi never writes it to the source
@@ -1190,7 +1426,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     exe, how, exe_notes = find_command(runtime, argv[0], run, keep)
     watched = git_watch(argv_t, class_extra(disp, cls, runtime), cls, argv, clone)
     return {"runtime": runtime, "class": cls, "project": project, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
-            "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
+            "timeout_s": to, "timeout_from": "timeout-option" if timeout is not None else "definition" if "timeout_s" in disp else "default", "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "skills": skills, "prepared": prepared, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
             "options_line": options_line, "final": final, "package": package, "git_watch": watched}
@@ -1220,7 +1456,10 @@ def dry(plan, run):
     if plan["home"]:
         print("HOME_ENV=" + plan["home"]["env"])
         print("HOME_DIR=" + plan["home"]["path"])
-        print("HOME_LINKS=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["links"]))   # the file each link points at
+        if plan["home"]["links"] or not plan["home"]["copies"]:
+            print("HOME_LINKS=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["links"]))   # the file each link points at
+        if plan["home"]["copies"]:                         # the file each private copy is made from, as the path only: its content is not read
+            print("HOME_COPIES=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["copies"]))
     rc = plan["run_config"]
     if rc:                                                 # the path and the tool names only: the file holds the servers' addresses
         if rc["data"] is None:
@@ -2180,7 +2419,18 @@ def run_it(plan, run, pending):
         sig.restore()
 
 
+def check_signin_early(plan):
+    """A private copy whose token would end inside the run's bound refuses the run here, before anything is made or recorded: no attempt is consumed (no
+    dispatch.json, so no --again is needed once the sign-in is made again). The runner checks again once it holds the locks of its plain links, for
+    the wait has no bound; the copy is made from that second read."""
+    home = plan.get("home")
+    if home and home.get("copies"):
+        prepare_copies(home, plan)
+        home["expires"].clear()
+
+
 def run_owned(plan, run, pending, sig):
+    check_signin_early(plan)
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -2238,6 +2488,8 @@ def run_started(plan, run, store, dispatch_state, sig):
     begun = dict(head, started=PE.now(started), outcome="running", runner=os.getpid(), member=None)
     if home:
         begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
+        if home.get("copies"):                               # the copies a killed runner leaves are found by these names (local list, verify, clean): paths of the copy only, no value
+            begun["home"]["private"] = private_record(home)
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
     made, home_left, staged, locks = [], [], False, []
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
@@ -2250,7 +2502,11 @@ def run_started(plan, run, store, dispatch_state, sig):
             if home:
                 locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
                 drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
-                made = make_home(run, home)              # the links exist for the length of the run only
+                data = prepare_copies(home, plan) if home.get("copies") else {}   # a token that would end inside the run's bound is refused here
+                if home.get("copies"):
+                    begun["home"]["private"] = private_record(home)   # with the seconds each had left at the start
+                made = make_home(run, home, data)        # the links and copies exist for the length of the run only
+                data.clear()
             if plan.get('skills') is not None:
                 MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
                 MS.deliver(store, plan['prepared'])
@@ -2358,6 +2614,8 @@ def run_started(plan, run, store, dispatch_state, sig):
                 rec["group_left"] = left
             if home:
                 rec["home"].update(left=home_left, not_linked=home["missing"], residue=home["residue"])
+                if home.get("copies"):
+                    rec["home"]["private"] = private_record(home)
             write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
         except BaseException:
             pass
@@ -2399,6 +2657,8 @@ def run_started(plan, run, store, dispatch_state, sig):
         names = [to for to, _ in home["links"]] if home.get("cleanup_failed") else made
         rec["home"] = {"env": home["env"], "dir": home["dir"], "links": names, "not_linked": home["missing"], "left": home_left,
                        "residue": home["residue"]}     # names in the run home, never a value
+        if home.get("copies"):
+            rec["home"]["private"] = private_record(home)
     if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     rc = plan["run_config"]
@@ -2518,7 +2778,10 @@ def main(argv):
         print("qargi: %s" % str(e)[:1000], file=sys.stderr)
         return 2
     except Stop as e:
-        print("qargi: %s" % e, file=sys.stderr)
+        if getattr(e, "text", None):
+            sys.stderr.write(e.text)                     # a refusal of the catalogue prints as the catalogue says
+        else:
+            print("qargi: %s" % e, file=sys.stderr)
         return e.code
     except P.Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)

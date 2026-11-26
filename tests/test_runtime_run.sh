@@ -20,7 +20,7 @@ T=$(mktemp -d); fail=0
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 unset QARGI_PROJECT QARGI_LEAD_RUNTIME
 mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/tmp" "$T/scr" "$HOME/.codex-members"
-echo '{}' > "$HOME/.codex-members/auth.json"   # the members' sign-in of the shipped codex: a file of the test's own home
+python3 tests/dummy_signin.py > "$HOME/.codex-members/auth.json"   # the members' sign-in of the shipped codex (dummy tokens): a file of the test's own home, copied for each run
 trap 'kill_bg; rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"

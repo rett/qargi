@@ -66,8 +66,8 @@ NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so
 
 # home_residue RUN -> what a start of `local run` left in the run home (dispatch.home), one line each, nothing while a runner of the run is alive. RUN/dispatch.json
 # (the start record, or the end record of a run that ended) names the run home's directory and its links; each that is still a link, and a run home that is a link
-# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it. The record is a member's to write, so this only reports; local run
-# --again replaces the links and local clean removes the run with them.
+# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it; so is a private copy (home.private, a regular file). The record is a
+# member's to write, so this only reports; local run --again replaces the links and copies and local clean removes the run with them.
 home_residue() {
   local d=$1 rec dir r n
   rec=$d/dispatch.json
@@ -82,6 +82,11 @@ home_residue() {
     [ ! -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a link a start of qargi local run left: its runner did not end)"
     [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, which qargi never writes to your file: compare it with yours and reconcile it yourself)"
   done < <(jq -r '.home.links[]? | strings' "$rec" 2>/dev/null)
+  # a private copy of a sign-in (home.private) is a regular file the runner removes when the run ends: one that is still there was left by a runner that did not end
+  while IFS= read -r n; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
+    [ ! -f "$d/home/$dir/$n" ] || [ -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a private copy of a sign-in that a start of qargi local run left: its runner did not end)"
+  done < <(jq -r '.home.private[]? | .to | strings' "$rec" 2>/dev/null)
 }
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
