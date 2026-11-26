@@ -3,7 +3,8 @@ the bash completion. tests/test_help.py checks it against the scripts, so a flag
 without being described here fails the suite.
 
 A verb is  verb(summary, args=[(NAME, type[, optional])], opts=[opt(...)], desc=..., examples=[...])
-Argument and option value types drive completion: project, instance, team, role, session, pack-skill,
+Argument and option value types drive completion: project (left out inside the project's repository; project:named is always given, as
+the verbs that remove a project take it), instance, team, role, session, pack-skill,
 pack-tool, member, file, dir, none, or a tuple of fixed words."""
 
 TAGLINE = "A gathering place for agent work: dispatch, review, remember."
@@ -215,7 +216,7 @@ COMMANDS = {
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")], [PLAN, APPROVED],
-                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, a runtime with --runtime, or an option of a runtime with --runtime NAME --option OPT) and qargi provider accept. "
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push), with no empty segment (a..b and a. are refused, naming the path); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions, models.extra_runtimes, models.run_options and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable (an extension, a runtime with --runtime, or an option of a runtime with --runtime NAME --option OPT) and qargi provider accept. "
                               "profiles.NAME.options (a list of the options of the profile's runtime that the project enabled with qargi provider enable PROJECT --runtime NAME --option OPT) is a plain set that only selects among them; project validate refuses one that is not enabled and one on a profile of the reviewer base. "
                               "profiles.NAME.runtime (the runtime a profile's members run on: the project's own, or one enabled with qargi provider enable PROJECT --runtime NAME) is a plain set, with a hyphen allowed in the profile's name (profiles.codex-build.runtime), and a member's guard refuses it as it does roles.NAME.tools. "
                               "Setting models.provider.local (or models.provider) to a runtime that does not confine reads prints a warning line: members on NAME can read the real ~/.codex ... reads are not confined; it asks for no phrase. "
@@ -265,6 +266,22 @@ COMMANDS = {
                                "A real directory in the way is moved to NAME.qargi-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. "
                                "A member's guard refuses it.")),
             "unlink": verb("Undo project link in this work tree and restore the backups", [("PROJECT", "project", True)], [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED]),
+            "remove": verb("Retire a project: remove its stored answers and its members, behind a plan", [("NAME", "project:named")], [PLAN, APPROVED],
+                           desc=("Without --approved it prints the plan and a token and changes nothing. The plan lists exactly what the apply removes: the stored answers (~/.qargi/config/projects/NAME.json), "
+                                 "the members of the project (what qargi agent remove takes away for each: the member file, the copy of its render under ~/.qargi/config/agents/NAME and its entry in agents.json), "
+                                 "and the approved verify.environment declaration the state keeps for the project (verify-env.json), so that a project made again under the name is not compared with it. "
+                                 "With --plan TOKEN and --approved WORDS it reads what could hold the removal back once more (a hold that appeared since the plan refuses the apply as the plan does, and so does a change of what the token covers) and the approved declarations, writes the audit line project:remove with the words (begun) and only then removes the members one by one, the approved declaration and the stored answers, and ends with a second line (removed). A step that fails part way leaves what was removed removed and the stored answers in place, writes a line that says after how many members it stopped, and exits 1; a new plan then lists what is left. It touches the repository only through the member files the plan lists (a runtime that keeps them in the checkout, link none, for example a member file in the runtime's agents directory: the apply deletes those files, "
+                                 "and the lines qargi wrote in .git/info/exclude for them stay) and runs no git command that changes anything: no branch, no commit, no other file of the work tree. The marshal records, the audit log, the project's memory, the rendered packs and member render, and the stored plans stay (the plan lists the marshal's own files that are there, the switch file and the allowed signers, as stays lines). "
+                                 "The token covers the project, the hash of the answers file, the approved declaration, the hash of the project's raw record in agents.json (so a change the plan does not print is another token) and each member, and nothing that could hold the removal back, so it stays good after a refusal. "
+                                 "Refused (exit 2, nothing changed, with a plan or with an apply) when the project has no stored answers (project-remove-unknown) and while something names it that the removal would strand, each refusal "
+                                 "naming the one command that clears it: an open feature (project-remove-feature; qargi feature finish), an open run of the project (project-remove-run; qargi local clean), "
+                                 "a live marshal lease (project-remove-lease; qargi marshal release FEATURE --project NAME --note TEXT from the session that leads it; another lead's lease is released from that lead's session or waited out), an open release cut (project-remove-release; qargi release finish), a work tree of the repository where project link left a link "
+                                 "(project-remove-linked; qargi project unlink, run in it), a cloud binding (project-remove-cloud; qargi cloud unset) and a registered instance (project-remove-instances; qargi instances remove). "
+                                 "A source that exists and cannot be read holds it too (project-remove-unreadable: stored answers that are not a JSON object, git failing or too slow in the repository, a plan of project unlink that did not run, "
+                                 "instances.json, the registry of runs or a directory of the state that cannot be read, or a project on the shared refs backend of the marshal, whose switch file is there and whose leases are in refs of the remote and cannot be read in the state), naming what and the one command or file to fix; a plan that says nothing holds it back has read all of them. "
+                                 "When several hold it the first of those is the refusal and a note names the rest. A member never runs it: the guard refuses it, and so does the verb in a member's run directory or with the member mark in the environment. "
+                                 "A coordinator session (QARGI_ACTOR) may not run it."),
+                           examples=["qargi project remove acme", 'qargi project remove acme --plan TOKEN --approved "retire acme"']),
         },
     },
     "agent": {
@@ -918,7 +935,10 @@ COMMANDS = {
                                "but its output (_site/) is not committed, because a Pages build of the branch needs _site/ empty; a _site/ that an earlier build "
                                "committed is removed by the commit. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the tree to commit; "
                                "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
-                               "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
+                               "command for you to run. With an origin it first asks origin live for the branch (git ls-remote, at most QARGI_REMOTE_TIMEOUT seconds; "
+                               "the remote-tracking ref when origin does not answer, and it says so) and writes a release:site line to the ref journal for the push it prints, "
+                               "from what origin had to the commit just made, so a run prepared before the push still verifies once you push exactly that commit; "
+                               "without an origin nothing more is journaled. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
                          examples=["qargi release site 0.2.3", "qargi release site 0.2.3 --plan TOKEN --approved \"yes, commit the site\""]),
         },
@@ -1359,7 +1379,7 @@ COMMANDS = {
                                  "for the profiles of the project that select it (profiles.NAME.options): a run of such a profile gets the run's configuration file with the option's settings over the baseline, and nothing else changed; every other run gets the baseline alone. "
                                  "The plan prints the settings the option adds to the run's file, in that file's format; that the tool it opens runs outside the sandbox, may spend, and that qargi does not measure that; where it may write; the reads warning of the runtime; "
                                  "whether the option is verified (verified_on of the definition: null is not yet); the profiles that could select it; and the phrase of the option, which the owner's approval words must contain (as words, letter case and runs of blanks ignored), "
-                                 "else the refusal runtime-option-unacknowledged and the token stays good. It is for write runs only, and a read-only run whose profile selects one is refused at prepare (runtime-option-class). Applied it writes models.run_options.local.NAME and one audit line (provider:enable-option). "
+                                 "else the refusal runtime-option-unacknowledged and the token stays good. It is for write runs only, and a read-only run whose profile selects one is refused at prepare (runtime-option-class). Applied it writes models.run_options.local.NAME, the digest of the option's declaration as the plan showed it (models.run_options.declared.NAME.OPT: a run of a profile that selects the option is refused at prepare when the definition has changed it since, until the owner disables and enables it again) and one audit line (provider:enable-option). "
                                  "A lead's verb: the guard refuses it to a member. The project's own runtime, one already enabled and a name that is not a runtime are refused; nothing is changed.")),
             "disable": verb("Stop a project using a library extension pack, one extra local runtime (--runtime), or one run option of a runtime (--runtime --option)", [("PROJECT", "project"), ("EXTENSION", "none", True)], [RUNTIME_GATE, OPTION_GATE, ASKED_WORDS, PLAN, APPROVED],
                             desc=("With --runtime NAME it takes NAME out of models.extra_runtimes.local, with a plan and a token as for enable and no phrase to say. It is refused, with no token, while a profile names the runtime "
@@ -1560,13 +1580,14 @@ COMMANDS = {
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose ref comparison fails (verify's outcome is printed as a warning)"),
-                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
+                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, one line each (a legacy run whose refs changed says what is the matter and the one command to run), and the exit status is 1 when an applied run was kept"),
+                           opt("--legacy", "with --applied: the bulk, planned removal of the legacy runs (made by a qargi before the lifecycle) whose work is applied and merged: a plan and a token, then with --plan and --approved each run's out/ is archived to <state>/runs-archive/NAME.tar.gz, read back, and the run removed; a run that is open (not applied, not merged), has a member alive or is not legacy is never touched"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
                            opt("--orphans", "list the qargi-run.XXXXXX directories under /dev/shm (or QARGI_RUN_TMP) that no run of your registry names, each with its age and whether it is named; a plan and a token, nothing removed"),
                            opt("--days", "with --orphans: remove only the orphans older than DAYS days, and with nothing in them newer (default 2, at least 1)", "DAYS"),
-                           opt("--plan", "with --orphans: the plan token printed by the same command without --approved", "TOKEN"),
-                           opt("--approved", "with --orphans and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
+                           opt("--plan", "with --orphans, or --applied --legacy: the plan token printed by the same command without --approved", "TOKEN"),
+                           opt("--approved", "with --orphans or --applied --legacy, and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Lifecycle clean records ownership and atomically renames saved output and attempt state before recording cleaned in the registry and deleting them. Rerun clean after interruption; recorded deletion is idempotent even after partial marker or state removal. Unknown or replaced tombstones refuse cleanup. Cleaned registry rows remain as recovery evidence. "
                                 "Clean of a lifecycle run writes an outcome receipt below <state>/attempts/.receipts/ before it removes anything, and the receipt stays when the run is gone "
@@ -1583,9 +1604,19 @@ COMMANDS = {
                                 "It also refuses, --discard or not, a run whose review apply is running (the apply holds a pid lock in the lead's state, apply/RUN-ID.json.run); a lock whose process is gone does not block, and clean removes it. "
                                 "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. "
+                                "--applied and --stale --yes work through many runs at once and do the repeated work once: the registry is read once, the refs of the repository and of its origin are asked once for all the runs "
+                                "(the answer is the one of the moment the verb began), and a legacy run whose ref comparison fails is decided without a clean of its own. "
+                                "A legacy run (made by a qargi before the lifecycle: its registry line has no lifecycle marker) that --applied keeps because its refs changed since it was prepared, or could not be compared, "
+                                "is named in one line with the one command to run: when its work is merged, qargi local clean RUN --discard once its out/ is archived; when it is not, qargi feature merge first. "
+                                "--applied --legacy --scratch DIR is the bulk form of that command, a plan first: it lists the legacy runs under DIR that are applied and merged, with their sizes, and prints a token; nothing changes. "
+                                "With --plan TOKEN --approved WORDS it archives the out/ of each run (with its records, its bundle, the saved copy in the state and its registry line) to <state>/runs-archive/NAME.tar.gz, "
+                                "reads the archive back in full and checks its size and its list of files against the run's files, and only then removes the run as clean RUN --discard does; an archive that is there already is "
+                                "reused when it matches and never replaced when it does not (that run is kept), and a run whose archive cannot be made is kept. A run that is not legacy, is not applied or not merged (open work), "
+                                "is of a repository URL, or has a runner or a member alive (its dispatch.json, or a process that carries QARGI_MEMBER_RUN for it) is not in the plan and is never touched; each run is checked again "
+                                "when the plan is applied, and the removal is in the audit log with your words. A member cannot run it (it is a lead verb, and a coordinator label refuses --legacy); --legacy is for --applied only. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
                                 "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
-                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only. "
+                                "takes no RUN_DIR, no --applied, no --legacy and no --discard, and --yes is for --stale only. "
                                 "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
                                 "the saved work is applied and merged, and refuses otherwise; clean RUN --discard deliberately drops their evidence; lifecycle runs remain subject to ownership and quiescence, while legacy recovery proves neither. Missing legacy RUN recovery leaves TMP as an orphan. --stale counts such a run by "
                                 "the start time of its record, and with --yes keeps unapplied saved work; retained lifecycle evidence without a current copy requires explicit discard. "
@@ -1599,9 +1630,11 @@ COMMANDS = {
                                 "on the host (another QARGI_STATE or QARGI_HOME) are not, so their directories look orphaned once they are older than --days; check the age and the directory before you approve. Without --approved it prints the plan and its token and removes nothing. "
                                 "With --plan TOKEN --approved WORDS it removes only the directories that no registry names, that are older than --days (default 2, at least 1) and have nothing in them newer; "
                                 "each is checked again at the moment of removal, a directory that appeared or changed since the plan makes the token stale, and the removal is in the audit log with your words. "
-                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --discard, --stale, --yes or --scratch; --days, --plan and --approved are for it only. "
+                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --legacy, --discard, --stale, --yes or --scratch; --days is for it only, and --plan and --approved are for it and for --applied --legacy. "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --applied --legacy --scratch /tmp/scratch",
+                                    "qargi local clean --applied --legacy --scratch /tmp/runs --plan TOKEN --approved \"go\"",
+                                    "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
                                     "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
             "report": verb("A read-only member's own way to write its report: standard input, or a file under OUT, as RUN/out/report.md with a minimal manifest.json", [("RUN", "dir", True)],
                            [opt("--findings", "write RUN/out/findings.md instead of report.md"), opt("--from", "read the report from this file under OUT (a relative name is relative to OUT) instead of standard input", "FILE", "file"),
@@ -2020,7 +2053,7 @@ COMMANDS["tool"]["verbs"] = TOOL_VERBS
 ACTOR_VERBS = {}
 for _area, _names, _words in (
     # only read
-    ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt check"),
+    ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt card check"),
     ("feature", "", "list"), ("marshal", "", "status check handoff"), ("upstream", "", "status review"), ("campaign", "", "show check log"),
     ("backlog", "", "graph list"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
     ("instances", "", "list show"), ("skill", "", "list show effective check"), ("tool", "", "list show effective check"), ("packs", "", "load check"),
@@ -2035,7 +2068,7 @@ for _area, _names, _words in (
     for _verb in (_words.split() or [""]):
         ACTOR_VERBS[(_area, _verb)] = _names
 ACTOR_OPTS = {
-    ("local", "clean"): ("--discard", "--applied", "--stale", "--orphans", "--yes"),   # only clean RUN: the other forms reach runs of other features
+    ("local", "clean"): ("--discard", "--applied", "--legacy", "--stale", "--orphans", "--yes"),   # only clean RUN: the other forms reach runs of other features
     ("marshal", "handoff"): ("--write",),                                                # a coordinator does not change who leads
     ("release", "plan"): ("--again",),                                                   # it discards a recorded cut
 }
@@ -2052,7 +2085,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, plan show, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
@@ -2114,7 +2147,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "These best-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link, unlink, member-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link, unlink, member-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, remove, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
@@ -2125,7 +2158,7 @@ TOPICS = {
         "lead's git configuration and session files. "
         "It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. "
         "The install record is install.json, install.d and install.lock. "
-        "Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host.",
+        "Reading stays allowed except the lead's signing key. It refuses git push, send-email, imap-send, p4 submit, daemon, remote changes, -c or config of keys that run programs (alias.*, core.worktree), exporting GIT_DIR, rsync to a host. A git write is judged where -C, --work-tree or --git-dir name it. Text check, not a sandbox.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "

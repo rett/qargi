@@ -63,7 +63,14 @@ refusal changes nothing.
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
    - `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is applied and merged;
-     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest. `qargi local clean --stale DAYS --scratch DIR`
+     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest, one line for each kept run; over hundreds
+     of run directories both verbs read the registry once and ask the repository's refs once for all the runs. A legacy run (made before
+     the lifecycle) that is kept because its refs changed since it was prepared gets a line with the one command to run next: when its work
+     is merged, `qargi local clean RUN --discard` once its `out/` is archived. `qargi local clean --applied --legacy --scratch DIR` does both
+     for every such run: it prints a plan (the runs, their sizes) and a token; with `--plan TOKEN --approved WORDS` it archives each run's
+     `out/` (and its records, bundle and saved copy) to `<state>/runs-archive/NAME.tar.gz`, reads the archive back and checks its size and
+     its list of files, and only then removes the run. A run that is open (not applied, not merged), has a member alive or has a lifecycle
+     is not in the plan. `qargi local clean --stale DAYS --scratch DIR`
      lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
    - `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that
      no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`,
@@ -268,6 +275,7 @@ A documentation site kept on such a branch is regenerated when a release ships. 
 hand pages in `site/pages/`), `release finish` ends with `next: qargi release site VERSION`. That verb builds the site of the
 tag with `lib/site.py` to check it and commits the release it built on the site branch (`site.json`; the build's `_site/` is not
 committed, because a Pages build needs it empty), behind a plan and token; it never pushes and prints the push command. `release status VERSION` says whether the site of that version is built and pushed.
+With an origin, `release site` also journals the push it prints (the ref journal, verb `release:site`, from what origin has, asked live, to the commit it made), because the push moves a ref of origin that a run prepared earlier knew: push exactly that commit, and the verify of such a run does not fail with "refs changed". A commit other than the one it printed, or a push of the site branch made without `release site`, is not explained by that line. `qargi ref note origin/gh-pages` records a first push of a site branch that origin did not have (the line starts at absent) and each later push of it after your own earlier note, along a fast-forward; a site branch origin already had when the run was prepared is explained only by the line of `release site`, so build the site with the verb and push the commit it names.
 
 Two optional fields of `site.json` add a line to the footer of every page, the 404 page included. `copyright` is one line of plain text (at most 200
 characters, no `<` or `>`, shown escaped), for example `"(c) 2026 Example Author. MIT licensed."`; the forbidden words of `site.json` apply to it.

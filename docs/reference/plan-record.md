@@ -22,11 +22,13 @@ The plans listed here keep it: the ones whose hashed input is plain lines or one
 | `release site` | the version | `project version tag site-branch site-head tree` |
 | `feature verify`, `release verify` (the waiver of a `verify.environment` part, `--waive-environment`) | the feature or the version | `project branch head environment part* waiver` |
 | `project new` | the directory, as given (a control character is shown as `?`; at most 200 characters) | `directory methodology url deployment provider provider-local provider-cloud files` |
+| `project remove` | `answers` (under the project being removed) | `project answers approved records member*`: the name, the sha256 of the answers file, the id of the approved `verify.environment` declaration (`none` when the state has no entry, `off` when the entry declares none), the sha256 of the raw record of the project in `agents.json` (`none` when it has none; the plan prints each member cut and cleaned, the hash is of what is stored), then one line `name\|roles\|file\|copy` for each member |
 | `project set`, `project unset` (a loosening of `verify.environment`) | the path as given to the verb: `verify`, `verify.environment` or a path below it | `project old-declaration new-declaration` |
 | `provider accept` | the runtime and the surface | `runtime surface project reason` |
 | `instances init` (a change of the agent's model), `instances normalize`, `instances refresh-prompt` | the agent, or the instance | `agent`, `renames`, `prompt` |
 | `credential setup` | the repository (`owner/name`) | `grant` |
 | `skill accept`, `skill unaccept` | the skill | `accept`, `unaccept` |
+| `local clean --applied --legacy` | `legacy` | `scratch archive runs*` (a line for each run: its path and its size in bytes) |
 | `marshal key`, `marshal enable`, `marshal signers`, `marshal resign`, `marshal forget`, `marshal disable` | `marshal key`: the principal (control characters removed, at most 200 characters), under the project `machine`; the others: the remote, the signer, the feature, the feature, `shared-refs` | `words` |
 
 The plans not listed keep nothing yet (see [Plans that keep no record yet](#plans-that-keep-no-record-yet)): `qargi plan show` of their tokens is `plan-unknown`. Nothing is kept in a dry run (`QARGI_DRY=1`).

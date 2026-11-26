@@ -36,6 +36,13 @@ class Frontmatter(unittest.TestCase):
             self.assertIn("name", keys, f)
             self.assertIn("description", keys, f)
             self.assertEqual(keys["name"], os.path.basename(os.path.dirname(f)), f)
+            if os.sep + "packs" + os.sep in f:   # a pack is uploaded to a cloud agent: its API refuses XML tags in a name or description and the reserved words anthropic and claude in a name
+                import re
+                for k in ("name", "description"):
+                    val = keys[k][1:-1] if keys[k][:1] == '"' else keys[k]
+                    self.assertIsNone(re.search(r"<[^>]*>", val), "%s: %s holds an XML tag (the skills API refuses it)" % (f, k))
+                self.assertNotRegex(keys["name"].lower(), r"anthropic|claude", f)
+                self.assertNotRegex(keys["description"].lower(), r"anthropic|claude", "%s: the description holds a reserved word (anthropic, claude)" % f)
 
 
 if __name__ == "__main__":

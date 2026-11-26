@@ -966,6 +966,96 @@
       "fields": {"verb": "verb"},
       "message": "{verb} is refused: the sandbox of the member is off, so the dispatch is refused",
       "next": {"lead": "report it to the owner; do not work round it", "host": "report it to the owner; do not work round it"}
+    },
+    "project-remove-unknown": {
+      "rule": "qargi project remove names a project with stored answers",
+      "why": "there is nothing to remove for a name that has no answers, and a misspelt name must not look like a removal",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "name"},
+      "message": "project remove is refused: no project named {name} has stored answers",
+      "next": {"lead": "see the stored projects with qargi project list", "host": "see the stored projects with qargi project list"}
+    },
+    "project-remove-feature": {
+      "rule": "A project with an open feature is not removed",
+      "why": "an open feature is work the project's answers are still needed to finish, verify and merge",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "features": "name-list"},
+      "message": "project remove is refused: {name} has open feature(s): {features}",
+      "next": {"lead": "finish each open feature with qargi feature finish FEATURE (qargi feature list shows them), then run project remove again", "host": "finish each open feature with qargi feature finish FEATURE (qargi feature list shows them), then run project remove again"}
+    },
+    "project-remove-run": {
+      "rule": "A project with an open run is not removed",
+      "why": "an open run holds patches that are not taken in, and verifying, applying or cleaning it reads the project's answers",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "runs": "path-list"},
+      "message": "project remove is refused: {name} has open run(s): {runs}",
+      "next": {"lead": "close each run: qargi local clean RUN once its work is merged (qargi local list shows the runs), then run project remove again", "host": "close each run: qargi local clean RUN once its work is merged (qargi local list shows the runs), then run project remove again"}
+    },
+    "project-remove-lease": {
+      "rule": "A project with a live marshal lease is not removed",
+      "why": "another session may be leading the feature; removing the project's answers under it would strand that lead",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "features": "name-list"},
+      "message": "project remove is refused: {name} has a live marshal lease on {features}",
+      "next": {"lead": "if this session leads the feature, give the lease up with qargi marshal release FEATURE --project NAME --note \"why\" (the note is what the next lead must know); another lead's lease is released from that lead's session or waited out (it lapses when its lead has not renewed it for marshal.lease_minutes), then run project remove again", "host": "if this session leads the feature, give the lease up with qargi marshal release FEATURE --project NAME --note \"why\" (the note is what the next lead must know); another lead's lease is released from that lead's session or waited out (it lapses when its lead has not renewed it for marshal.lease_minutes), then run project remove again"}
+    },
+    "project-remove-release": {
+      "rule": "A project with an open release cut is not removed",
+      "why": "an open cut is an approved release that has not finished; its steps read the project's answers",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "versions": "name-list"},
+      "message": "project remove is refused: {name} has an open release cut: {versions}",
+      "next": {"lead": "finish the release with qargi release finish VERSION --project NAME, then run project remove again", "host": "finish the release with qargi release finish VERSION --project NAME, then run project remove again"}
+    },
+    "project-remove-linked": {
+      "rule": "A project whose work tree is linked is not removed",
+      "why": "the links in a work tree point into qargi's render, and qargi project unlink needs the project's answers to take them away",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "trees": "path-list"},
+      "message": "project remove is refused: {name} is linked in {trees}",
+      "next": {"lead": "run qargi project unlink NAME inside each linked work tree, then run project remove again", "host": "run qargi project unlink NAME inside each linked work tree, then run project remove again"}
+    },
+    "project-remove-cloud": {
+      "rule": "A project bound to a cloud workspace is not removed",
+      "why": "the binding is how every cloud call of the project reaches its workspace; it is removed on purpose, not with the answers",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label"},
+      "message": "project remove is refused: {name} is bound to a cloud workspace",
+      "next": {"lead": "remove the binding with qargi cloud unset NAME, then run project remove again", "host": "remove the binding with qargi cloud unset NAME, then run project remove again"}
+    },
+    "project-remove-instances": {
+      "rule": "A project with registered instances is not removed",
+      "why": "an instance is a cloud agent or a local agent file that is named after the project and that dispatch looks up through it",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "instances": "name-list"},
+      "message": "project remove is refused: {name} has registered instance(s): {instances}",
+      "next": {"lead": "remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again", "host": "remove each registry entry with qargi instances remove INSTANCE (qargi instances list shows them), then run project remove again"}
+    },
+    "project-remove-unreadable": {
+      "rule": "A project is not removed while something that could hold it back cannot be read",
+      "why": "a source that exists and cannot be read may name a feature, run, lease, cut, work tree or instance of the project, so a removal over it would be a guess",
+      "class": "project-remove",
+      "exit": 2,
+      "status": "live",
+      "fields": {"name": "label", "what": "name-list", "fix": "name-list"},
+      "message": "project remove is refused: {name} cannot be checked, because it could not be read: {what}",
+      "next": {"lead": "fix it, one item at a time: {fix}; then run project remove again", "host": "fix it, one item at a time: {fix}; then run project remove again"}
     }
   }
 }

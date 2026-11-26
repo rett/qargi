@@ -13,7 +13,10 @@
 #                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN)
 #   local.sh close RUN_DIR --applied-by-am   mark a verified run whose patches the lead applied by hand (git am) closed: not open any more, files kept
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
-#   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
+#   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others, one line each (the registry is read once, the refs
+#                                        of the repository asked once for all the runs, and a legacy run whose refs changed is decided here and named with the one command to run)
+#   local.sh clean --applied --legacy --scratch DIR [--plan TOKEN --approved WORDS]   the legacy runs (no lifecycle marker) that are applied and merged: a plan and a token; with the
+#                                        token and the words, each run's out/ is archived to STATE/runs-archive/NAME.tar.gz, read back and checked, and the run is removed (clean_legacy)
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
@@ -86,13 +89,13 @@ home_residue() {
 # namespace: refs/qargi-x/ and every other ref stay compared.
 drop_qargi_refs() { awk '{ r = ($1 == "local") ? $2 : $3 } r !~ /^refs\/qargi\//'; }
 
-snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
+snapshot_url_raw() { # url credential-file(optional) -> sorted refs of the remote
   ( [ -z "${2:-}" ] || git_auth_env "$2"
     u=$1; [ -z "${2:-}" ] || u=${1/https:\/\//https://x-access-token@}
     out=$(timeout 60 git 7>&- ls-remote --heads --tags "$u" 2>/dev/null </dev/null) && printf '%s\n' "$out" | sed 's/^/remote /' | drop_qargi_refs | sort || echo "remote unavailable" )
 }
 
-snapshot() { # repo -> sorted refs of the repository and of its remote
+snapshot_raw() { # repo -> sorted refs of the repository and of its remote
   git -C "$1" for-each-ref --format='local %(refname) %(objectname)' | drop_qargi_refs | sort
   if git -C "$1" remote get-url origin >/dev/null 2>&1; then
     if out=$(timeout 60 git 7>&- -C "$1" ls-remote --heads --tags origin 2>/dev/null </dev/null); then
@@ -102,6 +105,25 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
     fi
   fi
 }
+
+# snap_cached KIND KEY COMMAND ARGS... -> the snapshot COMMAND ARGS prints, asked once for all the runs of a bulk verb (clean --applied, --stale): QARGI_SNAP_CACHE names a private
+# directory under the state that the bulk verb made and exports for the child clean and verify of each run; the first run to ask puts the answer there and the others read it, so
+# a repository and its origin are asked once, not once for each of hundreds of runs (and an origin that does not answer costs one wait, not one for each). The answer is the
+# one of the moment the bulk verb began. Anything else, a directory that is not the bulk verb's own, a name the environment made up, asks every time, as it always did.
+snap_cached() {
+  local kind=$1 key=$2 c='' k
+  shift 2
+  case ${QARGI_SNAP_CACHE:-} in "$DA_STATE"/verify.*) [ -d "$QARGI_SNAP_CACHE" ] && [ ! -L "$QARGI_SNAP_CACHE" ] && [ -O "$QARGI_SNAP_CACHE" ] && c=$QARGI_SNAP_CACHE;; esac
+  if [ -n "$c" ]; then
+    k=$(printf '%s %s' "$kind" "$key" | sha256sum); c=$c/snap.${k:0:40}
+    if [ -f "$c" ] && [ ! -L "$c" ]; then cat -- "$c"; return 0; fi
+    if "$@" > "$c.tmp.$$" && mv -f -- "$c.tmp.$$" "$c"; then cat -- "$c"; return 0; fi
+    rm -f -- "$c.tmp.$$"
+  fi
+  "$@"
+}
+snapshot_url() { snap_cached url "$1 ${2:-}" snapshot_url_raw "$@"; }   # the credential file is part of the key: another credential may read other refs
+snapshot() { snap_cached repo "$1" snapshot_raw "$@"; }
 
 # merged_tip REPO TIP [BRANCH [RUN]] -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
 # other than agent/*, a worktree-bridge-* branch or a ref the run's answers declare owned, 1 when it is not, 2 when there is no tip that is a full hex object name;
@@ -115,6 +137,31 @@ merged_tip() {
   [ -z "${4:-}" ] || ans=$(reg_json "$4" '.answers // empty')
   python3 -I "$(dirname "$0")/merged.py" "$1" "$2" --state "$DA_STATE" ${3:+--branch "$3"} ${ans:+--answers "$ans"} || rc=$?
   case $rc in 0|2) return "$rc";; *) return 1;; esac
+}
+
+# plain_v VAR TEXT -> VAR is TEXT without control or escape bytes (what tr -d '\000-\037\177' leaves, in the C locale), with no process: the files of a run are a member's to write
+plain_v() { local -n _pv=$1; local LC_ALL=C; _pv=${2//[[:cntrl:]]/}; }
+
+# merged_prefetch RUN APPLIED-FILE [RUN APPLIED-FILE]... -> MRC[RUN] is the exit status merged_tip answers for each run (0 merged, 2 no tip that is a commit name, else 1) for
+# the runs of a long list at once: the one process of lib/merged.py --batch reads the ref journal once and answers every run, where merged_tip starts one for each. A run whose
+# registry line names no repository is left out (its list row says ?). The same words go to git as merged_tip sends: the file is a member's, the journal and the answers the lead's.
+declare -gA MRC=()
+merged_prefetch() {
+  local d f ab atip rp ans i
+  local -a recs=() ks=() rcs=()
+  MRC=()
+  while [ $# -ge 2 ]; do
+    d=$1; f=$2; shift 2
+    reg_val rp "$d" repo; [ -n "$rp" ] || continue
+    ab='' atip=''; read -r ab atip _ < "$f" 2>/dev/null || true
+    reg_ans ans "$d"
+    ks+=("$d"); recs+=("$rp" "$atip" "$ab" "$ans")
+  done
+  [ "${#ks[@]}" -gt 0 ] || return 0
+  mapfile -t rcs < <(printf '%s\0' "${recs[@]}" | python3 -I "$(dirname "$0")/merged.py" --batch --state "$DA_STATE")   # its warning (a journal that cannot be read) goes to the lead, once
+  for i in "${!ks[@]}"; do
+    case ${rcs[i]:-1} in 0|2) MRC[${ks[i]}]=${rcs[i]};; *) MRC[${ks[i]}]=1;; esac
+  done
 }
 
 # rewrite_hint REPO BRANCH -> nothing, or the sentence that names the fix when the lead rewrote the applied branch by hand: BRANCH is at a commit other than the
@@ -333,15 +380,24 @@ scratch_of() {
 }
 
 # parking_of -> the parking branch of the answers of the run being checked (run_answers: repo.parking_branch), else scratch
-parking_of() {
-  local p
+parking_fill() { # sets PKC[the answers] (a function of the answers alone: asked once for each distinct set of them in a process; a bulk verb compares hundreds of runs); call it, not a $( ), to keep the answer
+  local p k=x${RUN_ANS:-}
+  [ -z "${PKC[$k]+x}" ] || return 0
   p=$(run_answers | jq -r '((.repo | objects | .parking_branch) // "") | strings' 2>/dev/null) || p=''
-  echo "${p:-scratch}"
+  PKC[$k]=${p:-scratch}
 }
+parking_of() { parking_fill; echo "${PKC[x${RUN_ANS:-}]}"; }
+declare -gA PKC=() PMC=() ODC=() ORC=() BSNAP=()
 
 # plain_main -> the one long-lived branch of a project whose methodology has the plain flow (the run's answers: methodology.json flow plain), else nothing. The lead's
 # merges of a verified run go into it as the merges into develop and master go in a git-flow project (compare, below), because the plain flow has no develop or master.
-plain_main() {
+plain_main_fill() { # sets PMC[the answers], as parking_fill does for the parking branch
+  local k=x${RUN_ANS:-}
+  [ -z "${PMC[$k]+x}" ] || return 0
+  PMC[$k]=$(plain_main_of_answers)
+}
+plain_main() { plain_main_fill; [ -z "${PMC[x${RUN_ANS:-}]}" ] || printf '%s\n' "${PMC[x${RUN_ANS:-}]}"; return 0; }
+plain_main_of_answers() {
   local m
   m=$(run_answers | jq -r '[.methodology // "gitflow", ((.repo | objects | .long_lived // [])[0] // "")] | join(" ")' 2>/dev/null) || return 0
   [ "${m%% *}" != gitflow ] && [ "${m#* }" != "$m" ] || return 0
@@ -374,7 +430,11 @@ bridge_ref() {
 # pattern may be and whether a ref matches (hardened: a literal prefix of 3 characters, never develop, master, a long-lived branch, the git-flow branches,
 # a tag or a bridge branch).
 owned_declared() {
-  run_answers | jq -e '((.runs | objects | .owned_refs) // []) | type == "array" and length > 0' >/dev/null 2>&1
+  local k=x${RUN_ANS:-}   # a function of the answers alone: asked once for each distinct set of them in a process
+  if [ -z "${ODC[$k]+x}" ]; then
+    if run_answers | jq -e '((.runs | objects | .owned_refs) // []) | type == "array" and length > 0' >/dev/null 2>&1; then ODC[$k]=0; else ODC[$k]=1; fi
+  fi
+  return "${ODC[$k]}"
 }
 owned_bases() {
   local d b
@@ -414,11 +474,14 @@ compare() {
   if [ "$uo" != "$un" ]; then
     echo "origin could not be asked $([ -n "$un" ] && echo "now" || echo "when the snapshot was taken"): its refs cannot be compared"; bad=1
   fi
-  [ -z "$repo" ] || ! git -C "$repo" remote get-url origin >/dev/null 2>&1 || [ -n "$un" ] || hasr=1
+  if [ -n "$repo" ] && [ -z "$un" ]; then   # does the repository have an origin: asked once for each repository in a process (a bulk verb compares hundreds of runs of one)
+    if [ -z "${ORC[$repo]+x}" ]; then if git -C "$repo" remote get-url origin >/dev/null 2>&1; then ORC[$repo]=1; else ORC[$repo]=''; fi; fi
+    hasr=${ORC[$repo]}
+  fi
   dev=${N["local refs/heads/develop"]:-}
   journal_warn_bad "$DA_STATE/ref-journal.jsonl"   # once: journal_steps, called for each change, skips such a line without a word
   if owned_declared; then ownf=1; oans=$(run_answers); mapfile -t obase < <(owned_bases); fi
-  plainm=$(plain_main)
+  plain_main_fill; plainm=${PMC[x${RUN_ANS:-}]}
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; [ -z "$plainm" ] || [ "$1" != "refs/heads/$plainm" ] || return 0; return 1; }
   shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
   while read -r k; do
@@ -452,7 +515,7 @@ compare() {
       esac
       # the parking branch fast-forwarded to develop's tip
       if [ -n "$old" ] && [ -n "$new" ] && [ "$new" = "$dev" ] && [[ $name == refs/heads/?* ]]; then
-        [ -n "$park" ] || park=$(parking_of)
+        [ -n "$park" ] || { parking_fill; park=${PKC[x${RUN_ANS:-}]}; }
         if [ "$name" = "refs/heads/$park" ] && git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
           ACC[$k]=1; echo "$short (the parking branch) fast-forwarded to develop" >> "$acc"; continue
         fi
@@ -518,6 +581,138 @@ check_run() {
   : > "$CHECK_DIR/refs.accepted"
   compare "$RUN_REPO" "$ref" "$CHECK_DIR/refs.after" "$strict" "$CHECK_DIR/refs.accepted" > "$CHECK_DIR/refs.diff" || return 2
   return 0
+}
+
+# bulk_begin -> BULK_DIR: a private working directory under the state that a verb working through many runs (clean --applied, clean --stale --yes) removes when it ends, and
+# QARGI_SNAP_CACHE, which the child clean and verify of each run read (snap_cached): the refs of a repository and of its origin are asked once, not once for each run.
+bulk_begin() {
+  BULK_DIR=$(mktemp -d "$DA_STATE/verify.XXXXXX") || { echo "qargi: could not make a working directory in $DA_STATE; nothing was done" >&2; exit 3; }
+  trap 'rm -rf -- "${BULK_DIR:-}"' EXIT
+  QARGI_SNAP_CACHE=$BULK_DIR; export QARGI_SNAP_CACHE
+}
+
+# legacy_remnants RUN -> 0 when the lead's state holds private lifecycle evidence for the unmarked run RUN: attempt state, a cleanup intent or tombstone, a saved attempt marker, a
+# saved record that carries a lifecycle marker. What lib/attempts.py legacy_check refuses for (a marker that was stripped from the registry line does not make a legacy run): such a
+# run is left to clean, which names the evidence, and is not in the plan of clean --applied --legacy.
+legacy_remnants() {
+  local id=${1##*/}
+  if [ -e "$DA_STATE/attempts/$id" ] || [ -e "$DA_STATE/attempts/$id.clean" ] || [ -e "$DA_STATE/attempts/$id.clean.json" ] \
+    || [ -e "$DA_STATE/runs/.clean.$id" ] || [ -e "$DA_STATE/runs/$id/attempt" ]; then return 0; fi
+  [ -f "$DA_STATE/runs/$id/record.json" ] && grep -q '"lifecycle"' "$DA_STATE/runs/$id/record.json" 2>/dev/null
+}
+
+# legacy_refs_verdict RUN -> 0 when RUN is a legacy run (its line in the registry has no lifecycle marker) whose comparison of the refs fails: clean RUN would keep it as evidence
+# whatever else is true of it, and says so after a good many processes. The comparison is the one verify makes (check_run: the run's own refs.before, or verified once it passed,
+# against the refs now, compare); it is made here from the registry, the run's files and the refs that bulk_begin's cache holds, with no process for the run. 1 means "look at it with
+# clean": a run with a lifecycle (or one whose marker was stripped and whose private evidence is there), a read-only run, a run with no manifest in OUT, a run of a repository URL, a
+# registry that does not vouch for it, a comparison that passes. Nothing is changed, whatever the answer.
+legacy_refs_verdict() {
+  local run=$1 id=${1##*/} cls ref strict=1 st
+  reg_legacy "$run" || return 1
+  case $id in qargi.??????) ;; *) return 1;; esac
+  reg_val cls "$run" class; [ "$cls" = write ] || return 1
+  [ -d "$run" ] && [ ! -L "$run" ] && [ -f "$run/out/manifest.json" ] || return 1
+  ! legacy_remnants "$run" || return 1   # the clean that finds private lifecycle evidence of an unmarked run says so
+  run_record "$run" 2>/dev/null || return 1
+  [ -n "$RUN_REPO" ] && [ -z "$RUN_URL" ] || return 1
+  ref=$run/refs.before; [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
+  [ -f "$ref" ] || return 1
+  st=$(cat "$run/started" 2>/dev/null || true); [[ $st =~ ^[0-9]{1,12}$ ]] || st=''
+  JSTART=$st CREPO=$RUN_REPO CURLK=''
+  if [ -z "${BSNAP[$RUN_REPO]+x}" ]; then BSNAP[$RUN_REPO]=$(snapshot "$RUN_REPO"); fi   # the refs of the repository, asked once for all its runs
+  printf '%s\n' "${BSNAP[$RUN_REPO]}" > "$BULK_DIR/refs.after"
+  : > "$BULK_DIR/refs.accepted"
+  if compare "$RUN_REPO" "$ref" "$BULK_DIR/refs.after" "$strict" "$BULK_DIR/refs.accepted" > "$BULK_DIR/refs.diff"; then return 1; fi
+  return 0
+}
+
+# legacy_kept_line RUN -> the one line clean --applied says for a legacy run kept for its refs: what is the matter and the one command to run next. The state of its work is the
+# merged_prefetch answer (MRC); a run closed by hand (local close --applied-by-am) has no tip to follow and counts as merged.
+legacy_kept_line() {
+  local d=$1 cl='' ab='' rc
+  reg_val cl "$d" closed
+  if [ -n "$cl" ] && [ ! -f "$d/applied" ]; then   # closed by hand, no applied file: the bulk form plans only runs with one, so it names the one command that does
+    printf 'kept %s: legacy run closed by hand (local close --applied-by-am), refs changed or could not be compared since it was prepared; clean --applied --legacy does not plan it (no applied file): archive its out/ yourself, then qargi local clean %s --discard\n' "$d" "$d"
+    return 0
+  fi
+  rc=${MRC[$d]:-1}; [ -z "$cl" ] || rc=0
+  case $rc in
+    0) printf 'kept %s: legacy run, refs changed or could not be compared since it was prepared; its work is merged: after its out/ is archived, qargi local clean %s --discard\n' "$d" "$d";;
+    2) printf 'kept %s: legacy run, refs changed or could not be compared, and %s/applied names no commit: look at it; qargi local clean %s --discard drops the run on purpose\n' "$d" "$d" "$d";;
+    *) read -r ab _ < "$d/applied" 2>/dev/null || true; plain_v ab "${ab:-BRANCH}"
+       printf 'kept %s: legacy run, refs changed or could not be compared, and its work is not merged: qargi feature merge NAME %s, then archive its out/ and qargi local clean %s --discard\n' "$d" "$ab" "$d";;
+  esac
+}
+
+# clean_legacy SCRATCH -> clean --applied --legacy: the bulk, planned removal of the legacy runs under SCRATCH whose work is applied and merged. Without --approved it prints
+# the plan (each run, its size, what is done to it) and its token and changes nothing; with --plan TOKEN --approved WORDS it archives each run's out/ (lib/legacy_runs.py archive:
+# STATE/runs-archive/NAME.tar.gz, read back and checked against the files before anything is removed) and then removes the run as clean RUN --discard does. A run that is not
+# legacy, not applied, not merged, of a repository URL, or has a runner or member alive, or a run of another directory, is not in the plan and is never touched.
+clean_legacy() {
+  local scr d cl rp rc i n total=0 tok pj p1 sz sizes lv arch apath abytes afiles rest rr why err rm_n=0 kept_n=0 ecode=0
+  local n_life=0 n_unap=0 n_url=0 n_unm=0 n_live=0
+  local -a cand=() mp=() merged_ok=() elig=() szs=()
+  local -A LIVE=()
+  scr=$(readlink -f "$1"); REG_BULK=1 reg_load
+  for d in "$scr"/qargi.??????; do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
+    reg_val cl "$d" cleaned; [ -z "$cl" ] || continue
+    if ! reg_legacy "$d" || legacy_remnants "$d"; then n_life=$((n_life + 1)); continue; fi   # a lifecycle run, or one whose marker was stripped and whose private evidence is there
+    if [ ! -f "$d/applied" ]; then n_unap=$((n_unap + 1)); continue; fi
+    reg_val rp "$d" repo
+    if [ -z "$rp" ]; then n_url=$((n_url + 1)); continue; fi
+    cand+=("$d"); mp+=("$d" "$d/applied")
+  done
+  merged_prefetch ${mp[@]+"${mp[@]}"}
+  for d in ${cand[@]+"${cand[@]}"}; do
+    if [ "${MRC[$d]:-1}" = 0 ]; then merged_ok+=("$d"); else n_unm=$((n_unm + 1)); fi
+  done
+  if [ "${#merged_ok[@]}" -gt 0 ]; then
+    lv=$(python3 -I "$(dirname "$0")/legacy_runs.py" live "${merged_ok[@]}") || { echo "qargi: could not tell which legacy runs have a runner or a member alive (legacy_runs.py live failed); nothing was planned or changed" >&2; exit 3; }
+    while IFS=$'\t' read -r d why; do [ -z "$d" ] || LIVE[$d]=$why; done <<<"$lv"
+    for d in "${merged_ok[@]}"; do
+      if [ -n "${LIVE[$d]+x}" ]; then n_live=$((n_live + 1)); else elig+=("$d"); fi
+    done
+  fi
+  if [ "${#elig[@]}" -gt 0 ]; then
+    sizes=$(python3 -I "$(dirname "$0")/legacy_runs.py" size "${elig[@]}") || { echo "qargi: could not measure the legacy runs (legacy_runs.py size failed); nothing was planned or changed" >&2; exit 3; }
+    while read -r sz d; do szs+=("$sz"); total=$((total + sz)); done <<<"$sizes"
+  fi
+  echo "$((${#elig[@]} + n_unm + n_live)) legacy run(s) under $scr are applied; ${#elig[@]} of them merged, with no runner or member alive, and so in the plan ($total bytes in all)"
+  for i in "${!elig[@]}"; do echo "  ${elig[i]}  ${szs[i]} bytes"; done
+  [ "$n_unm" = 0 ] || echo "  not in the plan: $n_unm applied and not merged (qargi feature merge NAME BRANCH first)"
+  [ "$n_live" = 0 ] || echo "  not in the plan: $n_live with a runner or a member alive"
+  [ "$n_life$n_unap$n_url" = 000 ] || echo "  not in the plan: $n_life with a lifecycle or private lifecycle evidence (qargi local clean RUN), $n_unap not applied (open: unverified or unmerged work), $n_url of a repository URL"
+  if [ "${#elig[@]}" = 0 ]; then echo "plan: nothing to archive or remove under $scr"; exit 0; fi
+  pj=''
+  for d in "${elig[@]}"; do reg_val p1 "$d" project; if [[ $p1 =~ ^[a-z][a-z0-9]{0,23}$ ]]; then pj=$p1; break; fi; done
+  [ -n "$pj" ] || pj=local
+  tok=$({ printf '%s\n' "$scr" "$DA_STATE/runs-archive"; for i in "${!elig[@]}"; do printf '%s %s\n' "${elig[i]}" "${szs[i]}"; done; } \
+        | plan_token --basis "scratch:path archive:path runs:path" --verb "local clean" --target "$pj:legacy")
+  if [ -z "$APPROVED" ]; then
+    echo "plan: for each run above, archive its out/ (with its records, bundle, the lead's saved copy and its registry line) to $DA_STATE/runs-archive/NAME.tar.gz, read the archive back and check its size and its list of files, and only then remove the run (clone, bare copy, output, temporary directory) as qargi local clean RUN --discard does; nothing else is touched; ${#elig[@]} run(s); nothing changed"
+    echo "plan token: $tok   (apply with: qargi local clean --applied --legacy --scratch $SCR --plan $tok --approved \"...\")"
+    exit 0
+  fi
+  need_plan "$tok"   # the token is always needed
+  err=$BULK_DIR/err
+  for d in "${elig[@]}"; do
+    reg_rp rr "$d"
+    if ! arch=$(printf '%s\n' "${LRUNS[$rr]}" | python3 -I "$(dirname "$0")/legacy_runs.py" archive "$DA_STATE" "$d" 2>"$err"); then
+      echo "kept $d: not archived, so not removed: $(sed -n 1p "$err" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-300)"; kept_n=$((kept_n + 1)); continue
+    fi
+    arch=${arch#archive }; afiles=${arch##* }; rest=${arch% *}; abytes=${rest##* }; apath=${rest% *}
+    audit_log "local:clean-legacy" "$d archived to $apath ($abytes bytes, $afiles entries); removing it"   # the line is there before the removal, so a run that was removed is in the log even when the verb is interrupted
+    if why=$("$0" clean "$d" --discard 2>"$err" </dev/null); then
+      echo "archived $d: $apath ($abytes bytes, $afiles entries)"; echo "$why"; rm_n=$((rm_n + 1))
+    else
+      echo "kept $d: archived to $apath, but not removed: $(grep -v '^qargi: warning' "$err" | sed -n 1p | LC_ALL=C tr -d '\000-\037\177' | cut -c1-300)"; kept_n=$((kept_n + 1))
+    fi
+  done
+  audit_log "local:clean-legacy" "$scr: $rm_n removed, $kept_n kept (each archived first in $DA_STATE/runs-archive)"
+  echo "removed $rm_n legacy run(s), kept $kept_n"
+  [ "$kept_n" = 0 ] || ecode=1
+  exit "$ecode"
 }
 
 # render_warning REPO URL -> when the project this run belongs to has a render of its packs (packs apply --target T, T the render target of its
@@ -1148,11 +1343,12 @@ WRAP
     #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
     #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
     #   clean --stale DAYS --scratch DIR [--yes]   the finished runs (RUN/verified or RUN/applied) older than DAYS: a plan, removed only with --yes
-    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED=''
+    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED='' LEGACY=''
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
+        --legacy) LEGACY=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
         --orphans) ORPH=1; shift;;
@@ -1164,13 +1360,15 @@ WRAP
         *) [ -z "$CLEAN_RUN" ] || usage_die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
-    [ -n "$ORPH" ] || [ -z "$DAYS$PLAN_ARG$APPROVED" ] || usage_die "clean: --days, --plan and --approved are for --orphans"
+    [ -n "$ORPH" ] || [ -z "$DAYS" ] || usage_die "clean: --days is for --orphans"
+    [ -n "$ORPH" ] || [ -n "$LEGACY" ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
+    [ -z "$LEGACY" ] || [ -n "$ALL" ] || usage_die "clean: --legacy is for --applied (qargi local clean --applied --legacy --scratch DIR)"
     if [ -n "$ORPH" ]; then
       # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
       # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
       # Only an unnamed one that is older than N days (default 2) and has nothing in it newer than that is ever removed, and only behind a plan token and the lead's
       # words. A named directory is never removed here, live or not: clean RUN removes it with its run.
-      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --discard, --stale, --yes and no --scratch"
+      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR$LEGACY" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --legacy, --discard, --stale, --yes and no --scratch"
       DAYS=${DAYS:-2}
       case $DAYS in ''|*[!0-9]*|0) usage_die "clean --orphans --days needs a whole number of days, at least 1 (a directory prepare made a moment ago is not yet named), got '$DAYS'";; esac
       oroot=${QARGI_RUN_TMP:-/dev/shm}
@@ -1215,10 +1413,11 @@ WRAP
       exit 0
     fi
     if [ -n "$STALE" ]; then
-      [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
+      [ -z "$ALL$CLEAN_RUN$DISCARD$LEGACY" ] || usage_die "clean --stale takes no RUN dir, no --applied, no --legacy and no --discard: it cleans only finished runs, and each by the rules of clean"
       case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac
       [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
-      reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
+      REG_BULK=1 reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
+      [ -z "$YES" ] || bulk_begin   # the refs of the repository are asked once for all the runs cleaned below (QARGI_SNAP_CACHE)
       nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
@@ -1262,15 +1461,27 @@ WRAP
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || usage_die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || usage_die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
-      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; reg_load
+      [ -z "$APPROVED$PLAN_ARG" ] || [ -n "$LEGACY" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
+      if [ -n "$LEGACY" ]; then bulk_begin; clean_legacy "$SCR"; fi
+      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; leg_n=0; REG_BULK=1 reg_load
+      bulk_begin   # the refs of the repository are asked once for all the runs below (QARGI_SNAP_CACHE), and the registry read once by this process
+      cand=(); mp=()
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
-        if [ ! -f "$d/applied" ] && [ -z "$(reg_get "$d" closed)" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
-        if [ -z "$(reg_get "$d" repo)" ] && [ -z "$(reg_get "$d" closed)" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        cand+=("$d"); [ ! -f "$d/applied" ] || mp+=("$d" "$d/applied")
+      done
+      merged_prefetch ${mp[@]+"${mp[@]}"}   # the state of the work of each applied run, for the reason of one that is kept: one process for all of them
+      for d in ${cand[@]+"${cand[@]}"}; do
+        reg_val cl "$d" closed; reg_val rp "$d" repo
+        if [ ! -f "$d/applied" ] && [ -z "$cl" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
+        if [ -z "$rp" ] && [ -z "$cl" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        # a legacy run whose refs comparison fails is kept whatever else is true of it: said here, in one line and with the one command to run, instead of by a clean of its own
+        if legacy_refs_verdict "$d"; then legacy_kept_line "$d"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); [ ! -f "$d/applied" ] || leg_n=$((leg_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done
       echo "cleaned $done_n run(s), kept $kept_n"
+      [ "$leg_n" = 0 ] || echo "$leg_n legacy run(s) kept for their refs: qargi local clean --applied --legacy --scratch $SCR plans archiving the out/ of those that are applied and merged and removing them"
       [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
       exit 0
     fi
@@ -1573,22 +1784,27 @@ $vout}"
         *) usage_die "list: unknown option $1";;
       esac
     done
-    runs=(); reg_load; scr=''
+    runs=(); REG_BULK=1 reg_load; scr=''
+    rtc='' dd='' lfv='' rnv='' gs='' gtxt=''   # set by the _v functions (variables by name), read in the rows below
     # the run's coordinator label and feature, from the lead's registry (never from the run directory): the feature a labeled prepare recorded, else the one the
     # base feature/NAME names; a run prepared without a label has no actor. --actor matches the whole label or a prefix that ends at a colon; both filters are an AND.
-    run_feature() { local f b; f=$(reg_get "$1" feature); if [ -z "$f" ]; then b=$(reg_get "$1" base); case $b in feature/?*) f=${b#feature/};; esac; fi; printf '%s' "$f"; }
+    # The _v functions set the variable they are given (no process for a field of the registry, none for a cleaned text).
+    run_feature_v() { local -n _rf=$1; local _rfa _rfb; reg_val _rfa "$2" feature; if [ -z "$_rfa" ]; then reg_val _rfb "$2" base; case $_rfb in feature/?*) _rfa=${_rfb#feature/};; esac; fi; _rf=$_rfa; }
     list_match() { # RUN -> 0 when the run passes the filters
-      local a
+      local a f
       if [ -n "$WANT_ACTOR" ]; then
-        a=$(reg_get "$1" actor); [ -n "$a" ] || return 1
+        reg_val a "$1" actor; [ -n "$a" ] || return 1
         [ "$a" = "$WANT_ACTOR" ] || { [ "${WANT_ACTOR%:}" != "$WANT_ACTOR" ] && [ "${a#"$WANT_ACTOR"}" != "$a" ]; } || return 1
       fi
-      [ -z "$WANT_FEATURE" ] || [ "$(run_feature "$1")" = "$WANT_FEATURE" ]
+      [ -z "$WANT_FEATURE" ] && return 0
+      run_feature_v f "$1"; [ "$f" = "$WANT_FEATURE" ]
     }
-    list_fields() { # RUN -> "  actor=LABEL feature=NAME" for a labeled run, and for every run when a filter is given (- for none); nothing otherwise
-      local a f; a=$(reg_get "$1" actor)
-      { [ -n "$a" ] || [ -n "$WANT_ACTOR$WANT_FEATURE" ]; } || return 0
-      f=$(run_feature "$1"); printf '  actor=%s feature=%s' "${a:--}" "${f:--}"
+    list_fields_v() { # VAR RUN -> "  actor=LABEL feature=NAME" for a labeled run, and for every run when a filter is given (- for none); nothing otherwise
+      local -n _lf=$1; local _a _f _t
+      _lf=''
+      reg_val _a "$2" actor
+      { [ -n "$_a" ] || [ -n "$WANT_ACTOR$WANT_FEATURE" ]; } || return 0
+      run_feature_v _f "$2"; printf -v _t '  actor=%s feature=%s' "${_a:--}" "${_f:--}"; plain_v _t "$_t"; _lf=$_t
     }
     if [ -n "$SCR" ]; then
       scr=$(scratch_of "$SCR") || die "list: no such directory $SCR"
@@ -1597,62 +1813,89 @@ $vout}"
       for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
     fi
     mapfile -t gone < <(gone_runs "$scr")
-    plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
     # a RUNTIME column and a model note, for the runs of a project that has extra runtimes (models.extra_runtimes.local): the lead's registry line names the runtime of each run
     # prepared since (and the model asked for, with whether the runtime's override is verified: never "confirmed", since no runtime reports the model that answered); a run
     # prepared before shows "-". Nothing is added while no listed run belongs to such a project, so a project without extras sees the list it always saw.
     showrt='' pj=''
+    declare -A PJX=()   # project -> 1 when it is a valid name whose stored file lists extra local runtimes, else 0: asked once for each project
     for d in ${runs[@]+"${runs[@]}"} ${gone[@]+"${gone[@]}"}; do
       [ -n "$d" ] || continue
-      if [ -n "$(reg_get "$d" runtime)" ]; then showrt=1; break; fi
-      pj=$(reg_get "$d" project)
-      if [ -n "$pj" ] && valid_project "$pj" && jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' "$DA_CONF/projects/$pj.json" >/dev/null 2>&1; then showrt=1; break; fi
+      reg_val rtv "$d" runtime
+      if [ -n "$rtv" ]; then showrt=1; break; fi
+      reg_val pj "$d" project
+      [ -n "$pj" ] || continue
+      if [ -z "${PJX[$pj]+x}" ]; then
+        PJX[$pj]=0
+        if valid_project "$pj" && jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' "$DA_CONF/projects/$pj.json" >/dev/null 2>&1; then PJX[$pj]=1; fi
+      fi
+      if [ "${PJX[$pj]}" = 1 ]; then showrt=1; break; fi
     done
-    rt_cell() { local r; [ -n "$showrt" ] || return 0; r=$(reg_get "$1" runtime); printf '%-12s ' "$(printf '%s' "${r:--}" | plain)"; }   # RUN -> the cell, or nothing
-    rt_note() { # RUN -> "  model=M (requested, ...)" for a line that records the model, else nothing
-      local m; m=$(reg_get "$1" model); [ -n "$m" ] || return 0
-      if [ "$(reg_json "$1" '.model_confirmed')" = true ]; then printf '  model=%s (requested at prepare, override verified)' "$m"; else printf '  model=%s (requested at prepare, not confirmed)' "$m"; fi
+    rt_cell_v() { local -n _rc=$1; local _r; _rc=''; [ -n "$showrt" ] || return 0; reg_val _r "$2" runtime; plain_v _r "${_r:--}"; printf -v _rc '%-12s ' "$_r"; }   # RUN -> the cell, or nothing
+    rt_note_v() { # VAR RUN -> "  model=M (requested, ...)" for a line that records the model, else nothing
+      local -n _rn=$1; local _m _t; _rn=''
+      reg_val _m "$2" model; [ -n "$_m" ] || return 0
+      if [ "$(reg_json "$2" '.model_confirmed')" = true ]; then printf -v _t '  model=%s (requested at prepare, override verified)' "$_m"; else printf -v _t '  model=%s (requested at prepare, not confirmed)' "$_m"; fi
+      plain_v _t "$_t"; _rn=$_t
     }
+    # whether the work of every applied run listed is merged: asked of lib/merged.py once for all of them (a process for each run took most of the time of a long list)
+    mp=()
+    for d in ${runs[@]+"${runs[@]}"}; do
+      [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
+      [ ! -f "$d/applied" ] || mp+=("$d" "$d/applied")
+    done
+    for d in ${gone[@]+"${gone[@]}"}; do
+      [ -n "$d" ] || continue
+      [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
+      sv=$(saved_of "$d"); [ -z "$sv" ] || [ ! -f "$sv/applied" ] || mp+=("$d" "$sv/applied")
+    done
+    merged_prefetch ${mp[@]+"${mp[@]}"}
     printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' ROLE SLUG AGE APPLIED MERGED "${showrt:+RUNTIME      }" RUN
     nowe=$(date +%s)
     for d in ${runs[@]+"${runs[@]}"}; do
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
-      sl=$(reg_get "$d" slug)
-      st=$(cat "$d/started" 2>/dev/null || true)
+      reg_val sl "$d" slug
+      { st=$(<"$d/started"); } 2>/dev/null || st=''
       if [[ $st =~ ^[0-9]{1,12}$ ]]; then   # the file is a member's: only digits ever reach the arithmetic
         age=$((nowe - st))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       ap=no; mg=no
       if [ -f "$d/applied" ]; then
-        ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(reg_get "$d" repo)
+        ap=yes; reg_val rp "$d" repo
         if [ -z "$rp" ]; then mg='?'
-        else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
-      elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
+        else case ${MRC[$d]:-1} in 0) mg=yes;; 2) mg='?';; esac; fi
+      elif reg_val cl "$d" closed && [ -n "$cl" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(rt_cell "$d")$(printf '%s' "$d" | plain)" "$(list_fields "$d" | plain)" "$(rt_note "$d" | plain)"
+      { ab=$(<"$d/ability"); } 2>/dev/null || ab='?'
+      plain_v ab "$ab"; plain_v sl "${sl:--}"; plain_v dd "$d"
+      rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$dd" "$lfv" "$rnv"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
+      [ -f "$d/dispatch.json" ] || continue
       while IFS= read -r rl; do
-        [ -z "$rl" ] || printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$(printf '%s' "$rl" | plain)"
+        [ -z "$rl" ] || { plain_v rl "$rl"; printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$rl"; }
       done < <(home_residue "$d")
     done
     for d in ${gone[@]+"${gone[@]}"}; do
       [ -n "$d" ] || continue
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
-      sl=$(reg_get "$d" slug); ste=$(date -d "$(reg_get "$d" started)" +%s 2>/dev/null) || ste=''
+      reg_val sl "$d" slug; reg_val gs "$d" started; ste=$(date -d "$gs" +%s 2>/dev/null) || ste=''
       if [[ $ste =~ ^[0-9]{1,12}$ ]]; then
         age=$((nowe - ste))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       sv=$(saved_of "$d"); ap=no; mg=no
       if [ -n "$sv" ] && [ -f "$sv/applied" ]; then
-        ap=yes; read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$d" repo)
+        ap=yes; reg_val rp "$d" repo
         if [ -z "$rp" ]; then mg='?'
-        else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
-      elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-
+        else case ${MRC[$d]:-1} in 0) mg=yes;; 2) mg='?';; esac; fi
+      elif reg_val cl "$d" closed && [ -n "$cl" ]; then ap=closed; mg=-
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
-        "$(rt_cell "$d")$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)" "$(list_fields "$d" | plain)" "$(rt_note "$d" | plain)"
+      reg_val ab "$d" ability
+      plain_v ab "$ab"; plain_v sl "${sl:--}"
+      printf -v gtxt '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}"; plain_v gtxt "$gtxt"
+      rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$gtxt" "$lfv" "$rnv"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)

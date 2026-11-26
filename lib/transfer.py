@@ -639,6 +639,7 @@ def _gated_narrower(new, old):
         return isinstance(old, list) and all(i in old for i in new)
     if isinstance(new, dict):
         return isinstance(old, dict) and all(k in old and (old[k] == v or isinstance(v, list) and isinstance(old[k], list) and all(i in old[k] for i in v)
+                                                           or isinstance(v, dict) and isinstance(old[k], dict) and all(isinstance(x, str) for x in v.values()) and all(old[k].get(i) == x for i, x in v.items())
                                                            or isinstance(v, dict) and v and all(isinstance(x, (list, dict)) for x in v.values()) and _gated_narrower(v, old[k]))
                                              for k, v in new.items())
     return new == old

@@ -166,32 +166,127 @@ out_has_report() {
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
+# The fields of the lines are read once, by the same jq as the lines: LRF[RUN<US>KEY] is a string field (reg_get answers from it, no process); LRX[RUN<US>KEY] marks a string field
+# whose value holds a backslash, a tab or a line break, which reg_get reads with jq as it always did; RLC remembers where a path resolved (readlink -m) since the last reg_load.
+declare -gA LRF=() LRX=() LRRAW=() LRFILL=() RLC=()
 LRUNS_ORDER=()
+_US=$'\x1f'
+_REG_SIG=''
+_REG_FIELDS='. as $o | [keys_unsorted[] | select((($o[.] | type) == "string") and ((contains("=") or contains("\t") or startswith("!") or startswith("#")) | not))
+    | if ($o[.] | (contains("\\") or contains("\t") or contains("\n") or contains("\r"))) then "!" + . else . + "=" + $o[.] end]
+  + (if has("lifecycle") then ["#lifecycle"] else [] end)
+  + (if ($o.answers | type) == "object" then (($o.answers | tojson) as $a | if ($a | (contains("\\") or contains("\t") or contains("\n") or contains("\r"))) then ["!@answers"] else ["@answers=" + $a] end) else [] end)'
 reg_load() {
-  local f=$DA_STATE/local-runs.jsonl r line rr
-  LRUNS=(); LRUNS_ORDER=()
+  local f=$DA_STATE/local-runs.jsonl r line rr i prog sig=''
+  local -a PATHS=() ROWS=() RES=()
+  # a registry that is the same file as when this process last read it (the same device, inode, size and modification time to the nanosecond: every writer renames a new file
+  # over it or appends) is not read again; where each path resolves (RLC) is asked again, as it was for every call
+  [ -f "$f" ] && sig=$(stat -c '%d:%i:%s:%y' -- "$f" 2>/dev/null) || sig=''
+  if [ -n "$sig" ] && [ "$sig:${REG_BULK:-}" = "${_REG_SIG:-}" ]; then RLC=(); return 0; fi
+  _REG_SIG=''
+  LRUNS=(); LRUNS_ORDER=(); LRF=(); LRX=(); LRRAW=(); LRFILL=(); RLC=()
   [ -f "$f" ] || return 0
-  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
-  while IFS=$'\t' read -r r line; do
-    r=${r//\\\\/\\}; line=${line//\\\\/\\}
-    rr=$(readlink -m -- "$r" 2>/dev/null) || continue
+  _REG_SIG="$sig:${REG_BULK:-}"
+  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one. A caller that will ask for the fields of most runs sets REG_BULK: the same jq then
+  # adds, after the run and the line, KEY=VALUE for each string field with no "=", tab or line break in its name and no backslash, tab or line break in its value, and !KEY for
+  # a field that has (it is read with jq when asked for), and the lines are split by the shell itself, a tab the only separator and no pattern expanded. Without it the fields
+  # of a run are read with one jq the first time one of them is asked for (_reg_fill).
+  prog='fromjson? | select(type == "object" and (.run | type) == "string" and (.run | length) > 0) | [.run, tojson]'
+  [ -z "${REG_BULK:-}" ] || prog+=" + ($_REG_FIELDS)"
+  r=$(jq -Rr "$prog | @tsv" "$f" 2>/dev/null) || r=''   # a command substitution and a here-string: mapfile reads a pipe a byte at a time, three times slower
+  [ -n "$r" ] || return 0
+  mapfile -t ROWS <<<"$r"
+  for i in "${!ROWS[@]}"; do
+    r=${ROWS[i]%%$'\t'*}; PATHS[i]=${r//\\\\/\\}
+  done
+  # one readlink for all the runs of the registry; a path it cannot place is passed over, as it was one by one
+  mapfile -d '' -t RES < <(readlink -mz -- "${PATHS[@]}" 2>/dev/null)
+  if [ "${#RES[@]}" != "${#PATHS[@]}" ]; then
+    RES=(); for i in "${!PATHS[@]}"; do RES[i]=$(readlink -m -- "${PATHS[i]}" 2>/dev/null) || RES[i]=''; done
+  fi
+  for i in "${!ROWS[@]}"; do
+    rr=${RES[i]:-}
     [ -n "$rr" ] || continue
-    [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")
+    line=${ROWS[i]#*$'\t'}; line=${line%%$'\t'*}; line=${line//\\\\/\\}
+    [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")   # a later line of the same run replaces the earlier one
     LRUNS[$rr]=$line
-  done < <(jq -Rr 'fromjson? | select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
+    [ -z "${REG_BULK:-}" ] || LRRAW[$rr]=${ROWS[i]#*$'\t'*$'\t'}
+  done
 }
-reg_has() { local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
+# _reg_fill RUN: puts the string fields of the line of RUN (a real path the registry names) in LRF and LRX, once
+_reg_fill() {
+  local rr=$1 v n tail
+  local -a F=()
+  [ -z "${LRFILL[$rr]+x}" ] || return 0
+  LRFILL[$rr]=1
+  if [ -n "${LRRAW[$rr]+x}" ]; then tail=${LRRAW[$rr]}
+  else tail=$(jq -r "($_REG_FIELDS) | @tsv" <<<"${LRUNS[$rr]}" 2>/dev/null) || tail=''
+  fi
+  local IFS=$'\t'
+  local -
+  set -f
+  # shellcheck disable=SC2206  # the split is the point: a tab is the only separator (IFS) and no pattern is expanded (set -f)
+  F=($tail)
+  for ((n = 0; n < ${#F[@]}; n++)); do
+    v=${F[n]}
+    case $v in
+      '!'*) LRX[$rr$_US${v#!}]=1;;
+      '#'*) LRF[$rr$_US$v]=1;;
+      *=*) LRF[$rr$_US${v%%=*}]=${v#*=};;
+    esac
+  done
+}
+# reg_rp VAR PATH: VAR is where the registry files PATH (readlink -m), remembered until the next reg_load: no process the second time
+reg_rp() {
+  local -n _o=$1
+  if [ -z "${RLC[$2]+x}" ]; then RLC[$2]=$(readlink -m -- "$2" 2>/dev/null) || { unset "RLC[$2]"; return 1; }; fi
+  _o=${RLC[$2]}
+}
+reg_has() { local rr; reg_rp rr "$1" || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
+# reg_val VAR DIR FIELD: VAR is the text of FIELD in the registry's line for DIR (empty when absent or not a string); no process unless the value has an escape in it
+reg_val() {
+  local -n _v=$1
+  local _rr
+  _v=''
+  reg_rp _rr "$2" || return 0
+  [ -n "${LRUNS[$_rr]+x}" ] || return 0
+  _reg_fill "$_rr"
+  if [[ $3 =~ ^[A-Za-z0-9_]+$ ]]; then
+    if [ -n "${LRF[$_rr$_US$3]+x}" ]; then _v=${LRF[$_rr$_US$3]}; return 0; fi
+    [ -n "${LRX[$_rr$_US$3]+x}" ] || return 0
+  fi
+  _v=$(jq -r --arg k "$3" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$_rr]}" 2>/dev/null) || _v=''
+}
 reg_get() {
-  local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 0
-  [ -n "${LRUNS[$rr]+x}" ] || return 0
-  jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$rr]}" 2>/dev/null || true
+  local _rg
+  reg_val _rg "$1" "$2"
+  printf '%s\n' "$_rg"
+}
+# reg_ans VAR DIR: VAR is the answers of the line for DIR as compact JSON (what reg_json DIR '.answers // empty' prints for an object), or empty
+# reg_legacy DIR: 0 when the line has no lifecycle marker (a run prepared before the lifecycle, or one whose marker was stripped: lib/attempts.py decides which)
+reg_ans() {
+  local -n _a=$1
+  local _rr
+  _a=''
+  reg_rp _rr "$2" || return 0
+  [ -n "${LRUNS[$_rr]+x}" ] || return 0
+  _reg_fill "$_rr"
+  if [ -n "${LRF[$_rr$_US@answers]+x}" ]; then _a=${LRF[$_rr$_US@answers]}; return 0; fi
+  [ -z "${LRX[$_rr$_US@answers]+x}" ] || _a=$(reg_json "$2" '.answers // empty')
+}
+reg_legacy() {
+  local rr
+  reg_rp rr "$1" || return 1
+  [ -n "${LRUNS[$rr]+x}" ] || return 1
+  _reg_fill "$rr"
+  [ -z "${LRF[$rr$_US#lifecycle]+x}" ]
 }
 # reg_mark DIR KEY VALUE -> sets KEY to VALUE (a string) in the registry's line for the run DIR, in place, under the registry's lock (the one
 # prepare appends under), mode 600 kept; a run the registry does not name is left alone, and a failure is not the caller's (the mark is a
 # record, the run's own files stay what verify and clean decide on). verify marks a run verified, clean marks it cleaned: the run keeps its
 # one line, and the readers (marshal status, handoff, report) see the truth after the run directory is gone.
 reg_json() {
-  local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 0
+  local rr; reg_rp rr "$1" || return 0
   [ -n "${LRUNS[$rr]+x}" ] || return 0
   jq -c "$2" <<<"${LRUNS[$rr]}" 2>/dev/null || true
 }
@@ -563,6 +658,13 @@ need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always c
   # the labels whose lines differ between the plan that was shown and this one, when both were planned with plan_token --basis
   moved=$(QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis moved "$PLAN_ARG" "$1" 2>/dev/null) && [ -n "$moved" ] || moved=unrecorded
   refuse plan-stale "moved=$moved" ${tokarg[@]+"${tokarg[@]}"}
+}
+phrase_in() { # PHRASE WORDS: succeeds when WORDS carry PHRASE as words, in any letter case and with any blanks between them; a hyphen and an underscore are part of a word, so
+  # "xphrase", "phrase-x" and "x-phrase" do not carry "phrase" (the phrase of a run option, the reads phrase of a runtime)
+  [ -n "${1:-}" ] || return 1       # an empty phrase is never carried
+  python3 -I -c 'import re, sys
+words = " ".join(sys.argv[2].lower().split())
+sys.exit(0 if re.search(r"(?<![\w-])" + re.escape(sys.argv[1]) + r"(?![\w-])", words) else 1)' "$1" "${2:-}"
 }
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped

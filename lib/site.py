@@ -684,13 +684,13 @@ def argstr(args):
     for a in args:
         name, kind = a[0], a[1]
         optional = a[2] if len(a) > 2 else False
-        implied = (kind.split(":")[0] if isinstance(kind, str) else kind) == "project" and not optional
+        implied = (kind.split(":")[0] if isinstance(kind, str) else kind) == "project" and kind != "project:named" and not optional
         out.append("[%s]" % name if (optional or implied) else name)
     return " ".join(out)
 
 
 def has_project_arg(args):
-    return any((a[1].split(":")[0] if isinstance(a[1], str) else a[1]) == "project" and not (a[2] if len(a) > 2 else False) for a in args)
+    return any((a[1].split(":")[0] if isinstance(a[1], str) else a[1]) == "project" and a[1] != "project:named" and not (a[2] if len(a) > 2 else False) for a in args)
 
 
 def usage_of(cmd, spec, verb=None):

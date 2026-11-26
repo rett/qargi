@@ -280,7 +280,10 @@ records apply --conf "$liveconf" ${force:+--force} < "$plan" || { undo_conf; exi
 # from lib/ (bin/qargi), and python caches only what it imports. A tool you cannot write to (a checkout installed with sudo) is compiled by
 # the one who can: qargi upgrade does it through sudo; after a first install, run the command below once. Without the bytecode the tool runs
 # as before and the guard starts slower (about twice as long). Nothing is written outside the tool's own lib/ (its __pycache__ directories).
-if [ "$mode" = user ] && ! python3 -I -m compileall -q "$src/lib" >/dev/null 2>&1; then
+# Every install does it, --project too: with the bytecode there, a verb that imports from lib/ finds it fresh and writes nothing, so a tool that is
+# read-only afterwards (a checkout under sudo, a copy made read-only) never needs to write. (PYTHONDONTWRITEBYTECODE is no help here: python3 -I,
+# which every script of lib/ starts with, ignores it.)
+if ! python3 -I -m compileall -q "$src/lib" >/dev/null 2>&1; then
   echo "note: the bytecode of $src/lib was not compiled (the tool is read-only for you), so qargi __guard starts slower; once, as the owner: sudo python3 -I -m compileall -q $src/lib" >&2
 fi
 

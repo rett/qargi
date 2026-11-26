@@ -26,7 +26,7 @@ verb=${1:-}; shift || true
 # must contain (the phrase of the option's definition, as words); an approval without them is runtime-option-unacknowledged and the token stays good. A disable asks for no
 # phrase and is refused while a profile selects the option. Stored at models.run_options.local.NAME through lib/gated_answers.py, with one audit line.
 option_verb() {
-  local path
+  local digests
   printf '%s' "$OPT" | grep -Eq '^[a-z][a-z0-9_]{0,40}$' || usage_die "--option needs an option name of the runtime's definition (lower-case letters, digits and _): $rusage"
   info=$(pymod provider option-info "$PROJ" "$NAME" "$OPT" "$v" </dev/null) || exit $?
   if [ "$(jq -r .not_enabled <<<"$info")" = true ]; then refuse runtime-not-enabled name="$NAME"; fi
@@ -38,6 +38,7 @@ option_verb() {
   printf '%s\n' "$plan"
   if [ -n "$refusal" ]; then echo "qargi: $refusal; nothing was changed" >&2; exit 2; fi
   new=$(jq -c .new <<<"$info")
+  digests=$(jq -c .digests <<<"$info")
   token=$(printf '%s\n' "$plan" | plan_token)
   if [ -z "$APPROVED" ]; then
     echo "plan token: $token   (apply with: --plan $token --approved \"<the owner's words>\")"
@@ -45,19 +46,18 @@ option_verb() {
   fi
   need_plan "$token"
   if [ "$(jq -r .needs_phrase <<<"$info")" = true ]; then
-    phrase=$(jq -r .phrase <<<"$info")
-    norm=$(printf '%s' "$APPROVED" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
-    if ! grep -qwF -- "$phrase" <<<"$norm"; then       # as words, as for the reads phrase
-      refuse runtime-option-unacknowledged name="$NAME" option="$OPT"
-    fi
+    phrase_in "$(jq -r .phrase <<<"$info")" "$APPROVED" || refuse runtime-option-unacknowledged name="$NAME" option="$OPT"
   fi
   audit_log "provider:$v-option" "$PROJ runtime $NAME option $OPT $token"
-  path="models.run_options.local.$NAME"
-  python3 -I "$here/gated_answers.py" store "$PROJ" "$path" "$new" --conf "$DA_CONF" >/dev/null || fail "could not record it in the answers of $PROJ; nothing changed"
+  # the list is stored first (a profile that selects the option is valid only once it is listed), then the digest of the declaration the owner approved: an option
+  # listed with no digest is refused when a run is prepared, so a failure of the second store is safe, and the message says what is left
+  python3 -I "$here/gated_answers.py" store "$PROJ" "models.run_options.local.$NAME" "$new" --conf "$DA_CONF" >/dev/null || fail "could not record it in the answers of $PROJ; nothing changed"
+  python3 -I "$here/gated_answers.py" store "$PROJ" "models.run_options.declared.$NAME" "$digests" --conf "$DA_CONF" >/dev/null \
+    || fail "recorded the list of $NAME but not the digest of its declaration (models.run_options.declared.$NAME): disable the option and enable it again; an option with no digest is refused when a run is prepared"
   echo "${v}d run option $OPT of runtime $NAME for project $PROJ (approved: $APPROVED)"
 }
 runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T --approved W]: the gate of an extra runtime
-  local v=$1 PROJ='' NAME='' OPT='' ASKED='' APPROVED='' PLAN_ARG='' rusage info nothing verdict plan refusal new token norm phrase
+  local v=$1 PROJ='' NAME='' OPT='' ASKED='' APPROVED='' PLAN_ARG='' rusage info nothing verdict plan refusal new token
   rusage="usage: qargi provider $v PROJECT --runtime NAME [--option OPTION] [--asked \"<your words>\"] [--plan TOKEN --approved \"<the owner's go-ahead>\"]"
   shift
   while [ $# -gt 0 ]; do
@@ -95,11 +95,7 @@ runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T -
   fi
   need_plan "$token"
   if [ "$(jq -r .needs_phrase <<<"$info")" = true ]; then
-    phrase=$(jq -r .phrase <<<"$info")
-    norm=$(printf '%s' "$APPROVED" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
-    if ! grep -qwF -- "$phrase" <<<"$norm"; then       # as words: "threads are not confined" does not carry "reads are not confined"
-      refuse runtime-reads-unacknowledged name="$NAME"
-    fi
+    phrase_in "$(jq -r .phrase <<<"$info")" "$APPROVED" || refuse runtime-reads-unacknowledged name="$NAME"       # as words: "threads are not confined" does not carry "reads are not confined"
   fi
   audit_log "provider:$v" "$PROJ runtime $NAME $token"
   python3 -I "$here/gated_answers.py" store "$PROJ" models.extra_runtimes.local "$new" --conf "$DA_CONF" >/dev/null || fail "could not record it in the answers of $PROJ; nothing changed"

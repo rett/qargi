@@ -54,6 +54,8 @@ The same rule covers `project set` and `project unset` of `verify` and of `verif
 
 A hand edit of the answers file cannot turn the setting off or change it. `qargi feature verify`, `feature finish`, `release start`, `release verify` and `release finish` compare the declaration in the answers with the accepted one and refuse with `verify-env-change-unapproved` when they differ, in either direction; `feature status` and `release status` print the same finding and go on. The two ways out are to restore the answers or to change the setting with `project set`. `project init`, `new` and `attach` refuse, and store nothing, an answers file whose declaration is not the accepted one; when none was accepted before, a declaration in the file is a first declaration, and it is stored and recorded as accepted. A state file that cannot be read (it holds the accepted declaration of every project) makes these verbs refuse for every project, one that never set the option too: it fails closed on purpose, because a project whose answers were edited to off cannot then be told from one that was always off. `qargi doctor` names the file; fix it or remove it by hand. Limit: this guards an edit of the answers file; someone who also edits the state file is not stopped, but the audit log then lacks the line a real change writes.
 
+`qargi project remove NAME` forgets the accepted declaration of the project it removes (the entry of `verify-env.json`, with the answers and the members), so that a project made again under the name starts with none and is not compared with the old one.
+
 ## Refusal codes
 
 Every refusal names its code, the part, what was found and, for a part that can be waived, the waiver command. It exits 1 and records nothing.

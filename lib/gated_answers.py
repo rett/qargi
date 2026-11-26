@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Store dedicated gated answers: packs.member_skills, models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME and models.accept_no_barrier.SURFACE.
+"""Store dedicated gated answers: packs.member_skills, models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME, models.run_options.declared.RUNTIME and models.accept_no_barrier.SURFACE.
 
 The member-skills path is boolean and stores only through its dedicated packs
 gate. Project validation is shared; ordinary project writes cannot bypass it.
@@ -42,9 +42,9 @@ def check_path(path):
     m = re.fullmatch(r"models\.accept_no_barrier\.([a-z]+)", path or "")
     if m and m.group(1) in SURFACES:
         return
-    if re.fullmatch(r"models\.run_options\.local\.[a-z][a-z0-9-]{0,40}", path or ""):
+    if re.fullmatch(r"models\.run_options\.(local|declared)\.[a-z][a-z0-9-]{0,40}", path or ""):
         return
-    raise Refused("%s is not stored here: only models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME, packs.member_skills and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
+    raise Refused("%s is not stored here: only models.extensions, models.extra_runtimes.local, models.run_options.local.RUNTIME, models.run_options.declared.RUNTIME, packs.member_skills and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
 
 
 def store(project, path, value, conf=None):
