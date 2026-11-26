@@ -117,6 +117,37 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   accepted deviations apart from the open gaps; adopt writes no accepted file and creates no accepted branch; an accepted
   deviation whose gap is gone reads "accepted, no longer applies".
 
+- `qargi project remove NAME` retires a project: it removes the stored answers, the project's members (what
+  `qargi agent remove` takes away for each: the member file, the copy of its render in the configuration directory and its entry
+  in `agents.json`) and the approved `verify.environment` declaration the state keeps for it, so that a project made later under
+  the same name is not compared with it. The plan lists exactly those files and a token; the apply needs `--plan TOKEN --approved
+  "<the owner's words>"`; it reads what could hold the removal back once more and the approved declarations, writes the audit line `project:remove` with the
+  words before the first removal (`begun`) and a last one when it is done (`removed`), and touches the repository only through the member files the plan lists: no branch,
+  no checkout, no git operation that changes anything. The marshal records, the audit log, the project's memory, the rendered
+  packs and member render under `~/.qargi/state`, and the stored plans stay; the plan lists the files of the marshal that are there
+  (the switch file of a project on the local backend, the allowed signers) as `stays:` lines. A removal that fails part way (a file that cannot be removed) leaves what was already
+  removed removed and the stored answers in place, writes an audit line that says after how many members it stopped, and exits 1; a new
+  plan lists what is left, and the apply of it finishes. A hold that appears between the plan and the apply refuses the apply as it
+  refuses the plan. The token covers the project, the hash of the answers
+  file, the approved declaration, the hash of the project's raw record in `agents.json` and each member, and nothing that could hold the removal back, so it stays good after a
+  refusal. It is refused (exit 2, nothing changed, with the plan as with the apply) when something still names the project, each
+  refusal naming the one command that clears it:
+
+  | Refusal | When | Clear it with |
+  | --- | --- | --- |
+  | `project-remove-unknown` | no stored answers for the name | `qargi project list` |
+  | `project-remove-feature` | a branch `feature/*` of the repository is open | `qargi feature finish FEATURE` |
+  | `project-remove-run` | a run of the project is not cleaned or closed | `qargi local clean RUN` |
+  | `project-remove-lease` | a marshal record has a lead that renewed it less than `marshal.lease_minutes` ago (a record that cannot be read counts) | `qargi marshal release FEATURE --project NAME --note TEXT`, from the session that leads it (another lead's lease is released from that lead's session or waited out) |
+  | `project-remove-release` | a release cut record has not reached `finish` | `qargi release finish VERSION --project NAME` |
+  | `project-remove-linked` | `project link` left a link in the repository's checkout or in one of its work trees | `qargi project unlink NAME`, run inside that work tree |
+  | `project-remove-cloud` | the project has a cloud binding (the answer `cloud`) | `qargi cloud unset NAME` |
+  | `project-remove-instances` | `instances.json` has an entry named `NAME-...` | `qargi instances remove INSTANCE` |
+  | `project-remove-unreadable` | something that could hold it back exists and cannot be read: the stored answers (not JSON, not an object), git in the repository (`for-each-ref`, `worktree list`), the plan of `project unlink` in a work tree, `instances.json`, the registry of runs (the file or a line of it), the `features/` or `release/` directory of the state, and the marshal of a project on the shared refs backend (its switch file `marshal/NAME.enabled` is there: the leases are in refs of the remote, which the records of this machine do not hold) | the command or file the refusal names (for the refs backend: `qargi marshal release FEATURE --project NAME`, then `qargi marshal disable --project NAME`) |
+
+  When several hold it the first of these is the refusal and a note names the others. A member never runs it (its guard refuses
+  it, and so does the verb in a member's run directory), and a coordinator session (`QARGI_ACTOR`) may not.
+
 Each prints a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
 words>"` (`qargi help approvals`). With `--json` on any of these (or any other gated verb) the plan comes as one JSON object,
 `{"verb", "plan", "token", "apply", "exit"}`, so a lead reads the token and the command that applies it instead of scraping the text; `apply`

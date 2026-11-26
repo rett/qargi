@@ -18,7 +18,7 @@ case $area in
   __complete) exec python3 -I -c "$PYMOD_SRC" "$lib" help complete "$@";;
   # The guard runs on every tool call of a member, so its start-up is the one that counts: guard.py is imported, not run as a script (python
   # compiles a script on every run, a cache only an imported module gets: 235 KB, about 60 ms). The cache is the __pycache__ next to the
-  # source, which install.sh --user and qargi upgrade fill (compileall); where the tool is read-only and nothing filled it, python skips the
+  # source, which every install.sh (--user and --project) and qargi upgrade fill (compileall); where the tool is read-only and nothing filled it, python skips the
   # write and the guard compiles as before, only slower. sys.argv is what the script had: the lib directory taken off the front.
   __guard) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import guard; sys.exit(guard.main())' "$lib" "$@";;
   version|--version) printf '%s\nsource: %s\n' "$(cat "$root/VERSION")" "$root"; exit 0;;

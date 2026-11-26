@@ -7,7 +7,8 @@ places the runtime reads: skills and agents into the checkout, memory into the r
 linked, where and how comes from the runtime's definition (resources.skills, .agents and .memory, each with link.project or link.user:
 dir-symlink, entry-symlinks, copy or none); nothing here names a runtime.
 
-  project_link.py plan  link|unlink PROJECT RESOURCES TOKENFILE   print the plan, write one token for all of it (none when nothing is to be done)
+  project_link.py plan  link|unlink PROJECT RESOURCES TOKENFILE [--empty-status]   print the plan, write one token for all of it (none when nothing is to be done);
+                                                                with --empty-status "nothing to link or unlink" exits 4 (no other failure does), for a caller that must tell it from a plan that could not be made
   project_link.py apply link|unlink PROJECT RESOURCES TOKEN       re-plan, refuse if the plan changed, then change the file system
   project_link.py members-dir PROJECT RUNTIME                     print where the members of PROJECT are rendered for RUNTIME
 
@@ -216,10 +217,16 @@ def token_of(verb, items):
     return hashlib.sha256(json.dumps([verb, [(r, linker.token_of(f)) for r, _, f in items if f["state"] != "linked"]], sort_keys=True).encode()).hexdigest()[:12]
 
 
-def cmd_plan(verb, ctx, named, tokenfile):
+EMPTY_STATUS = 4                                             # the exit status of a plan with nothing in it, for --empty-status
+
+
+def cmd_plan(verb, ctx, named, tokenfile, empty_status=False):
     items, notes = select(ctx, verb, named)
     for n in notes:
         linker.say(n)
+    if not items and empty_status:
+        print("qargi: nothing to %s for %s" % (verb, ctx.project), file=sys.stderr)
+        sys.exit(EMPTY_STATUS)
     if not items:
         die("nothing to %s for %s%s" % (verb, ctx.project, "" if verb == "link" else " in this work tree (nothing is linked)"))
     todo = [i for i in items if i[2]["state"] != "linked"]
@@ -258,8 +265,9 @@ def main():
     if len(sys.argv) == 4 and sys.argv[1] == "members-dir":      # for lib/agent.sh: where the members of PROJECT for RUNTIME are rendered
         print(members_dir(paths.state(), sys.argv[2], sys.argv[3]))
         return
-    if len(sys.argv) != 6 or sys.argv[1] not in ("plan", "apply") or sys.argv[2] not in ("link", "unlink"):
-        die("usage: project_link.py plan|apply link|unlink PROJECT RESOURCES TOKENFILE|TOKEN")
+    empty_status = len(sys.argv) == 7 and sys.argv[1] == "plan" and sys.argv[6] == "--empty-status"
+    if not (len(sys.argv) == 6 or empty_status) or sys.argv[1] not in ("plan", "apply") or sys.argv[2] not in ("link", "unlink"):
+        die("usage: project_link.py plan|apply link|unlink PROJECT RESOURCES TOKENFILE|TOKEN [--empty-status]")
     phase, verb, project, res = sys.argv[1:5]
     named = [r for r in res.split(",") if r]
     bad = [r for r in named if r not in RESOURCES]
@@ -267,7 +275,7 @@ def main():
         die("--resource: %s (one or more of %s, each once)" % ("not a resource: " + ", ".join(bad) if bad else "a resource given twice", ", ".join(RESOURCES)))
     try:
         ctx = Context(project, verb)
-        (cmd_plan if phase == "plan" else cmd_apply)(verb, ctx, named, sys.argv[5])
+        (cmd_plan(verb, ctx, named, sys.argv[5], empty_status) if phase == "plan" else cmd_apply(verb, ctx, named, sys.argv[5]))
     except provider.Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)
         sys.exit(3)

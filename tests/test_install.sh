@@ -265,6 +265,22 @@ out=$(HOME=$H3 XDG_CONFIG_HOME=$H3/.config bash "$TL/install.sh" --user 2>&1); r
 out=$(HOME=$H3 bash "$TL/install.sh" --project "$P3" 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -L "$P3/.alt/skills/qargi-task" ] && [ ! -e "$P3/.claude" ] && grep -qx "/.alt/skills/qargi-task" "$P3/.git/info/exclude"; } && ok "--project takes the project skills directory from it, and hides that one" || no "project layout (rc=$rc): $out"
 ls "$TL"/lib/__pycache__/guard.*.pyc >/dev/null 2>&1 && ok "--user compiles the tool's lib/ (bin/qargi imports the guard from it on every tool call, and python caches only an imported module)" || no "--user left no bytecode of the guard in $TL/lib"
+# a verb of the compiled tool writes no bytecode: its files are the same after `provider show` (python3 -I ignores PYTHONDONTWRITEBYTECODE, so the install's compile is what
+# keeps the tool unwritten), and with the tool read-only the verb runs the same
+tool_files() { find "$TL" -type f | sort; }
+tool_files > "$T/tool.before"
+pshow=$(HOME=$H3 QARGI_CONF=$H3/qconf "$TL/bin/qargi" provider show claude-code 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(tool_files | diff "$T/tool.before" - | grep -c '^>')" = 0 ] && ok "a verb of the compiled tool (provider show) writes no bytecode into it" || no "provider show wrote into the tool (rc=$rc): $(tool_files | diff "$T/tool.before" - | head -3)"
+if [ "$(id -u)" != 0 ]; then
+  chmod -R a-w "$TL"
+  pro=$(HOME=$H3 QARGI_CONF=$H3/qconf "$TL/bin/qargi" provider show claude-code 2>&1); rc=$?
+  chmod -R u+w "$TL"
+  [ "$rc" = 0 ] && [ "$pro" = "$pshow" ] && ok "and the same verb runs unchanged with the tool read-only" || no "provider show on a read-only tool (rc=$rc): $pro"
+fi
+# a --project install compiles too: the tool of a project install may be a checkout nobody installed --user
+find "$TL" -name __pycache__ -prune -exec rm -rf {} +
+HOME=$H3 bash "$TL/install.sh" --project "$P3" >/dev/null 2>&1
+ls "$TL"/lib/__pycache__/guard.*.pyc >/dev/null 2>&1 && ok "--project compiles the tool's lib/ as well" || no "--project left no bytecode of the guard in $TL/lib"
 HOME=$H3 bash "$TL/install.sh" --project "$P3" --uninstall >/dev/null 2>&1
 HOME=$H3 XDG_CONFIG_HOME=$H3/.config bash "$TL/install.sh" --user --uninstall >/dev/null 2>&1
 { [ ! -e "$P3/.alt" ] && [ ! -e "$H3/.alt" ] && ! grep -q "alt/skills" "$P3/.git/info/exclude"; } && ok "and the uninstalls follow it" || no "uninstall with a changed layout left: $(find "$H3" "$P3" -path "$P3/.git" -prune -o -name '*alt*' -print)"

@@ -559,10 +559,15 @@ cmd_fixture() {   # once: the repository, the stored project and the private sta
   fixture_git init -q -b main --template="$W/git-template" "$CREPO" && fixture_git -C "$CREPO" add src/a.go \
     && fixture_git -C "$CREPO" commit -q -m 'Conformance fixture' || return 1
   # a runtime that declares run options (dispatch.run_config.options) has them all enabled for the project, one profile per option that selects it alone (optw0, optw1, ...) and
-  # a profile of the reviewer base that selects them all (optro): what case 14 runs; the fixture sets them as the owner's verbs would, since it has no owner to ask
-  jq -n --arg p "$(cd "$CREPO" && pwd -P)" --arg v "$NAME" --argjson ro "$(jq -c '(.dispatch.run_config.options // {}) | keys' "$DESC")" \
+  # a profile of the reviewer base that selects them all (optro): what case 14 runs; the fixture sets them as the owner's verbs would, since it has no owner to ask,
+  # and records beside the list the digest of each option's declaration (models.run_options.declared), which the enable verb stores and prepare compares
+  local dg
+  dg=$(python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import provider as P
+d = P.declared_options(P.composed(sys.argv[2], "local", root=sys.argv[3]))
+print(json.dumps({n: P.option_digest(d[n]) for n in sorted(d)}))' "$ROOT/lib" "$NAME" "$PROV") || return 1
+  jq -n --arg p "$(cd "$CREPO" && pwd -P)" --arg v "$NAME" --argjson ro "$(jq -c '(.dispatch.run_config.options // {}) | keys' "$DESC")" --argjson dg "$dg" \
     '{schema: 1, project: "conformance", repo: {url: "https://github.com/example/conformance", path: $p, long_lived: ["main"]},
-      roles: {build: {base: "main", push: {mode: "none"}}}, models: ({provider: $v} + (if ($ro | length) > 0 then {run_options: {local: {($v): $ro}}} else {} end)), memory: {}, budget_cents: 500}
+      roles: {build: {base: "main", push: {mode: "none"}}}, models: ({provider: $v} + (if ($ro | length) > 0 then {run_options: {local: {($v): $ro}, declared: {($v): $dg}}} else {} end)), memory: {}, budget_cents: 500}
       + (if ($ro | length) > 0 then {profiles: (([range(0; $ro | length)] | map({key: ("optw" + tostring), value: {base: "worker", tier: "balanced", options: [$ro[.]]}}) | from_entries)
                                                + {optro: {base: "reviewer", tier: "balanced", options: $ro}})} else {} end)' > "$QARGI_CONF/projects/conformance.json"
 }

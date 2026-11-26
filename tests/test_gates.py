@@ -265,7 +265,7 @@ class Cli(unittest.TestCase):
 # What a coordinator may run, written out here on purpose and independently of lib/commands.py ACTOR_VERBS: the test compares the two, so a verb that is
 # added or moved in the table without this list changing fails. Every other verb of the table of commands is refused (the lead runs it).
 COORD_ALLOWED = {
-    "project": "template show list validate profile", "agent": "list models for", "role": "list show prompt check", "feature": "list status verify",
+    "project": "template show list validate profile", "agent": "list models for", "role": "list show prompt card check", "feature": "list status verify",
     "marshal": "status check handoff", "upstream": "status review", "campaign": "show check log", "backlog": "graph list", "release": "plan status",
     "doctor": "", "env": "show check", "instances": "list show", "skill": "list show effective check", "tool": "list show effective check",
     "packs": "load check", "status": "", "report": "", "watch": "", "methodology": "list show check files deployment", "cloud": "list show check",
@@ -355,6 +355,14 @@ class ActorVerbTable(unittest.TestCase):
             flags = {o["flag"] for o in C.COMMANDS[area]["verbs"][verb]["opts"]}
             for o in opts:
                 self.assertIn(o, flags, (area, verb, o))
+
+    def test_role_card_is_a_coordinator_verb_that_narrows_nothing(self):
+        """`role card ROLE` only prints (nothing is written, no remote asked), so a coordinator may run it, with its options, and it names nothing the label narrows."""
+        self.assertEqual(C.ACTOR_VERBS[("role", "card")], "")
+        self.assertTrue(any("role card" in para for para in C.TOPICS["coordinator"][1]))
+        for argv in (["role", "card", "build"], ["role", "card", "review", "--json"], ["role", "card", "build", "--run", "/x"]):
+            self.assertEqual(gate(argv), (0, ""), argv)
+        self.assertEqual(gate(["role", "card", "build"], None), (0, ""))
 
     def test_exactly_the_listed_verbs_are_allowed_and_every_other_is_refused_by_name(self):
         allowed = {(a, v) for a, words in COORD_ALLOWED.items() for v in (words.split() or [""])}

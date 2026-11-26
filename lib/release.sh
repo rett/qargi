@@ -98,7 +98,7 @@
 #                                           the hand pages). Only when site.enabled is true. The source is the tag's tree (git archive), the generator is
 #                                           lib/site.py; the work is done in a temporary worktree of the site branch, which moves by update-ref only after
 #                                           the commit, so no working tree is touched. The commit sets "release" in the site.json; the build checks the site and its output (_site/) is not committed, a Pages build of the branch needing _site/ empty.
-#                                           It never pushes: it prints the push command. Refused in a member run and when QARGI_NESTED is set.
+#                                           It never pushes: it prints the push command, and with an origin journals that push (verb release:site, from what origin has to the new commit) first. Refused in a member run and when QARGI_NESTED is set.
 #                                           `finish` ends with "next: qargi release site VERSION" (the methodology's after_release step) and `status`
 #                                           says whether the site of VERSION is built and pushed, both only when site.enabled is true.
 #
@@ -1640,7 +1640,27 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"
     audit_log "release:site" "$PROJ $VER $SITE_BR ${new:0:12}"
     cut_done site "" "$tc"
+    # The push of the site branch is the lead's, by hand (release site never pushes), but it moves a ref of origin that a run prepared earlier knew: the line of
+    # that push is journaled now, with the verb, from what origin has (asked live; the remote-tracking ref when origin does not answer) to the commit just made,
+    # so a run prepared before verifies once the lead pushes exactly that commit. A different commit pushed is not explained by it, and one never pushed does no harm.
+    remote_tip "$SITE_BR"
+    case $RSTATE in
+      found) srb0=$RTIP;;
+      absent) srb0='';;
+      none) srb0=-;;
+      *) srb0=$(remote_was "$SITE_BR");;
+    esac
+    jok=0; [ "$srb0" = - ] || { journal_push "refs/heads/$SITE_BR" "$srb0" "$new" "release:site" && jok=1; }
     echo "built the site of $VER on $SITE_BR at ${new:0:7}; nothing was pushed"
+    if [ "$srb0" != - ] && [ "$jok" = 1 ]; then
+      if [ "$RSTATE" = unchecked ]; then   # the line starts at the remote-tracking ref, which may be older than origin's branch: it explains a push from there only
+        echo "journaled the push of $SITE_BR to origin (${srb0:+${srb0:0:7} to }${new:0:7}) ahead of it, from the remote-tracking ref: origin was not asked ($RWHY), so a run prepared before it verifies after the push only when origin still had that value"
+      else
+        echo "journaled the push of $SITE_BR to origin (${srb0:+${srb0:0:7} to }${new:0:7}) ahead of it: push exactly that commit, and a run prepared before it still verifies"
+      fi
+    elif [ "$srb0" != - ]; then
+      echo "the push of $SITE_BR to origin could not be journaled (see above): a run prepared before it may refuse once it is pushed; qargi ref note origin/$SITE_BR explains it afterwards"
+    fi
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi

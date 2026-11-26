@@ -465,13 +465,14 @@ class Review(HookCase):
                       "git init %s/y --temp %s/t" % (c, tmp), "git -C %s init ../clone/y --temp t" % tmp, "git -C %s init ../clone/y --initial main" % tmp,
                       "git init %s/y --newopt v" % c, "git init %s/y --newopt %s/t" % (c, tmp), "git -C %s init ../clone/y --newopt t" % tmp, "git init %s/y -Z t" % c,    # no abbreviation of an option the guard knows
                       "git init %s/y --ref-fmt files" % c,
-                      "git -C %s --bare init %s/y" % (c, tmp), "git -C %s --bare init %s/y" % (os.path.join(c, "src"), tmp), "git -C %s --bare init y" % c,
-                      "git -C %s --bare -C %s init y" % (c, tmp), "git -C %s -C ../clone --bare init y" % tmp, "git --bare -C %s init y" % c,
-                      "git --bare init %s/y --initial main" % c]
-        in_clone = ["git --bare init %s/y" % tmp, "git --bare -C %s init y" % tmp, "git --bare init y", "git --bare init %s/y --temp t" % tmp]    # --bare is read where the shell is, before the -C
+                      "git -C %s --bare init" % c, "git -C %s --bare init" % os.path.join(c, "src"), "git -C %s --bare init y" % c,
+                      "git -C %s -C ../clone --bare init y" % tmp, "git --bare -C %s init y" % c, "git --bare init %s/y --initial main" % c,
+                      "git -C %s --bare -C ../clone init" % tmp]
+        in_clone = ["git --bare init", "git --bare init y", "git --bare -C %s init" % tmp, "git --bare init -q"]    # --bare is read where the shell is, before the -C: with no DIR the repository is made there; with a DIR it is made in DIR only
         passes = ["git init %s/y --initial main" % tmp, "git init y --templ t", "git init %s/y --templ /usr/share/git-core/templates" % tmp, "git init y --newopt v",
                   "git init %s/y --newopt %s/t" % (tmp, tmp), "git init %s/y --object sha256 --ref files" % tmp, "git -C %s init y --temp t" % tmp,
-                  "git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git --bare -C %s init y" % tmp, "git --bare init y", "git init --bare %s/y" % tmp]
+                  "git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git --bare -C %s init y" % tmp, "git --bare init y", "git init --bare %s/y" % tmp,
+                  "git -C %s --bare init %s/y" % (c, tmp), "git -C %s --bare -C %s init z" % (c, tmp), "git --bare init %s/y --temp t" % tmp]    # a DIR: only DIR is written, whatever --bare is read in
         for cls in ((), ("--class", "read-only")):
             for cwd in (c, tmp, o):
                 for cmd in everywhere + (in_clone if cwd == c else []):
@@ -482,7 +483,7 @@ class Review(HookCase):
                 for cmd in in_clone + passes:
                     r = self.call("Bash", {"command": cmd}, cwd, *cls)
                     self.assertEqual(r.returncode, 0, (cmd, cwd, cls, r.stderr))
-            for cmd in ("git -C %s init y --temp t" % tmp, "git -C %s --bare init y" % tmp, "git -C %s --bare init %s/y --initial main" % (tmp, tmp)):    # the -C options put git in TMP, from the clone too
+            for cmd in ("git -C %s init y --temp t" % tmp, "git -C %s --bare init y" % tmp, "git -C %s --bare init %s/y --initial main" % (tmp, tmp), "git -C %s --bare init" % tmp):    # the -C options put git in TMP, from the clone too
                 r = self.call("Bash", {"command": cmd}, c, *cls)
                 self.assertEqual(r.returncode, 0, (cmd, c, cls, r.stderr))
 
@@ -506,6 +507,135 @@ class Review(HookCase):
                                       ("git clone --no-newopt %s %s/x" % (c, tmp), 0, 0), ("git clone --no-checkout --depth 1 %s %s/x" % (c, tmp), 0, 0)):
             self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, in_clone, cmd)
             self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, in_tmp, cmd)
+
+    def test_every_git_write_that_names_another_repository_by_git_dir_is_judged_at_that_repository(self):
+        """--git-dir DIR and GIT_DIR=DIR name the repository a git write changes, whatever the shell's directory is: each subcommand that writes (and the ones that write by
+        their arguments: hash-object -w, bisect, symbolic-ref) is refused when DIR is outside OUT and TMP, from a shell in TMP, and a read of that repository stays allowed."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        g = os.path.join(c, ".git")
+        writes = ["add .", "commit -m x", "fetch", "gc", "update-ref refs/heads/x HEAD", "config user.name x", "tag v1", "branch x", "hash-object -w f", "bisect reset",
+                  "symbolic-ref HEAD refs/heads/x", "reset --hard", "checkout -b x", "notes add -m x", "repack", "prune", "rerere", "update-server-info", "index-pack p.pack"]
+        for cwd in (tmp, c):
+            for w in writes:
+                for cmd in ("git --git-dir=%s %s" % (g, w), "git --git-dir %s %s" % (g, w), "git -C %s --git-dir=../clone/.git %s" % (tmp, w), "git --git-dir=../clone/.git -C %s %s" % (tmp, w)):
+                    r = self.call("Bash", {"command": cmd}, cwd)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, r.stderr))
+                    self.assertIn("only OUT and the temporary directory (TMP) are written", r.stderr, (cmd, cwd))
+        passes = ["git --git-dir=%s status" % g, "git --git-dir=%s log -1" % g, "git --git-dir %s show HEAD" % g, "git --git-dir=%s tag -l" % g, "git --git-dir=%s hash-object f" % g,
+                  "git --git-dir=%s/y/.git add ." % tmp, "git --git-dir=y/.git commit -m x", "git --git-dir=%s/y/.git hash-object -w f" % tmp]
+        for cmd in passes:
+            r = self.call("Bash", {"command": cmd}, tmp)
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+
+    def test_a_git_dir_names_a_protected_root_for_the_write_class_as_well(self):
+        """The same holds for the write class, which may change its clone but not a protected location: --git-dir at a skill directory refuses every git write."""
+        self.ability("build")
+        s = os.path.join(self.t, "home", ".claude", "skills", "x")
+        os.makedirs(s, exist_ok=True)
+        for cmd in ("git --git-dir=%s/.git add ." % s, "git --git-dir=%s/.git commit -m x" % s, "git --git-dir %s/.git update-ref refs/heads/x HEAD" % s,
+                    "GIT_DIR=%s/.git git commit -m x" % s, "git --git-dir=%s/.git hash-object -w f" % s):
+            self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 2, cmd)
+        for cmd in ("git --git-dir=%s/.git add ." % self.clone, "git --git-dir=%s/.git status" % s):
+            self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 0, cmd)
+
+    def test_git_send_email_and_imap_send_are_refused_as_a_push_is(self):
+        """git send-email mails patches to an address and git imap-send puts them in a mailbox: they reach out as a push does, whatever the options before them."""
+        for cls in ("review", "build"):
+            self.ability(cls)
+            for cmd in ("git send-email x.patch", "git send-email --to a@b.example 0001.patch", "git -C %s send-email x" % self.out, "git --git-dir=%s/.git send-email x" % self.clone,
+                        "git --no-pager send-email x", "git-send-email x", "/usr/lib/git-core/git-send-email x", "git imap-send", "git-imap-send", "env GIT_PAGER=cat git send-email x"):
+                r = self.call("Bash", {"command": cmd})
+                self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+                self.assertIn("is not available to an agent", r.stderr, cmd)
+            for cmd in ("git log --grep send-email", "git help send-email", "git show send-email", "git grep send-email"):
+                self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 0, cmd)
+
+    def test_a_bare_init_with_an_option_the_guard_does_not_know_may_write_where_bare_was_read(self):
+        """An init option the guard does not know may take the next word, so the word the guard reads as DIR may be that option's value and git then writes the repository where
+        --bare was read: judged there, from the clone, though the word is a place of TMP. A known flag (--shared=group) leaves DIR sure and only DIR is written."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git --bare -C %s init --newopt t" % tmp, "git --bare -C %s init -Z t" % tmp, "git --bare init --newopt %s/y" % tmp):
+            for cls in ((), ("--class", "read-only")):
+                self.assertEqual(self.call("Bash", {"command": cmd}, c, *cls).returncode, 2, (cmd, cls))
+        for cmd in ("git --bare -C %s init --shared=group t" % tmp, "git --bare -C %s init --shared t" % tmp, "git --bare init %s/y" % tmp, "git --bare -C %s init -q t" % tmp):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 0, cmd)
+
+    def test_the_variables_that_place_a_git_write_are_refused_when_exported_and_judged_in_front_of_a_command(self):
+        """GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and GIT_COMMON_DIR say which repository, tree, index or object store a git command changes. In front of one
+        command they are judged as places (GIT_DIR and GIT_WORK_TREE were; the other three are now); exported (export, declare -x, readonly, typeset, local) they would place every
+        later command, which the guard reads one at a time, so the export is refused. core.worktree names a tree as --work-tree does and is refused as a key that places git."""
+        self.ability("build")
+        s = os.path.join(self.t, "home", ".claude", "skills", "x")
+        os.makedirs(s, exist_ok=True)
+        for cmd in ("export GIT_DIR=%s/.git GIT_WORK_TREE=%s; git checkout -- ." % (s, s), "export GIT_WORK_TREE=%s; git checkout -- ." % s, "X=%s; export GIT_DIR=$X; git commit -m x" % s,
+                    "declare -x GIT_DIR=%s/.git" % s, "readonly GIT_DIR=%s/.git" % s, "typeset -x GIT_WORK_TREE=%s" % s, "GIT_DIR=%s/.git; export GIT_DIR" % s,
+                    "export GIT_INDEX_FILE=%s/i" % s, "export GIT_OBJECT_DIRECTORY=%s/o" % s, "export GIT_COMMON_DIR=%s/c" % s, "bash -c 'export GIT_DIR=%s/.git; git add .'" % s,
+                    "GIT_INDEX_FILE=%s/.git/index git add ." % s, "GIT_OBJECT_DIRECTORY=%s/.git/objects git add ." % s, "GIT_COMMON_DIR=%s/.git git add ." % s,
+                    "env GIT_INDEX_FILE=%s/.git/index git add ." % s, "git -c core.worktree=%s checkout -- ." % s, "git config core.worktree %s" % s,
+                    "git --git-dir=%s/.git -c core.worktree=%s reset --hard" % (self.clone, s)):
+            r = self.call("Bash", {"command": cmd})
+            self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+        for cmd in ("export FOO=1", "export GIT_AUTHOR_NAME=x", "GIT_INDEX_FILE=%s/idx git add ." % self.out, "GIT_OBJECT_DIRECTORY=%s/o git hash-object -w f" % self.out,
+                    "git status", "git config user.name x", "git -c core.bare=false status"):
+            r = self.call("Bash", {"command": cmd})
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+        self.ability("review")
+        tmp = os.path.join(self.run, "tmp")
+        os.makedirs(os.path.join(tmp, "y"))
+        for cmd in ("git --git-dir=%s/y/.git -c core.worktree=%s reset --hard" % (tmp, self.clone), "git -C %s/y config core.worktree %s" % (tmp, self.clone)):
+            r = self.call("Bash", {"command": cmd}, tmp)
+            self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+        r = self.call("Bash", {"command": "export GIT_WORK_TREE=%s" % tmp}, tmp)
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_a_read_of_a_cache_or_a_graph_is_no_git_write_and_the_publishing_commands_of_other_systems_are_refused(self):
+        """rerere (status, diff, remaining), commit-graph and multi-pack-index (verify) and pack-objects --stdout only read, and stay allowed under the read-only class; with no
+        such word, or any other, they write. git p4 submit, git cvsexportcommit, git daemon and git instaweb publish as a push does."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git -C %s rerere status" % c, "git -C %s rerere diff" % c, "git -C %s rerere remaining" % c, "git -C %s commit-graph verify" % c, "git -C %s multi-pack-index verify" % c,
+                    "git -C %s pack-objects --stdout --revs < /dev/null" % c, "git --git-dir=%s/.git rerere status" % c):
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 0, cmd)
+        for cmd in ("git -C %s rerere" % c, "git -C %s rerere clear" % c, "git -C %s rerere gc" % c, "git -C %s commit-graph write" % c, "git -C %s multi-pack-index write" % c,
+                    "git -C %s pack-objects base" % c, "git -C %s pack-objects --revs base" % c, "git --git-dir=%s/.git commit-graph write" % c):
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 2, cmd)
+        for cls in ("review", "build"):
+            self.ability(cls)
+            for cmd in ("git p4 submit", "git -C %s p4 submit --origin HEAD" % c, "git-p4 submit", "git cvsexportcommit -c HEAD", "git daemon --enable=receive-pack", "git instaweb",
+                        "git-daemon", "git-instaweb", "git-cvsexportcommit HEAD", "git --no-pager daemon"):
+                r = self.call("Bash", {"command": cmd})
+                self.assertEqual(r.returncode, 2, (cmd, r.stderr))
+                self.assertIn("is not available to an agent", r.stderr, cmd)
+            for cmd in ("git p4 sync", "git help daemon", "git log --grep daemon", "git log --grep 'p4 submit'", "git show instaweb"):
+                self.assertEqual(self.call("Bash", {"command": cmd}).returncode, 0, cmd)
+
+    def test_the_clone_options_checkout_and_hardlinks_take_no_value(self):
+        """--checkout and --hardlinks are the opposites of --no-checkout and --no-hardlinks: flags that take no value, so the operands are the ones read, and a clone from
+        the clone to TMP is no change of the clone, and one into the clone is."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git clone --checkout %s %s/x" % (c, tmp), "git clone --hardlinks %s %s/x" % (c, tmp), "git clone --hardlinks --checkout %s %s/x" % (c, tmp)):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 0, cmd)
+        for cmd in ("git clone --checkout %s %s/x" % (tmp, c), "git clone --hardlinks %s %s/x" % (tmp, c)):
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 2, cmd)
+
+    def test_a_top_level_bare_changes_the_directory_it_is_read_in_only_when_init_has_no_dir(self):
+        """git --bare init with no DIR writes the repository where --bare is read; with a DIR it writes DIR only (git sets GIT_DIR there, and init with a DIR goes to DIR)."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd in ("git --bare init", "git -C %s --bare init" % c, "git --bare init -q", "git --bare -C %s init" % tmp):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 2, cmd)
+        for cmd in ("git --bare init %s/y" % tmp, "git -C %s --bare init %s/y" % (c, tmp), "git --bare -C %s init y" % tmp, "git -C %s --bare -C %s init y" % (c, tmp)):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 0, cmd)
+        for cmd in ("git --bare init %s/y" % c, "git -C %s --bare init y" % c, "git --bare init y"):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 2, cmd)
 
     def test_build_may_change_the_clone(self):
         self.ability("build")
@@ -667,6 +797,7 @@ class RefusalCodes(HookCase):
             ("member-push", "Bash", {"command": "cd src && gh pr list"}, c, "gh is not available to an agent"),
             ("member-push", "Monitor", {"command": "git push"}, c, "Agents never push"),
             ("member-lead-verb", "Bash", {"command": "qargi local clean x --discard"}, c, "qargi local clean is the lead's"),
+            ("member-lead-verb", "Bash", {"command": "qargi local clean --applied --legacy --scratch /tmp/s --plan abc123abc123 --approved go"}, c, "qargi local clean is the lead's"),
             ("member-lead-verb", "Bash", {"command": "qargi marshal key"}, c, "manages the marshal's signing key"),
             ("member-lead-verb", "Bash", {"command": "qargi skill new x"}, c, "changes a skill and is not available to an agent"),
             ("member-lead-verb", "Bash", {"command": "bash -c 'qargi project set p gates x'"}, c, "changes a command or an environment the lead later runs"),
@@ -1358,7 +1489,7 @@ class Skills(HookCase):
     def test_json_changes_nothing_about_what_the_guard_refuses(self):
         """--json (the plan as one JSON object, lib/jsonplan.py) is no way past the guard: a gated verb is refused with it, in every place the flag
         can stand, as it is without; a read-only verb stays open; and the wrapper script is not a way in by itself."""
-        gated = ("packs seed", "skill import x", "feature finish f", "release publish 0.2.3", "upgrade", "marshal enable", "project new p", "branch prune")
+        gated = ("packs seed", "skill import x", "feature finish f", "release publish 0.2.3", "upgrade", "marshal enable", "project new p", "project remove p", "branch prune")
         for v in gated:
             words = v.split()
             for spelling in (words + ["--json"], [words[0], "--json"] + words[1:], words + ["--json", "--plan", "0123456789ab", "--approved", "go"],
@@ -1646,18 +1777,21 @@ class Skills(HookCase):
         ls, run, c = self.lskill, self.run_dir, self.clone
         refused = ["git init %s/x --temp %s/t" % (ls, tmp), "git init %s/x --initial main" % ls, "git init %s/x --object sha256" % ls, "git init %s/x --ref files" % ls,
                    "git init %s --temp %s/t" % (run, tmp), "git init %s --initial main" % run, "git -C %s init ../home/.claude/skills/x --temp t" % tmp,
-                   "git -C %s --bare init %s/y" % (ls, tmp), "git -C %s --bare init %s/y" % (run, tmp), "git -C %s --bare init y" % ls, "git -C %s --bare -C %s init y" % (run, tmp)]
+                   "git -C %s --bare init" % ls, "git -C %s --bare init" % run, "git -C %s --bare init y" % ls, "git -C %s --bare -C %s init" % (run, tmp)]
         for cwd in (c, tmp, self.run_dir):
             for cmd in refused:
                 r = self.bash(cmd, cwd=cwd)
                 self.assertEqual(r.returncode, 2, (cmd, cwd, r.stderr))
-        for cmd in ("git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git init %s/y --temp t" % tmp):         # --bare is read where the shell is
+        for cmd in ("git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git init %s/y --temp t" % tmp, "git --bare init"):         # --bare is read where the shell is
             self.assertEqual(self.bash(cmd, cwd=tmp).returncode, 0, cmd)
         for cmd in ("git --bare init y", "git init y --temp t", "git init %s/y --initial main" % c):                          # the clone is the write class's to change
             self.assertEqual(self.bash(cmd, cwd=c).returncode, 0, cmd)
-        for cmd in ("git --bare init %s/y" % tmp, "git --bare -C %s init y" % tmp):                                           # --bare in the run directory or in a skill directory
+        for cmd in ("git --bare init", "git --bare -C %s init" % tmp, "git --bare init -q"):                                  # --bare with no DIR in the run directory or in a skill directory
             for cwd in (ls, run):
                 self.assertEqual(self.bash(cmd, cwd=cwd).returncode, 2, (cmd, cwd))
+        for cmd in ("git --bare init %s/y" % tmp, "git --bare -C %s init y" % tmp):                                           # with a DIR only DIR is written
+            for cwd in (ls, run):
+                self.assertEqual(self.bash(cmd, cwd=cwd).returncode, 0, (cmd, cwd))
 
     def test_a_symbolic_link_does_not_hide_the_target(self):
         os.symlink(self.lskill, os.path.join(self.clone, "sk"))
@@ -6258,10 +6392,10 @@ class FifthReview(HookCase):
 
     # --- G12: the lead's runs and agents
     def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
-        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "project remove p", "team run t", "task x", "local run RUN"]
         bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
                                                     "timeout 5 qargi %s")]
-        bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]
+        bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN", "./lib/project.sh remove p", "bash lib/project.sh remove p --plan 0123456789ab --approved go"]
         self.assertEqual(self.not_refused(bad), [])
         r = self.call("Bash", {"command": "qargi local clean RUN --discard"})
         self.assertIn("is the lead's", r.stderr)

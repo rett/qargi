@@ -2,6 +2,8 @@
 """Is the work of a run merged? The one test local list, local clean and lead compact-check / feature finish share.
 
   merged.py REPO TIP --state DIR [--branch NAME] [--answers JSON]     exit 0 merged, 1 not merged, 2 no tip that is a full hex object name
+  merged.py --batch --state DIR     standard input: four NUL-ended words for each run (repo, tip, branch, answers JSON; the last two may be empty); standard output: the exit
+                                    status of each on a line. The same answers for many runs in one process (qargi local list asks once for all of its rows)
 
 TIP is the commit a run's applied file records (qargi review apply: the second word), which a member can write; NAME is the first word of that file, the
 branch review apply made. When the lead's ref journal ($STATE/ref-journal.jsonl) has a review:apply line for that branch in this repository, its tip is
@@ -52,11 +54,11 @@ def journal_records(state):
               file=sys.stderr)
 
 
-def rewrites(state, repo):
-    """{old: new} of the rewrites the lead recorded for this repository (the last line wins)."""
+def rewrites(state, repo, recs=None):
+    """{old: new} of the rewrites the lead recorded for this repository (the last line wins). RECS: the records of the journal, when the caller read it already."""
     out = {}
     rp = os.path.realpath(repo)
-    for r in journal_records(state):
+    for r in (journal_records(state) if recs is None else recs):
         if (isinstance(r, dict) and r.get("verb") == "ref:rewrite" and r.get("repo") == rp
                 and valid_tip(r.get("old")) and valid_tip(r.get("new"))):
             out[r["old"]] = r["new"]
@@ -87,13 +89,13 @@ def excluder(answers):
     return skip
 
 
-def journal_tip(state, repo, branch):
-    """The tip the lead's ref journal records for the last review:apply of BRANCH in this repository, or ''."""
+def journal_tip(state, repo, branch, recs=None):
+    """The tip the lead's ref journal records for the last review:apply of BRANCH in this repository, or ''. RECS: the records of the journal, when the caller read it already."""
     best = ""
     if not branch:
         return best
     rp = os.path.realpath(repo)
-    for r in journal_records(state):
+    for r in (journal_records(state) if recs is None else recs):
         if (isinstance(r, dict) and r.get("verb") == "review:apply" and r.get("repo") == rp and r.get("ref") == "refs/heads/" + branch
                 and "remote" not in r and valid_tip(r.get("new"))):
             best = r["new"]
@@ -112,14 +114,15 @@ def on_branch(repo, tip, skip=None):
     return r.returncode == 0 and any(x and not skip(x) for x in r.stdout.split())
 
 
-def merged_tip(repo, tip, state, branch=None, answers=None):
-    """0 merged, 1 not merged, 2 there is no tip that is a full hex object name. The journaled tip of BRANCH's review:apply, when there is one, replaces TIP."""
-    jt = journal_tip(state, repo, branch) if state else ""
+def merged_tip(repo, tip, state, branch=None, answers=None, recs=None, skip=None):
+    """0 merged, 1 not merged, 2 there is no tip that is a full hex object name. The journaled tip of BRANCH's review:apply, when there is one, replaces TIP.
+    RECS (the journal's records) and SKIP (the excluder of the answers) are what merged_batch has read once for many calls; a single call leaves them out."""
+    jt = journal_tip(state, repo, branch, recs) if state else ""
     tip = jt or tip
     if not valid_tip(tip):
         return 2
-    rw, n = rewrites(state, repo) if state else {}, 0
-    skip = excluder(answers)
+    rw, n = rewrites(state, repo, recs) if state else {}, 0
+    skip = skip or excluder(answers)
     while True:
         if on_branch(repo, tip, skip):
             return 0
@@ -128,13 +131,48 @@ def merged_tip(repo, tip, state, branch=None, answers=None):
         tip, n = rw[tip], n + 1
 
 
+def merged_batch(state, items):
+    """The exit statuses of merged_tip for many runs at once, in the order of ITEMS (each a dict with repo, tip, branch and answers; branch and answers may be null): the journal
+    is read once, and so is the excluder of each distinct set of answers, where a call of merged_tip each reads them again. The same answers, the same git questions, one process."""
+    recs = list(journal_records(state)) if state else []
+    skips, out = {}, []
+    for it in items:
+        ans = it.get("answers")
+        key = json.dumps(ans, sort_keys=True) if ans is not None else ""
+        if key not in skips:
+            skips[key] = excluder(ans)
+        out.append(merged_tip(it["repo"], it["tip"], state, it.get("branch"), ans, recs, skips[key]))
+    return out
+
+
 def merged(repo, tip, state, branch=None, answers=None):
     """True when merged_tip says so."""
     return bool(repo) and merged_tip(repo, tip, state, branch, answers) == 0
 
 
+def main_batch(state):
+    """merged.py --batch --state DIR: standard input holds four NUL-ended words for each run (repo, tip, branch, answers; the last two may be empty), standard output the exit
+    status of merged_tip for each, one to a line, in the same order. A word is whatever the caller read from a file a member can write, so no character but NUL is special."""
+    words = sys.stdin.buffer.read().split(b"\0")
+    if words and words[-1] == b"":
+        words.pop()
+    items = []
+    for i in range(0, len(words) - len(words) % 4, 4):
+        repo, tip, branch, ans = (w.decode("utf-8", "surrogateescape") for w in words[i:i + 4])
+        try:
+            answers = json.loads(ans) if ans else None
+        except (ValueError, RecursionError):
+            answers = None
+        items.append({"repo": repo, "tip": tip, "branch": branch or None, "answers": answers})
+    for rc in merged_batch(state, items):
+        print(rc)
+    return 0
+
+
 def main(argv):
-    usage = "usage: merged.py REPO TIP --state DIR [--branch NAME] [--answers JSON]"
+    usage = "usage: merged.py REPO TIP --state DIR [--branch NAME] [--answers JSON]\n       merged.py --batch --state DIR   (NUL-ended words on standard input)"
+    if len(argv) == 3 and argv[0] == "--batch" and argv[1] == "--state":
+        return main_batch(argv[2])
     if len(argv) < 4 or argv[2] != "--state":
         print(usage, file=sys.stderr)
         return 64

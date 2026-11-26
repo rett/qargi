@@ -55,7 +55,22 @@ mkproj() { # NAME PROVIDER-JSON [EXTRAS-JSON [PROFILES-JSON]]: stored answers wi
 EN() { "$DA" provider enable "$@"; }
 DIS() { "$DA" provider disable "$@"; }
 tokof_() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$1"; }
-opts_of() { jq -c '.models.run_options // "none"' "$T/c/projects/$1.json"; }
+opts_of() { jq -c '(.models.run_options // null) | if . == null then "none" else {local: .local} end' "$T/c/projects/$1.json"; }
+digs_of() { jq -c '.models.run_options.declared // "none"' "$T/c/projects/$1.json"; }
+ro_store() { python3 -I "$TOOL/lib/gated_answers.py" store "$1" "$2" "$3" --conf "$T/c" >/dev/null 2>&1; }
+ro_dig() { # PROJECT RUNTIME: record the digest of each enabled option's declaration as the definition declares it now, as the approval of an enable does
+  local d
+  d=$(python3 -I - "$TOOL/lib" "$T/c/projects/$1.json" "$2" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import provider as P
+declared = P.declared_options(P.composed(sys.argv[3], "local"))
+names = P.run_options_of(json.load(open(sys.argv[2]))).get(sys.argv[3], [])
+print(json.dumps({n: P.option_digest(declared[n]) for n in names if n in declared}))
+PY
+  ) && ro_store "$1" "models.run_options.declared.$2" "$d"
+}
+ro_set() { ro_store "$1" "models.run_options.local.$2" "$3" && ro_dig "$1" "$2"; }       # PROJECT RUNTIME LIST: as the enable verb stores them
 nlines() { local n; n=$(grep -c "provider:$1" "$T/s/audit.log" 2>/dev/null); echo "${n:-0}"; }
 refusal_code() { sed -n 's/^qargi-refusal\/1 .*"code":"\([a-z-]*\)".*/\1/p' <<<"$1"; }
 own='{"local":"fakeimg"}'
@@ -88,6 +103,13 @@ EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "hosted image g
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "unacknowledged-as-words: a word that only starts like the phrase's last one does not carry it" || no "as words: rc=$rc $(cat "$T/e")"
 EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "unhosted image generation runs outside the sandbox" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ]; } && ok "unacknowledged-as-words: a word that only ends like the phrase's first one does not carry it either" || no "as words, prefix: rc=$rc $(cat "$T/e")"
+# a hyphen is part of a word: the phrase inside a longer hyphenated word (xphrase, phrase-x, x-phrase) is not carried; the exact phrase in a sentence is
+for words in "xhosted image generation runs outside the sandbox" "hosted image generation runs outside the sandbox-x" "x-hosted image generation runs outside the sandbox" \
+             "hosted image generation runs outside the x-sandbox" "hosted image generation runs outside the sandbox_x" "hosted-image generation runs outside the sandbox"; do
+  EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "$words" >"$T/o" 2>"$T/e"; rc=$?
+  { [ "$rc" = 1 ] && grep -q '"code":"runtime-option-unacknowledged"' "$T/e" && [ "$(opts_of g1)" = '"none"' ] && [ "$(nlines enable-option)" = 0 ]; } \
+    && ok "unacknowledged-as-words: '$words' does not carry the phrase" || no "hyphen ($words): rc=$rc $(cat "$T/e")"
+done
 EN g1 --runtime fakeimg --option "$OPT" --plan "$tok" --approved "yes: Hosted  IMAGE
 generation runs outside the sandbox, and it may spend" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 0 ] && [ "$(opts_of g1)" = '{"local":{"fakeimg":["image_generation"]}}' ]; } \
@@ -160,7 +182,8 @@ jq '.models.run_options = {local: {fakeimg: ["image_generation"]}}' "$T/before.j
 "$DA" project init g3 --answers "$T/new.json" --force >"$T/o" 2>&1; rc=$?
 { [ "$rc" != 0 ] && cmp -s "$T/before.json" "$T/c/projects/g3.json"; } && ok "project init --answers does not add it either" || no "project init: rc=$rc $(cat "$T/o")"
 python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local '{}' --conf "$T/c" >/dev/null 2>&1 && no "gated_answers stored a path it was not given" \
-  || ok "gated_answers stores models.run_options.local.RUNTIME and no other path of it"
+  || ok "gated_answers stores models.run_options.local.RUNTIME, models.run_options.declared.RUNTIME and no other path of it"
+python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.declared '{}' --conf "$T/c" >/dev/null 2>&1 && no "gated_answers stored the whole declared object" || ok "(nor the whole declared object)"
 python3 -I "$TOOL/lib/gated_answers.py" store g3 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 && [ "$(opts_of g3)" = '{"local":{"fakeimg":["image_generation"]}}' ] \
   && ok "gated_answers stores it for the verb that passed the plan token" || no "gated_answers: $(opts_of g3)"
 out=$(cd "$T" && "$DA" project unset g3 models.run_options 2>&1); rc=$?      # not from inside a run directory: unset is the lead's verb, and a member run is refused before the gate is asked
@@ -169,12 +192,12 @@ out=$(cd "$T" && "$DA" project unset g3 models.run_options 2>&1); rc=$?      # n
 
 # an init file that drops an option of a runtime only narrows what is stored (it is accepted), and one that adds an option or a runtime is refused
 mkproj g4 "$own" '["fakeother"]'
-python3 -I "$TOOL/lib/gated_answers.py" store g4 models.run_options.local.fakeimg '["image_generation","second_opt"]' --conf "$T/c" >/dev/null 2>&1 \
-  && python3 -I "$TOOL/lib/gated_answers.py" store g4 models.run_options.local.fakeother '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not store the options of g4"
+ro_store g4 models.run_options.local.fakeimg '["image_generation","second_opt"]' && ro_store g4 models.run_options.local.fakeother '["image_generation"]' \
+  && ro_dig g4 fakeimg && ro_dig g4 fakeother || no "could not store the options of g4"
 cp "$T/c/projects/g4.json" "$T/before4.json"
 jq '.models.run_options.local.fakeimg = ["image_generation"]' "$T/before4.json" > "$T/new4.json"
 "$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
-{ [ "$rc" = 0 ] && [ "$(jq -c .models.run_options "$T/c/projects/g4.json")" = '{"local":{"fakeimg":["image_generation"],"fakeother":["image_generation"]}}' ]; } \
+{ [ "$rc" = 0 ] && [ "$(opts_of g4)" = '{"local":{"fakeimg":["image_generation"],"fakeother":["image_generation"]}}' ]; } \
   && ok "project init --answers that drops one option of a runtime is accepted: it only narrows" || no "init drop an option: rc=$rc $(cat "$T/o")"
 cp "$T/before4.json" "$T/c/projects/g4.json"
 jq '.models.run_options.local.fakeimg = ["second_opt", "image_generation"]' "$T/before4.json" > "$T/new4.json"
@@ -186,6 +209,10 @@ jq '.models.run_options.local.fakeimg += ["third_opt"]' "$T/before4.json" > "$T/
 "$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
 { [ "$rc" != 0 ] && grep -q 'models.run_options' "$T/o" && grep -q 'qargi provider enable PROJECT --runtime NAME --option OPT' "$T/o" && cmp -s "$T/before4.json" "$T/c/projects/g4.json"; } \
   && ok "project init --answers that adds an option is refused, and the message names provider enable PROJECT --runtime NAME --option OPT" || no "init add an option: rc=$rc $(cat "$T/o")"
+jq '.models.run_options.declared.fakeimg.third_opt = ("a" * 64)' "$T/before4.json" > "$T/new4.json"
+"$DA" project init g4 --answers "$T/new4.json" --force >"$T/o" 2>&1; rc=$?
+{ [ "$rc" != 0 ] && grep -q 'models.run_options' "$T/o" && cmp -s "$T/before4.json" "$T/c/projects/g4.json"; } \
+  && ok "nor does a file that adds the digest of an approval: an approval is made by the verb" || no "init add a digest: rc=$rc $(cat "$T/o")"
 
 # --- project validate: the shape of the answer, and what a profile may select
 mkproj v1 "$own" null '{"p":{"base":"worker","options":["image_generation"]}}'
@@ -211,12 +238,21 @@ out=$("$DA" project validate v4 2>&1); rc=$?
 mkproj v5 "$own"
 jq '.models.run_options = {local: {fakeimg: ["image_generation", "nosuchopt"]}}' "$T/c/projects/v5.json" > "$T/v5.json" && mv "$T/v5.json" "$T/c/projects/v5.json"
 out=$("$DA" project validate v5 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^finding: models.run_options.local.fakeimg 'nosuchopt' is not an option the definition of fakeimg declares" <<<"$out" && ! grep -q "'image_generation'" <<<"$out"; } \
-  && ok "validate: an option the definition no longer declares is a finding, a declared one none" || no "validate finding: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q "^finding: models.run_options.local.fakeimg 'nosuchopt' is not an option the definition of fakeimg declares" <<<"$out" \
+  && grep -q "^finding: models.run_options.local.fakeimg 'image_generation': the option image_generation of the runtime fakeimg has no recorded approval of its declaration" <<<"$out"; } \
+  && ok "validate: an option the definition no longer declares is a finding, and so is an enabled one with no recorded approval of its declaration" || no "validate finding: rc=$rc $out"
+ro_dig v5 fakeimg
+out=$("$DA" project validate v5 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q "'nosuchopt' is not an option" <<<"$out" && ! grep -q "'image_generation'" <<<"$out"; } \
+  && ok "validate: with the digest of the approved declaration recorded, the declared option is no finding" || no "validate finding with digest: rc=$rc $out"
+jq '.models.run_options.declared = {fakeimg: {image_generation: "nothex"}}' "$T/c/projects/v5.json" > "$T/v5.json" && mv "$T/v5.json" "$T/c/projects/v5.json"
+out=$("$DA" project validate v5 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'models.run_options.declared: an object like {RUNTIME: {OPTION: sha256 of the declaration the owner approved}}' <<<"$out"; } \
+  && ok "validate: models.run_options.declared is an object of runtimes with the sha256 of each option" || no "validate declared shape: rc=$rc $out"
 
 # --- prepare, dry run and run: a profile that selects the option gets it, nothing else does
 mkproj r1 "$own" null "$PROFILES"
-python3 -I "$TOOL/lib/gated_answers.py" store r1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not enable the option of r1"
+ro_set r1 fakeimg '["image_generation"]' || no "could not enable the option of r1"
 prep() { # PROJECT ARGS...: local prepare in the project's repository: PREP (standard error too), PREP_RC, RUN
   local p=$1; shift
   PREP=$("$DA" local prepare --repo "$T/repo-$p" --base main --scratch "$T/scr" "$@" 2>&1); PREP_RC=$?
@@ -277,7 +313,7 @@ prep c2 --slug c3 --profile imgs
 { [ "$PREP_RC" = 2 ] && grep -q 'the profile imgs selects the option image_generation, which project c2 has not enabled for the runtime fakeimg' <<<"$PREP" && [ "$(made)" = "$before" ]; } \
   && ok "prepare: a profile that selects an option the project did not enable is refused (exit 2), and nothing is made" || no "not enabled: rc=$PREP_RC $PREP"
 mkproj c3 '{"local":"fakeplain"}' null "$PROFILES"
-python3 -I "$TOOL/lib/gated_answers.py" store c3 models.run_options.local.fakeplain '["image_generation"]' --conf "$T/c" >/dev/null 2>&1 || no "could not store the option of c3"
+ro_store c3 models.run_options.local.fakeplain '["image_generation"]' || no "could not store the option of c3"
 prep c3 --slug c4 --profile imgs
 { [ "$PREP_RC" = 2 ] && grep -q 'the definition of the runtime fakeplain declares no option image_generation' <<<"$PREP"; } \
   && ok "prepare: an option the definition does not declare does not exist" || no "undeclared at prepare: rc=$PREP_RC $PREP"
@@ -290,7 +326,7 @@ drift() { # LABEL: the run in RUN was prepared; it must be refused with a re-pre
 }
 mkproj d1 "$own" null "$PROFILES"
 prep d1 --slug d1a --profile plain
-python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+ro_set d1 fakeimg '["image_generation"]'
 drift "the project enabling an option after prepare (the list changed)"
 prep d1 --slug d1b --profile imgs
 { [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } || no "d1b: rc=$PREP_RC $PREP"
@@ -308,12 +344,69 @@ jq '.profiles.plain.options = ["image_generation"]' "$T/c/projects/d1.json" > "$
 drift "the profile gaining the key after prepare (the selection changed)"
 jq '.profiles.plain |= del(.options)' "$T/c/projects/d1.json" > "$T/d1.json" && mv "$T/d1.json" "$T/c/projects/d1.json"
 prep d1 --slug d1d --profile imgs
-python3 -I "$TOOL/lib/gated_answers.py" store d1 models.run_options.local.fakeimg '["image_generation"]' --conf "$T/c" >/dev/null 2>&1
+ro_set d1 fakeimg '["image_generation"]'
 jq '.dispatch.run_config.options.image_generation.phrase = "hosted image generation is edited"' "$TOOL/lib/providers/fakeimg.json" > "$T/fakeimg.json" \
   && mv "$T/fakeimg.json" "$TOOL/lib/providers/fakeimg.json"
 python3 -I "$TOOL/lib/provider.py" check fakeimg >/dev/null 2>&1 || no "the edited definition is no longer valid"
 drift "the definition's option edited after prepare: its phrase, which is part of the hashed definition"
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 're-prepare' <<<"$out"; } && ok "drift: a dry run refuses as well" || no "drift dry: rc=$rc $out"
+
+# --- the approval binds the declaration of the option: a definition that changes it after the owner approved it is refused when a run is prepared
+mkfake fakebind
+mkproj b1 '{"local":"fakebind"}' null "$PROFILES"
+out=$(EN b1 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+grep -q '^the approval binds this declaration (digest [0-9a-f]\{16\}, kept at models.run_options.declared.fakebind.image_generation)' <<<"$out" && ok "plan: it says that the approval binds the declaration, with its digest" || no "binding plan line: $out"
+EN b1 --runtime fakebind --option "$OPT" --plan "$tok" --approved "$PHRASE" >/dev/null 2>&1
+WANTD=$(python3 -I - "$TOOL/lib" fakebind <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import provider as P
+print(P.option_digest(P.declared_options(P.composed(sys.argv[2], "local"))["image_generation"]))
+PY
+)
+{ [ "$(jq -r '.models.run_options.declared.fakebind.image_generation' "$T/c/projects/b1.json")" = "$WANTD" ] && [ "${#WANTD}" = 64 ] && [ "$(jq -c '.models.run_options.local' "$T/c/projects/b1.json")" = '{"fakebind":["image_generation"]}' ]; } \
+  && ok "binding: the enable stores the digest of the declaration it showed, with the list" || no "binding stored: $(digs_of b1) $WANTD"
+"$DA" project validate b1 >/dev/null 2>&1 && ok "binding: the stored answers stay valid" || no "validate b1"
+prep b1 --slug b1a --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } && ok "binding: a run of a profile that selects the approved option is prepared" || no "b1a: rc=$PREP_RC $PREP"
+jq '.dispatch.run_config.options.image_generation.note = "the option now also does something else"' "$TOOL/lib/providers/fakebind.json" > "$T/fakebind.json" \
+  && mv "$T/fakebind.json" "$TOOL/lib/providers/fakebind.json"
+python3 -I "$TOOL/lib/provider.py" check fakebind >/dev/null 2>&1 || no "the edited fakebind is no longer valid"
+prep b1 --slug b1b --profile imgs
+{ [ "$PREP_RC" = 2 ] && grep -q 'the definition of the runtime fakebind changed the option image_generation since the owner approved it' <<<"$PREP" && grep -q 'approve it again' <<<"$PREP"; } \
+  && ok "binding: the option's text changed after the approval (the plan kept), so prepare is refused (exit 2), naming the way to approve it again" || no "binding drift: rc=$PREP_RC $PREP"
+out=$("$DA" project validate b1 2>&1)
+grep -q "^finding: models.run_options.local.fakebind 'image_generation': the definition of the runtime fakebind changed the option image_generation since the owner approved it" <<<"$out" \
+  && ok "binding: project validate says so as a finding" || no "binding finding: $out"
+prep b1 --slug b1c --profile plain
+{ [ "$PREP_RC" = 0 ] && ! grep -q RUN_OPTIONS <<<"$PREP"; } && ok "binding: a profile that selects no option is not held up by it" || no "b1c: rc=$PREP_RC $PREP"
+# a disable takes the digest with the option, and approving it again records the declaration as it now is
+"$DA" project set b1 profiles.imgs.options '[]' >/dev/null 2>&1
+out=$(DIS b1 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+DIS b1 --runtime fakebind --option "$OPT" --plan "$tok" --approved "stop it" >/dev/null 2>&1
+{ [ "$(digs_of b1)" = '{"fakebind":{}}' ] && [ "$(opts_of b1)" = '{"local":{"fakebind":[]}}' ]; } && ok "binding: a disable takes the digest with the option" || no "binding disable: $(digs_of b1) $(opts_of b1)"
+out=$(EN b1 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+grep -q 'digest' <<<"$out" && ! grep -q "digest ${WANTD:0:16}" <<<"$out" && ok "binding: the plan of the changed definition shows another digest" || no "binding new digest: $out"
+EN b1 --runtime fakebind --option "$OPT" --plan "$tok" --approved "$PHRASE" >/dev/null 2>&1
+"$DA" project set b1 profiles.imgs.options '["image_generation"]' >/dev/null 2>&1
+prep b1 --slug b1d --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } && ok "binding: approved again as it now is, a run is prepared" || no "b1d: rc=$PREP_RC $PREP"
+mkproj b2 '{"local":"fakebind"}' null "$PROFILES"
+ro_store b2 models.run_options.local.fakebind '["image_generation"]'
+prep b2 --slug b2a --profile imgs
+{ [ "$PREP_RC" = 2 ] && grep -q 'has no recorded approval of its declaration' <<<"$PREP"; } \
+  && ok "binding: an option enabled with no recorded digest is refused at prepare (exit 2), as an approval that cannot be shown" || no "b2a: rc=$PREP_RC $PREP"
+{ grep -q 'take the option out of each profile that selects it' <<<"$PREP" && grep -q 'then select it in the profile again' <<<"$PREP"; } \
+  && ok "binding: the refusal names the whole way (the profile first: a disable is refused while a profile selects the option)" || no "b2a remedy: $PREP"
+# and the way it names works as written: the profile lets go, disable, enable, the profile selects it again
+"$DA" project set b2 profiles.imgs.options '[]' >/dev/null 2>&1
+out=$(DIS b2 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+DIS b2 --runtime fakebind --option "$OPT" --plan "$tok" --approved "stop it" >/dev/null 2>&1
+out=$(EN b2 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+EN b2 --runtime fakebind --option "$OPT" --plan "$tok" --approved "$PHRASE" >/dev/null 2>&1
+"$DA" project set b2 profiles.imgs.options '["image_generation"]' >/dev/null 2>&1
+prep b2 --slug b2b --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } && ok "binding: the four steps the refusal names approve it again, and a run is prepared" || no "b2b: rc=$PREP_RC $PREP"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }

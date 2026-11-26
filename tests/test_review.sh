@@ -123,6 +123,10 @@ out=$($DA review check "$T/nogroups" 2>&1); [ $? = 0 ] && echo "$out" | grep -q 
 # the patches are OUT/patches/*.patch, the one place apply reads: loose patches in OUT are not a series; an unknown option is an error, not ignored
 mkdir -p "$T/flat"; cp "$T/good/patches/"*.patch "$T/flat/"; cp "$T/good/manifest.json" "$T/flat/"
 out=$($DA review check "$T/flat" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "no patches found" && ok "patches loose in OUT (not in OUT/patches) are not accepted" || no "flat patches: $out"
+# an OUT with no report yet (a read-only member's DONE runs before its final message): still a failure, and the failure says it is not a failed review and what to run
+mkdir -p "$T/noreport/out"
+out=$($DA review check "$T/noreport/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && echo "$out" | grep -q "^FAIL no patches found" && echo "$out" | grep -q "not a failed review" && echo "$out" | grep -qF "qargi local report $T/noreport --from NAME" && echo "$out" | grep -q "final message"; } && ok "no report yet: review check still fails, says it is not a failed review and names the one command" || no "no report: rc=$rc $out"
 out=$($DA review check "$T/good" --alow-empty 2>&1); rc=$?; [ $rc = 2 ] && echo "$out" | grep -q "unknown option --alow-empty" && ok "a misspelled option is an error" || no "unknown option: rc=$rc $out"
 out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two directories are an error" || no "two args: rc=$rc $out"
 # RUN_DIR instead of OUT: a directory with an out directory is read through its out

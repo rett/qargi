@@ -153,7 +153,6 @@ lib/conformance/hermetic.sh:for _t in ant claude
 lib/guard.py:is CLAUDE_HOOK, used
 lib/guard.py:^CLAUDE_HOOK = \{
 lib/guard.py:CLAUDE_RESOURCE_DIRS
-lib/guard.py:protected ~/\.claude/agents
 lib/guard.py:the home: for Claude Code ~/\.claude/skills
 lib/guard.py:installed ones: \.claude/skills and \.claude/agents
 lib/guard.py:the skills there are linked from ~/\.claude/skills
