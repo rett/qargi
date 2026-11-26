@@ -263,6 +263,18 @@ for exc in (subprocess.TimeoutExpired("x", 1), OSError("no interpreter")):
 PYEOF
 rm -rf "$T/shim" "$T/notrepo"; before=$(alpha_all)
 
+# a project on the shared refs backend: its leases are in refs of the remote, not in the records of this machine (state/features), so the switch file holds it
+mkdir -p "$T/s/marshal"; printf '{"backend":"refs","remote":"origin","words":"test"}\n' > "$T/s/marshal/alpha.enabled"; before=$(alpha_all)
+unread "a project on the shared refs backend (the switch file is there)" "$T/s/marshal/alpha.enabled" "shared refs backend" "qargi marshal disable --project alpha" "qargi marshal release FEATURE --project alpha"
+printf '{"backend":"refs"' > "$T/s/marshal/alpha.enabled"; before=$(alpha_all)
+unread "a switch file that cannot be read holds it too" "$T/s/marshal/alpha.enabled" "qargi marshal disable --project alpha"
+printf '{"backend":"local"}\n' > "$T/s/marshal/alpha.enabled"; printf 'principal ssh-ed25519 AAAA\n' > "$T/s/marshal/alpha.signers"
+run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && grep -qF "stays: $T/s/marshal/alpha.enabled" "$T/o" && grep -qF "stays: $T/s/marshal/alpha.signers" "$T/o" && grep -q "^plan token" "$T/o"; } \
+  && ok "a switch of the local backend holds nothing; the plan lists the switch and the signers file as staying" || no "local switch: rc=$rc $(out)"
+rm -f "$T/s/marshal/alpha.enabled" "$T/s/marshal/alpha.signers"; run "$DA" project remove alpha; ! grep -q "stays:" "$T/o" && ok "no marshal file, no stays line" || no "stays lines without files: $(out)"
+before=$(alpha_all)
+
 # a cloud binding: it is an answer of the project, so it is tried on a project of its own
 lproj gamma "$T/ralpha"; jq '.cloud = {profile:"p1", workspace_id:"wrkspc_01ABCDEFGHIJK"}' "$T/c/projects/gamma.json" > "$T/g" && mv "$T/g" "$T/c/projects/gamma.json"
 g0=$(sha256sum "$T/c/projects/gamma.json")

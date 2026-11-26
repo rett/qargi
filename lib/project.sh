@@ -1334,6 +1334,7 @@ PY
     fi
     jq -r 'if .approved == null then empty else "  the approved verify.environment declaration of the project" + (if .approved == "" then " (it declares none)" else " (id " + .approved + ")" end) + " is forgotten with it (verify-env.json)" end' <<<"$scan"
     echo "  not touched: the repository, its branches and the checkout (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
+    jq -r '.stays[] | "  stays: \(.) (a file of the marshal of \($n); the removal leaves it)"' --arg n "$n" <<<"$scan"
     echo "  nothing holds it back: no open feature, run, live lease or release cut, no linked work tree, cloud binding or registered instance names $n"
     echo
     if [ -z "$APPROVED" ]; then

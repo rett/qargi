@@ -7,6 +7,7 @@
        "members": [{"name", "roles", "file", "file_exists", "copy", "copy_exists"}],      the members of NAME in agents.json, by name
        "members_sha": SHA256 of the raw record of the project in agents.json (every member as stored), "" when it has none,
        "approved": the id of the approved verify.environment declaration, "" when there is an entry for it that declares none, null when there is no entry,
+       "stays": [PATH],                                                                    files of the marshal that the removal leaves (the switch of the shared refs backend, the allowed signers),
        "held": [{"code": REFUSAL-CODE, "values": {FIELD: TEXT}}]}                          what refuses the removal, in a fixed order
 
 The answers file holds the stored answers; the members are the entries of the project in the members file (config/agents.json) with the written member file
@@ -23,8 +24,9 @@ Held, in this order, each with the refusal code of lib/refusals.json that names 
   project-remove-instances   an entry of instances.json named NAME-...
   project-remove-unreadable  something that could hold the removal back and cannot be read although its source is there: the stored answers (not JSON, not an
                              object), git in the repository (for-each-ref, worktree list), the plan of project unlink in a work tree (it did not run or took too
-                             long), instances.json, the registry local-runs.jsonl (the file or a line of it) and the directories features/ and release/ of the
-                             state; each names what and the one command or file that fixes it
+                             long), instances.json, the registry local-runs.jsonl (the file or a line of it), the directories features/ and release/ of the state,
+                             and the marshal of a project on the shared refs backend (its switch file $STATE/marshal/NAME.enabled: the leases are in refs of the
+                             remote, so they cannot be read in the state); each names what and the one command or file that fixes it
 
 A thing that cannot be read is reported as held: the removal goes on only when nothing holds it, so a plan that says nothing holds it back has read
 everything that could. A source that is not there holds nothing. A repository that is gone or is not one has no feature and no work tree to look at.
@@ -211,6 +213,24 @@ def leases(state, name, ttl, bad):
     return out
 
 
+def marshal_files(state, name):
+    """The files of the marshal that are kept for the project outside its records: the switch of the shared refs backend and the allowed signers."""
+    return [p for p in (os.path.join(state, "marshal", name + ext) for ext in (".enabled", ".signers")) if os.path.lexists(p)]
+
+
+def shared(state, name, bad):
+    """A project on the shared refs backend keeps its leases in refs of the remote, which the records of the state do not hold: with its switch file
+    there (the backend is not the local one) the leases cannot be read here, and that holds the removal."""
+    sw = os.path.join(state, "marshal", name + ".enabled")
+    if not os.path.lexists(sw):
+        return
+    doc = load(sw, None)
+    if isinstance(doc, dict) and doc.get("backend") == "local":
+        return
+    bad.add("the marshal leases of %s: it is on the shared refs backend (the switch %s), whose leases are in refs of the remote, not in the records of this machine" % (name, sw),
+            "qargi marshal status --project %s shows them; release each (qargi marshal release FEATURE --project %s), then qargi marshal disable --project %s" % (name, name, name))
+
+
 def cuts(state, name, bad):
     """The versions of the project's release cut records that did not reach finish."""
     rdir = os.path.join(state, "release")
@@ -319,12 +339,13 @@ def scan(name):
     inst = instances(conf, name, bad)
     if inst:
         held.append({"code": "project-remove-instances", "values": {"instances": ",".join(x.replace(",", ";") for x in inst)}})
+    shared(state, name, bad)
     if bad.items:
         held.append({"code": "project-remove-unreadable", "values": {"what": ",".join(w.replace(",", ";") for w, _ in bad.items),
                                                                       "fix": ",".join(f.replace(",", ";") for _, f in bad.items)}})
     members, members_sha = members_of(conf, name)
     return {"project": name, "answers": ap, "answers_sha": hashlib.sha256(raw).hexdigest(), "members": members, "members_sha": members_sha,
-            "approved": approved(state, name), "held": held}
+            "approved": approved(state, name), "stays": [text(p) for p in marshal_files(state, name)], "held": held}
 
 
 def main(argv):

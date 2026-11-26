@@ -123,7 +123,8 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   the same name is not compared with it. The plan lists exactly those files and a token; the apply needs `--plan TOKEN --approved
   "<the owner's words>"`, writes the audit line `project:remove` with the words, and touches nothing in the repository: no branch,
   no checkout, no git operation that changes anything. The marshal records, the audit log, the project's memory, the rendered
-  packs and member render under `~/.qargi/state`, and the stored plans stay. The token covers the project, the hash of the answers
+  packs and member render under `~/.qargi/state`, and the stored plans stay; the plan lists the files of the marshal that are there
+  (the switch file of a project on the local backend, the allowed signers) as `stays:` lines. The token covers the project, the hash of the answers
   file, the approved declaration, the hash of the project's raw record in `agents.json` and each member, and nothing that could hold the removal back, so it stays good after a
   refusal. It is refused (exit 2, nothing changed, with the plan as with the apply) when something still names the project, each
   refusal naming the one command that clears it:
@@ -138,7 +139,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   | `project-remove-linked` | `project link` left a link in the repository's checkout or in one of its work trees | `qargi project unlink NAME`, run inside that work tree |
   | `project-remove-cloud` | the project has a cloud binding (the answer `cloud`) | `qargi cloud unset NAME` |
   | `project-remove-instances` | `instances.json` has an entry named `NAME-...` | `qargi instances remove INSTANCE` |
-  | `project-remove-unreadable` | something that could hold it back exists and cannot be read: the stored answers (not JSON, not an object), git in the repository (`for-each-ref`, `worktree list`), the plan of `project unlink` in a work tree, `instances.json`, the registry of runs (the file or a line of it), the `features/` or `release/` directory of the state | the command or file the refusal names |
+  | `project-remove-unreadable` | something that could hold it back exists and cannot be read: the stored answers (not JSON, not an object), git in the repository (`for-each-ref`, `worktree list`), the plan of `project unlink` in a work tree, `instances.json`, the registry of runs (the file or a line of it), the `features/` or `release/` directory of the state, and the marshal of a project on the shared refs backend (its switch file `marshal/NAME.enabled` is there: the leases are in refs of the remote, which the records of this machine do not hold) | the command or file the refusal names (for the refs backend: `qargi marshal release FEATURE --project NAME`, then `qargi marshal disable --project NAME`) |
 
   When several hold it the first of these is the refusal and a note names the others. A member never runs it (its guard refuses
   it, and so does the verb in a member's run directory), and a coordinator session (`QARGI_ACTOR`) may not.
