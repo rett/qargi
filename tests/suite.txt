@@ -203,6 +203,14 @@ fast | par | 300 | 4 | bash tests/test_readonly_init.sh | lib/lib.sh
 fast | par | 300 | 1 | python3 tests/test_seat_contract.py | docs/reference/lead-seat.md tests/test_seat_contract.py
 # Refusal catalogue: 55 tests measured 5.0s in a member run (not the reference machine); recorded 5s, budget ceil(5 * 1.10) = 6s.
 fast | par | 300 | 6 | python3 tests/test_refusals.py | lib/refusals.json lib/refusal.py lib/*.sh docs/reference/refusals.md docs/reference/lead-seat.md tests/refusal-sites.txt
+# The JSON kinds (lib/kinds, tests/fixtures/json), measured by a member on this host (not the reference machine): the validator 2.0s, the static lint 0.3s and its self-test 5.0s, the help verb 2.7s; budgets ceil(2.0 * 1.10) = 3s, 1s, ceil(5.0 * 1.10) = 6s and ceil(2.7 * 1.10) = 3s.
+fast | par | 300 | 3 | python3 tests/test_jsonkind.py | lib/jsonkind.py lib/kinds/*
+fast | par | 300 | 1 | python3 tests/test_json_registry.py | lib/jsonkind.py lib/kinds/* tests/fixtures/json/* tests/test_json_registry.py
+fast | par | 300 | 6 | python3 tests/test_json_registry.py --self-test | lib/jsonkind.py lib/kinds/* tests/fixtures/json/* tests/test_json_registry.py
+fast | par | 300 | 3 | python3 tests/test_help_json.py | lib/help.py lib/jsonkind.py lib/kinds/* lib/commands.py
+# The documents of marshal status, check and handoff (--json) and their refusals: 72s alone on this host (not the reference machine); budget ceil(72 * 1.10) = 80s. The live lint runs the fixed scenario and both backends: 53s alone; budget ceil(53 * 1.10) = 59s.
+full | par | 300 | 80 | bash tests/test_marshal_json.sh | lib/marshal*.sh lib/marshal*.py lib/jsonkind.py lib/kinds/* lib/refusal.py lib/refusals.json lib/local.sh lib/commands.py
+full | par | 300 | 59 | bash tests/test_json_live.sh | lib/marshal*.sh lib/marshal*.py lib/jsonkind.py lib/kinds/* lib/refusal.py lib/refusals.json lib/commands.py docs/reference/json-output.md tests/fixtures/json/* tests/test_json_registry.py
 # The stored plan record: 23 unit cases measured 8.5s (python) and the five verbs of a scratch repository 20.9s (shell) in a member run (not the reference machine); budgets ceil(8.5 * 1.10) = 10s and ceil(20.9 * 1.10) = 24s.
 fast | par | 300 | 10 | python3 tests/test_plan_record.py | lib/refusal.py lib/plan.py lib/refusals.json lib/lib.sh bin/qargi lib/commands.py
 fast | par | 300 | 24 | bash tests/test_plan_record.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/branch.sh lib/feature.sh lib/release.sh

@@ -6,6 +6,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Four JSON documents are pinned, each with an integer `schema` and a `kind`: `qargi-marshal-status` (`marshal status --json`), `qargi-marshal-check` (`marshal check --json`), `qargi-handoff` (`marshal handoff --json`) and `qargi-refusal` (the object of the `qargi-refusal/1` line). Their shapes are the registry files of `lib/kinds/`, their golden files and broken cases are in `tests/fixtures/json/` (a consumer copies the tree to qualify a reader), `python3 tests/test_json_registry.py` and `bash tests/test_json_live.sh` lint them against the files and against the real output of every verb on both backends of the marshal, and `docs/reference/json-output.md` holds the rule (integers within 2^53 - 1, what raises the integer, the exit rule) and what each verb writes.
+- `qargi help json [KIND]` prints the rule and the kinds, or the fields of one kind (an unknown kind exits 2), and `qargi help json KIND --json` prints the registry file itself; `json` is a help topic, so it is in `qargi help`, the manual page and the completion.
+- `qargi marshal status` and `check` take `--no-write`: the call writes nothing (no record is marked abandoned, no audit line, no cache of the shared records, no lock file) and fetches nothing, and the document says `remote` is `not-asked`.
+- `qargi marshal check --json` is a document of its own (`qargi-marshal-check`: the answer, the lead, the warnings the text form prints on standard error and, without NAME, one row for each open feature); it printed the plan wrapper before.
+- The marshal refuses status, check and handoff with a catalogue code: `marshal-feature-unknown`, `marshal-feature-held`, `marshal-handoff-file`, `marshal-refused` (every other rule) and `marshal-remote-unreachable` (class `marshal-remote`). The contract line and the block come first and the old sentence after them, and the exit status is the same whatever happens while the block is rendered.
+- Exit class 3 is a refusal that a retry may cure: the remote of the shared records could not be asked (`marshal check`, and the flow verbs that ask the marshal first, with nothing changed); `docs/reference/lead-seat.md` R65 and R66 say so.
+
+### Changed
+- `qargi marshal status --json` prints one shape with or without NAME: `schema`, `kind`, `project`, `backend` (`local` or `refs`), `remote` (`none`, `checked`, `unchecked` or `not-asked`), `features` (one row, or one for each feature) and `agent_unattributed`; a row adds `lease_clock` (`wall` or `observed-here`) and a task adds `directory_gone`. The bare feature object of `status NAME --json` is gone.
+- The object of every `qargi-refusal/1` line ends with `"schema":1,"kind":"qargi-refusal"`, and `epoch`, `state` and `tx` are reserved (null); the number in the prefix is the schema.
+- `qargi marshal handoff --json` adds `remote` and `backend_fallback`, and with `--write FILE` it prints the document first, then creates the file and says so on standard error (a failed write of the document leaves no file); a document that does not fit its shape is exit 70 and a closed standard output is exit 1, with no traceback.
+- The `environment` section of a handoff takes a value of the env record only when it has the type the registry declares, so a damaged record cannot put a float or a wrong type into the note.
+- The help of `marshal check` no longer says "This verb only reads": `status` and `check` write unless `--no-write` is given (a record whose branch is gone is marked abandoned, the shared records are fetched into this machine's cache, `--assume-unreachable-ok` appends an audit line).
+
+### Fixed
+- `minutes_since_renewal` of a shared record is a whole number of minutes, as on the local backend (it was a float, `3.0`, with the clock of the refs backend).
+
 ## [0.3.8] - 2026-11-25
 
 ### Added

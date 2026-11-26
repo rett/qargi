@@ -57,7 +57,7 @@ project_answers "$L0/home" "$L0/c" "$L0/s" "$R" \
   | jq --arg m "$L0/mem/project" '.methodology_accepted = [{gap: "file: CONTRIBUTING.md", reason: "the contributing rules live in the wiki", date: "2026-01-01"}]
     | .memory = {memory_store: "memstore_0000000000000000000000", tiers: {project: {path: $m}}}' > "$L0/c/projects/app.json"
 # L ARGS...: qargi on the local project, run from the work tree of f1 (the `cwd` of a handoff), at the clock $NOW
-L() { (cd "$L0/wt-f1" && env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op QARGI_NO_JSON_WRAP=1 "$DA" "$@"); }
+L() { (cd "$L0/wt-f1" && env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" "$@"); }
 
 L marshal claim f1 --as alice --goal "the first goal" >/dev/null || die "claim f1"
 L marshal set f1 --as alice --plan "step one, step two" --note "a note" >/dev/null || die "set f1"
@@ -101,7 +101,7 @@ BR=$B0/app; make_repo "$BR"
 for i in $(seq 1 120); do git -C "$BR" branch "feature/a-long-feature-name-for-the-size-limit-$(printf %03d "$i")" develop; done
 project_answers "$B0/home" "$B0/c" "$B0/s" "$BR" \
   | jq '.methodology_accepted = [range(60) | {gap: ("file: DOC-" + tostring + ".md"), reason: ("x" * 480), date: "2026-01-01"}]' > "$B0/c/projects/app.json"
-B() { env HOME="$B0/home" QARGI_CONF="$B0/c" QARGI_STATE="$B0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op QARGI_NO_JSON_WRAP=1 "$DA" "$@"; }
+B() { env HOME="$B0/home" QARGI_CONF="$B0/c" QARGI_STATE="$B0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" "$@"; }
 keep handoff.local-truncated.json B marshal handoff --json
 
 # ================================================================ the shared refs backend, integrity advisory (an unkeyed machine: its records are unsigned)
@@ -109,7 +109,7 @@ ORIGIN=$T/origin.git
 make_origin "$ORIGIN"
 make_machine a
 for n in r1 r2; do git -C "$T/m/a/app" branch "feature/$n" develop; done
-XE() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="${MONO:-1000}" QARGI_LEAD=op QARGI_NO_JSON_WRAP=1 "$@"; }
+XE() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="${MONO:-1000}" QARGI_LEAD=op "$@"; }
 WORDS="the shared refs are fine for this project"
 tk=$(XE "$DA" marshal enable | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 XE "$DA" marshal enable --plan "$tk" --approved "$WORDS" >/dev/null || die "enable the shared refs"

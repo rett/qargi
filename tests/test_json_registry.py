@@ -15,7 +15,7 @@ fixed ones); the other files are made from the valid ones by this file. `--regen
 whether the files in the tree are what it makes now (it needs a checkout outside any run directory), `--freeze` copies the live registry files over the
 frozen ones (once, at the pin). `--self-test` copies the tree to a scratch directory, breaks it in turn and expects the lint to fail by the right point.
 Offline; a scratch home; no fixed sleep.
-Run: python3 tests/test_json_registry.py [--root DIR] | --self-test | --regen [--tool DIR] [--check] | --freeze"""
+Run: python3 tests/test_json_registry.py [--root DIR] | --self-test | --regen [--tool DIR] [--check] [--keep-raw DIR] | --freeze"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import argparse, copy, importlib.util, json, os, re, shutil, subprocess, sys, tempfile
 
@@ -635,7 +635,7 @@ def make_valid(kind, raw_text, ctx, reg):
     return file_text(body_text(normalise(doc, ctx), stderr), stderr)
 
 
-def regen(root, tool, check):
+def regen(root, tool, check, keep=None):
     J = load_module(root, "jsonkind")
     regs = {}
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
@@ -657,6 +657,8 @@ def regen(root, tool, check):
         if p.returncode != 0:
             print("the scenario failed (exit %d): %s" % (p.returncode, (p.stdout + p.stderr)[-600:]))
             return 1
+        if keep:
+            shutil.copytree(raw, keep, dirs_exist_ok=True)     # the raw output, for tests/test_json_live.sh
         ctx = read_json(os.path.join(raw, "_context.json"))
         files = {os.path.join(FIX, "rules.json"): rules_text()}
         for kind, reg in regs.items():
@@ -829,12 +831,13 @@ def main(argv):
     ap.add_argument("--regen", action="store_true", help="run the scenario and write the fixture files")
     ap.add_argument("--check", action="store_true", help="with --regen: write nothing, say whether the files are what the scenario makes now")
     ap.add_argument("--tool", default=None, help="with --regen: the checkout the scenario runs (default: --root; not inside a run directory)")
+    ap.add_argument("--keep-raw", default=None, metavar="DIR", help="with --regen: also copy the raw output of the scenario to DIR (tests/test_json_live.sh validates it)")
     ap.add_argument("--freeze", action="store_true", help="copy the live registry files over the frozen ones (at the pin)")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
     if a.regen:
-        return regen(os.path.abspath(a.root), os.path.abspath(a.tool or a.root), a.check)
+        return regen(os.path.abspath(a.root), os.path.abspath(a.tool or a.root), a.check, os.path.abspath(a.keep_raw) if a.keep_raw else None)
     if a.freeze:
         return freeze(os.path.abspath(a.root))
     return lint_main(a.root)

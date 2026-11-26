@@ -683,12 +683,17 @@ Refusal: `caretaker-denied`, exit 77, as R63 says; none for the reserved row.
 
 **R65** (refusal line) `[OPEN O16]`. Every lead refusal and every door refusal prints, on standard error, one
 line that starts with `qargi-refusal/1 ` followed by one JSON object on the same line, at most
-4 KiB: `{code, exit, verb, project, role, epoch, state, tx, detail}`, null where unknown. `detail`
-is qargi's own text: text a lead wrote never enters it, only a digest or a field name. The line may
-be any line of standard error. Refusal: none.
+4 KiB: `{code, exit, verb, project, role, epoch, state, tx, detail, schema, kind}`, null where unknown
+(`epoch`, `state` and `tx` are reserved: null until the seat is built). The last two keys name the
+document: `schema` is the integer 1, equal to the number in the prefix, and `kind` is
+`qargi-refusal` (see [JSON output](json-output.md)). `detail` is qargi's own text: text a lead wrote
+never enters it, only a digest or a field name. The line may be any line of standard error.
+Refusal: none.
 
-**R66** (exit statuses). 0 done, 1 refused, 2 usage, 3 remote not checked, 70 a defect, 77 a lead
-refusal. A verb that runs another verb and gets 77 exits 77 and passes the refusal line on.
+**R66** (exit statuses). 0 done, 1 refused, 2 usage, 3 a refusal that a retry may cure (today: the
+remote of the shared records could not be asked, code `marshal-remote-unreachable`, nothing
+changed), 70 a defect, 77 a lead refusal. A verb that runs another verb and gets 77 exits 77 and
+passes the refusal line on.
 Refusal: none.
 
 **R67** (the preamble decides). The first field that `lib/help.py` prints for the preamble of

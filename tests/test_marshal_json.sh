@@ -3,8 +3,8 @@
 # against its registry file (lib/kinds), a marshal refusal keeps its own exit status and prints its contract line, and a call
 # that is switched to read only (--no-write) changes and fetches nothing.
 # Time is injected with QARGI_MARSHAL_NOW (the wall clock) and QARGI_MARSHAL_MONO (the monotonic clock of the refs backend); the
-# remote is a scratch bare repository; nothing leaves the temporary directory. check --json is reached through QARGI_NO_JSON_WRAP=1
-# until the command table declares the option.
+# remote is a scratch bare repository; nothing leaves the temporary directory. check --json is the verb's own option
+# (lib/commands.py declares it), so the wrapper that turns --json into a plan document leaves the call alone.
 # Run: tests/test_marshal_json.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -29,7 +29,7 @@ for n in f1 f2 f3 f4 f5 f6; do git -C "$R" branch "feature/$n" develop; done
 git -C "$R" checkout -q -b parked
 jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, models:{provider:{local:"claude-code",cloud:"claude-platform"}}, test_command:"true"}' > "$L0/c/projects/app.json"
 # L ARGS...: qargi on the local project at the clock $NOW; stdout and stderr in $T/o and $T/e, the exit status returned
-L() { env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op QARGI_NO_JSON_WRAP=1 "$DA" "$@" >"$T/o" 2>"$T/e"; }
+L() { env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" "$@" >"$T/o" 2>"$T/e"; }
 LREC() { echo "$L0/s/features/app-$1.json"; }
 
 # --- the refs backend: a scratch origin and one machine
@@ -41,7 +41,7 @@ for n in r1 r2; do git -C "$T/m/a/app" branch "feature/$n" develop; done
 XE() {
   local m=$1; shift; local -a ev=()
   while [[ ${1:-} =~ ^[A-Z_]+= ]]; do ev+=("$1"); shift; done
-  env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op QARGI_NO_JSON_WRAP=1 "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
+  env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
 }
 WORDS="the shared refs are fine for this project"
 en() { local tk; XE "$1" marshal enable; tk=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"); XE "$1" marshal enable --plan "$tk" --approved "$WORDS"; }
@@ -232,9 +232,9 @@ call L marshal status f4 --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && ok "status --json: the record put right gives a document again" || no "status f4 repaired: rc=$RC $(cat "$T/o" "$T/e")"
 
 # ================================================================ (5) a stdout that cannot take the document: a failure with a plain line, never exit 0
-env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_NO_JSON_WRAP=1 "$DA" marshal status --all --json >&- 2>"$T/e"; RC=$?
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal status --all --json >&- 2>"$T/e"; RC=$?
 [ "$RC" != 0 ] && ! grep -q Traceback "$T/e" && ok "status --json with stdout closed: a non-zero exit, no traceback ($RC)" || no "status closed stdout: rc=$RC $(cat "$T/e")"
-env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_NO_JSON_WRAP=1 "$DA" marshal status --all --json >/dev/full 2>"$T/e"; RC=$?
+env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal status --all --json >/dev/full 2>"$T/e"; RC=$?
 [ "$RC" = 1 ] && [ "$(wc -l < "$T/e")" = 1 ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "status --json to a full disk: exit 1 and one plain line" || no "status full stdout: rc=$RC $(cat "$T/e")"
 
 # ================================================================ (6) check --json: the answer, the lead and the warnings; one row each without NAME
@@ -318,7 +318,7 @@ jq '.rev = 1' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
 # --json --write: the document on stdout first, then the file, then the sentence on stderr
 W=$T/scratch; mkdir -p "$W"
 call L marshal handoff --json --write "$W/note.json"
-[ "$RC" = 0 ] && valid qargi-handoff && cmp -s "$T/o" "$W/note.json" && [ "$(stat -c %a "$W/note.json")" = 600 ] && grep -q "^wrote $W/note.json " "$T/e" && ! grep -q wrote "$T/o" \
+[ "$RC" = 0 ] && valid qargi-handoff && cmp -s "$T/o" "$W/note.json" && [ "$(stat -c %a "$W/note.json")" = 600 ] && grep -q "^wrote $W/note.json " "$T/e" && ! grep -q "^wrote " "$T/o" \
   && ok "handoff --json --write: stdout is the document alone, the file holds the same bytes (mode 600), the sentence is on stderr" || no "handoff json write: rc=$RC $(cat "$T/v"; head -c 300 "$T/e")"
 call L marshal handoff --write "$W/note.txt"
 [ "$RC" = 0 ] && grep -q "^wrote $W/note.txt " "$T/o" && [ -s "$W/note.txt" ] && ok "handoff --write (text): the sentence stays on stdout" || no "handoff text write: rc=$RC $(out)"
