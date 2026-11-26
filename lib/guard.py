@@ -22,8 +22,8 @@ KEY VALUE, in any scope or --file, after -C, the key read in any case), or that 
 (config_refusal); `--exec-path=DIR`, and the variables GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
 
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter; the
-member's file sits in the checkout's agents directory, .claude/agents for Claude Code, which the guard protects outside a run's clone: qargi
-writes nothing to ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
+member's file sits in the runtime's agents directory in the checkout, which the guard protects outside a run's clone: qargi
+writes nothing to the runtime's agents directory in the home) is held to it on every task. A member that serves several abilities passes no class
 and falls back on `qargi local prepare`, which writes the task's ability to RUN/ability; the guard refuses any write to
 that file and to the rest of the run's record (RUN_CONTROL), so a member cannot change the ability it is judged by. When the class says read-only, or
 the nearest run directory above the call's cwd or file path says review, the guard also refuses an edit outside OUT (RUN/out: the report
