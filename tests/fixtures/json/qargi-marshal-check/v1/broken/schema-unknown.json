@@ -1,0 +1,98 @@
+{
+ "schema": 2,
+ "kind": "qargi-marshal-check",
+ "project": "app",
+ "backend": "local",
+ "remote": "none",
+ "feature": null,
+ "answer": null,
+ "lead": null,
+ "warnings": [],
+ "features": [
+  {
+   "feature": "f1",
+   "project": "app",
+   "status": "active",
+   "lead": {
+    "id": "alice",
+    "user": "user",
+    "host": "host",
+    "since": "1970-01-12T13:46:40Z",
+    "worktree": "0123456789abcdef"
+   },
+   "lease": "stale",
+   "lease_clock": "wall",
+   "minutes_since_renewal": 107,
+   "ttl_minutes": 15,
+   "renewed_at": "1970-01-12T13:46:40Z",
+   "rev": 2,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "alice",
+   "purpose": "",
+   "goal": "the first goal",
+   "plan": "step one, step two",
+   "note": "a note",
+   "finished_at": null,
+   "warnings": [
+    "the lead of f1 (alice) is stale (renewed 107 min ago, ttl 15): qargi marshal takeover f1 --approved WORDS",
+    "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f1 --as-successor-of alice continues as the lead without a takeover",
+    "feature f1 changes files that feature/f3 also changes: shared.txt"
+   ]
+  },
+  {
+   "feature": "f2",
+   "project": "app",
+   "status": "active",
+   "lead": {
+    "id": "dora-2",
+    "user": "user",
+    "host": "host",
+    "since": "1970-01-12T14:03:40Z",
+    "worktree": "0123456789abcdef",
+    "succeeds": "dora"
+   },
+   "lease": "stale",
+   "lease_clock": "wall",
+   "minutes_since_renewal": 90,
+   "ttl_minutes": 15,
+   "renewed_at": "1970-01-12T14:03:40Z",
+   "rev": 2,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "dora-2",
+   "purpose": "",
+   "goal": "the second goal",
+   "plan": "",
+   "note": "",
+   "finished_at": null,
+   "warnings": [
+    "the lead of f2 (dora-2) is stale (renewed 90 min ago, ttl 15): qargi marshal takeover f2 --approved WORDS",
+    "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f2 --as-successor-of dora-2 continues as the lead without a takeover"
+   ]
+  },
+  {
+   "feature": "f3",
+   "project": "app",
+   "status": "finished",
+   "lead": null,
+   "lease": "none",
+   "lease_clock": "wall",
+   "minutes_since_renewal": null,
+   "ttl_minutes": 15,
+   "renewed_at": "1970-01-12T13:46:40Z",
+   "rev": 2,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "carol",
+   "purpose": "",
+   "goal": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+   "plan": "",
+   "note": "",
+   "finished_at": "1970-01-12T13:46:40Z",
+   "warnings": [
+    "feature f3 changes files that feature/f1 also changes: shared.txt"
+   ]
+  }
+ ]
+}
