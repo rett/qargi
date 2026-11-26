@@ -335,6 +335,13 @@ msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); msg=${msg%%$'\n'*
 msg=$($DA project set demo site.enabled true 2>&1); msg=${msg%%$'\n'*}; [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
+# an empty segment of the path (two dots in a row, a dot at the end) is refused with the path named, and nothing is written
+cp $T/c/projects/demo.json $T/before.json; AL0=$T/s/audit.log; nal=$(wc -l < "$AL0" 2>/dev/null || echo 0)
+for k in roles..build roles.build. a..b a. roles.build.effort..x; do
+  msg=$($DA project set demo "$k" 1 2>&1); rc=$?
+  { [ $rc = 2 ] && grep -qF "PATH $k has an empty segment" <<<"$msg" && grep -q 'nothing changed' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && [ "$(wc -l < "$AL0" 2>/dev/null || echo 0)" = "$nal" ]; } \
+    && echo "ok   set refuses the path $k (an empty segment), names it and changes nothing" || { echo "FAIL set $k (rc=$rc): $msg"; fail=1; }
+done
 # marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
 $DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1 && [ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.lease_minutes" || { echo "FAIL set marshal.lease_minutes"; fail=1; }
 for bad in 0 -3 1441 abc 2.5 '"15"'; do
@@ -387,6 +394,11 @@ msg=$(project_unset demo backlog.file 2>&1); rc=$?
 msg=$(project_unset nosuch backlog.file 2>&1); rc=$?; { [ $rc != 0 ] && grep -q "no project named 'nosuch'" <<<"$msg"; } && echo "ok   unset of an unknown project is refused" || { echo "FAIL unset unknown project: $msg"; fail=1; }
 msg=$(project_unset demo 2>&1); rc=$?; { [ $rc = 2 ] && grep -q 'unset needs NAME PATH' <<<"$msg"; } && echo "ok   unset without a path is a usage error" || { echo "FAIL unset usage (rc=$rc): $msg"; fail=1; }
 msg=$(project_unset demo 'Bad Path' 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'PATH: dotted keys' <<<"$msg"; } && echo "ok   unset takes a dotted path only" || { echo "FAIL unset path (rc=$rc): $msg"; fail=1; }
+cp $T/c/projects/demo.json $T/before.json
+for k in roles..build roles.build. a..b a.; do
+  msg=$(project_unset demo "$k" 2>&1); rc=$?
+  { [ $rc = 2 ] && grep -qF "PATH $k has an empty segment" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset refuses the path $k (an empty segment) and names it" || { echo "FAIL unset $k (rc=$rc): $msg"; fail=1; }
+done
 # an answer the project needs: validate refuses, nothing changes
 for k in repo.url roles.build.base; do
   msg=$(project_unset demo "$k" 2>&1); rc=$?

@@ -196,7 +196,12 @@ if _ro is not None:
     if not isinstance(_ro, dict):
         bad.append("models.run_options: an object like {local: {RUNTIME: [option names]}} (qargi provider enable PROJECT --runtime NAME --option OPT)")
     else:
-        bad.extend("models.run_options.%s: not a surface with run options (only local)" % k for k in _ro if k != "local")
+        bad.extend("models.run_options.%s: not a surface with run options (only local), nor the digests of the approved declarations (declared)" % k for k in _ro if k not in ("local", "declared"))
+        _rd = _ro.get("declared")
+        if _rd is not None and not (isinstance(_rd, dict) and all(isinstance(_k, str) and provider.NAME_RE.match(_k) and isinstance(_v, dict)
+                                                                   and all(isinstance(_o, str) and provider.OPTION_NAME.match(_o) and isinstance(_d, str) and re.fullmatch(r"[0-9a-f]{64}", _d) for _o, _d in _v.items())
+                                                                   for _k, _v in _rd.items())):
+            bad.append("models.run_options.declared: an object like {RUNTIME: {OPTION: sha256 of the declaration the owner approved}} (qargi provider enable PROJECT --runtime NAME --option OPT stores it)")
         _rl = _ro.get("local")
         if _rl is not None and not isinstance(_rl, dict):
             bad.append("models.run_options.local: an object of runtime names, each with a list of option names (qargi provider enable PROJECT --runtime NAME --option OPT)")
@@ -693,10 +698,13 @@ if _extras:
         if why != "ok" and why != "is-primary": out.append("finding: models.extra_runtimes.local '%s' cannot be used: %s (qargi provider check %s)" % (x, why, x))
 # the run options the project enabled (models.run_options.local) that the definition of the runtime no longer declares: an option that is not declared does not exist
 for _rt, _ol in P.run_options_of(ans).items():
-    try: _declared = P.declared_options(P.definition(_rt, "local"))
+    try: _declared = P.declared_options(P.composed(_rt, "local", name))
     except P.ProviderError: continue                                   # a runtime that cannot be read is the finding of the extra runtimes above
     for _o in _ol:
         if _o not in _declared: out.append("finding: models.run_options.local.%s '%s' is not an option the definition of %s declares (dispatch.run_config.options; qargi provider show %s)" % (_rt, _o, _rt, _rt))
+        else:
+            _why = P.option_binding_problem(ans, _rt, _o, _declared)
+            if _why: out.append("finding: models.run_options.local.%s '%s': %s" % (_rt, _o, _why))
 print("\n".join(out))
 sys.exit(0 if out else 1)
 EOF
@@ -1160,6 +1168,7 @@ PY
     done
     case $path in verify|verify.*) ;; *) [ -z "$PLAN_ARG$APPROVED" ] || usage_die "--plan and --approved apply only to verify.environment (a loosening of it takes a plan token and the owner's words); $path takes neither";; esac
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.-]*$' || die "PATH: dotted keys such as roles.write.effort"
+    case $path in *..*|*.) usage_die "PATH $path has an empty segment (two dots in a row, or a dot at the end): dotted keys such as roles.write.effort; nothing changed";; esac
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
@@ -1246,6 +1255,7 @@ PY
       *) echo "qargi: project unset could not tell whether this is a member run (the check failed with status $mrc); refused: it removes an answer of the project the lead runs on" >&2; exit 2;;
     esac
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.-]*$' || die "PATH: dotted keys such as roles.write.effort"
+    case $path in *..*|*.) usage_die "PATH $path has an empty segment (two dots in a row, or a dot at the end): dotted keys such as roles.write.effort; nothing changed";; esac
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     case $path in verify|verify.*) verify_env_lock;; esac     # before the answers are read: the lock spans the read, the comparison and both writes
     was=$(answer_was "$PROJ_DIR/$n.json" "$path")

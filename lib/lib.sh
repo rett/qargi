@@ -564,6 +564,13 @@ need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always c
   moved=$(QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis moved "$PLAN_ARG" "$1" 2>/dev/null) && [ -n "$moved" ] || moved=unrecorded
   refuse plan-stale "moved=$moved" ${tokarg[@]+"${tokarg[@]}"}
 }
+phrase_in() { # PHRASE WORDS: succeeds when WORDS carry PHRASE as words, in any letter case and with any blanks between them; a hyphen and an underscore are part of a word, so
+  # "xphrase", "phrase-x" and "x-phrase" do not carry "phrase" (the phrase of a run option, the reads phrase of a runtime)
+  [ -n "${1:-}" ] || return 1       # an empty phrase is never carried
+  python3 -I -c 'import re, sys
+words = " ".join(sys.argv[2].lower().split())
+sys.exit(0 if re.search(r"(?<![\w-])" + re.escape(sys.argv[1]) + r"(?![\w-])", words) else 1)' "$1" "${2:-}"
+}
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
   need_plan "$1"

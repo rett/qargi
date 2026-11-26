@@ -182,6 +182,12 @@ EN en1 --runtime fakecx --plan "$etok" --approved "go ahead" >"$T/o" 2>"$T/e"; r
 EN en1 --runtime fakecx --plan "$etok" --approved "all threads are not confined, they said" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } \
   && ok "reads-phrase-as-words: 'threads are not confined' does not carry the phrase (runtime-reads-unacknowledged, nothing stored)" || no "threads: rc=$rc $(cat "$T/e")"
+# a hyphen is part of a word: the phrase inside a longer hyphenated word is not carried, as it is not inside a longer word
+for words in "xreads are not confined" "x-reads are not confined" "reads are not confined-x" "reads are not confined_x" "pre-reads are not confined, they said"; do
+  EN en1 --runtime fakecx --plan "$etok" --approved "$words" >"$T/o" 2>"$T/e"; rc=$?
+  { [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } \
+    && ok "reads-phrase-as-words: '$words' does not carry the phrase" || no "hyphen ($words): rc=$rc $(cat "$T/e")"
+done
 EN en1 --runtime fakecx --plan "$etok" --approved "go ahead, reads  ARE
 not Confined" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 0 ] && [ "$(answers_of en1)" = '{"local":["fakecx"]}' ]; } && ok "reads-acknowledged: the same token is still good, and words that carry the phrase (other letter case, runs of blanks) store it" || no "phrase: rc=$rc $(cat "$T/e" "$T/o")"

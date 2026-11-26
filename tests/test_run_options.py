@@ -18,6 +18,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prepared_request_cases as C  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import provider as P  # noqa: E402
 
 ROOT = C.ROOT
 GOLDEN = ROOT / "tests" / "golden" / "run-options-request.json"
@@ -52,9 +54,10 @@ class RunOptions(unittest.TestCase):
         self.install("cmdone", doc)
         return doc
 
-    def enable(self, names=("img",)):
-        """The project enabling options for its runtime, as `qargi provider enable --option` stores them (models.run_options.local.RUNTIME)."""
-        self.answers["models"]["run_options"] = {"local": {"cmdone": list(names)}} if names else {}
+    def enable(self, names=("img",), option=OPTION):
+        """The project enabling options for its runtime, as `qargi provider enable --option` stores them (models.run_options.local.RUNTIME, and in models.run_options.declared
+        the digest of the declaration the owner approved: OPTION unless another is given)."""
+        self.answers["models"]["run_options"] = ({"local": {"cmdone": list(names)}, "declared": {"cmdone": {n: P.option_digest(option) for n in names}}} if names else {})
         self.save_answers()
 
     def profiles(self, **entries):
@@ -98,6 +101,7 @@ class RunOptions(unittest.TestCase):
         edited = copy.deepcopy(OPTION)
         edited["note"] = "another note"
         self.option_runtime(edited)
+        self.enable(option=edited)                                                    # approved as it now is
         self.assertEqual(self.moved(selected, self.binding("--profile", "imgs")), ["composition", "runtime"])
         # and taking everything away gives the first request back, byte for byte
         self.option_runtime(option=None)
@@ -184,6 +188,26 @@ class RunOptions(unittest.TestCase):
         self.assertIn('"code":"runtime-option-class"', out)
         self.assertIn("the option img of the runtime cmdone is for write runs, and this run is read-only", out)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), before)
+
+    def test_a_definition_that_changes_an_approved_option_is_refused_until_it_is_approved_again(self):
+        self.option_runtime()
+        self.profiles(imgs={"options": ["img"]}, plain={})
+        self.enable()
+        self.prepare("--profile", "imgs")
+        edited = copy.deepcopy(OPTION)
+        edited["phrase"] = "hosted images run anywhere"
+        self.option_runtime(edited)
+        out = self.cmd("local", "prepare", "--repo", self.repo, "--base", "main", "--slug", "chg", "--scratch", self.root, "--profile", "imgs", code=2)
+        self.assertIn("the definition of the runtime cmdone changed the option img since the owner approved it", out)
+        self.assertIn("approve it again", out)
+        self.prepare("--profile", "plain")                                            # a profile that selects none is not held up
+        self.enable(option=edited)
+        self.prepare("--profile", "imgs")
+        # an option enabled with no recorded digest is not an approved declaration
+        self.answers["models"]["run_options"] = {"local": {"cmdone": ["img"]}}
+        self.save_answers()
+        out = self.cmd("local", "prepare", "--repo", self.repo, "--base", "main", "--slug", "nod", "--scratch", self.root, "--profile", "imgs", code=2)
+        self.assertIn("has no recorded approval of its declaration", out)
 
     def test_a_profile_may_only_select_what_the_project_enabled_and_the_definition_declares(self):
         self.option_runtime()

@@ -2510,6 +2510,76 @@ def run_options_of(answers):
     return out
 
 
+def run_option_digests_of(answers):
+    """{runtime: {option: digest}} of models.run_options.declared of the answers: the digest of each enabled option's declaration (option_digest) as it was when the owner
+    approved it (qargi provider enable PROJECT --runtime NAME --option OPT). {} when the answer is absent or not an object of objects of strings."""
+    models = answers.get("models") if isinstance(answers, dict) else None
+    ro = models.get("run_options") if isinstance(models, dict) else None
+    dec = ro.get("declared") if isinstance(ro, dict) else None
+    out = {}
+    for rt, rec in (dec.items() if isinstance(dec, dict) else ()):
+        if isinstance(rt, str) and isinstance(rec, dict):
+            out[rt] = {k: v for k, v in rec.items() if isinstance(k, str) and isinstance(v, str)}
+    return out
+
+
+def option_digest(option):
+    """The digest of one option's declaration (dispatch.run_config.options.NAME of a definition: its settings, classes, flags, phrase, note and source), the one the plan of an
+    enable binds: the sha256 of its canonical JSON."""
+    return hashlib.sha256(json.dumps(option, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def option_binding_problem(answers, runtime, option, declared):
+    """Why the enabled OPTION of RUNTIME is not the one the owner approved, or None when it is: the answers keep the digest of its declaration as it was approved
+    (models.run_options.declared.RUNTIME.OPTION) and the definition declares it now with the same digest. An option with no recorded digest was not approved as declared:
+    it is disabled and enabled again."""
+    now = declared.get(option)
+    if now is None:
+        return None            # an option the definition no longer declares is its own finding
+    was = run_option_digests_of(answers).get(runtime, {}).get(option)
+    again = "qargi provider disable PROJECT --runtime %s --option %s, then qargi provider enable PROJECT --runtime %s --option %s" % (runtime, option, runtime, option)
+    if was is None:
+        return "the option %s of the runtime %s has no recorded approval of its declaration (models.run_options.declared): approve it again (%s)" % (option, runtime, again)
+    if was != option_digest(now):
+        return "the definition of the runtime %s changed the option %s since the owner approved it (its declaration digest moved): read what it is now and approve it again (%s)" % (runtime, option, again)
+    return None
+
+
+def run_option_digests_of(answers):
+    """{runtime: {option: digest}} of models.run_options.declared of the answers: the digest of each enabled option's declaration (option_digest) as it was when the owner
+    approved it (qargi provider enable PROJECT --runtime NAME --option OPT). {} when the answer is absent or not an object of objects of strings."""
+    models = answers.get("models") if isinstance(answers, dict) else None
+    ro = models.get("run_options") if isinstance(models, dict) else None
+    dec = ro.get("declared") if isinstance(ro, dict) else None
+    out = {}
+    for rt, rec in (dec.items() if isinstance(dec, dict) else ()):
+        if isinstance(rt, str) and isinstance(rec, dict):
+            out[rt] = {k: v for k, v in rec.items() if isinstance(k, str) and isinstance(v, str)}
+    return out
+
+
+def option_digest(option):
+    """The digest of one option's declaration (dispatch.run_config.options.NAME of a definition: its settings, classes, flags, phrase, note and source), the one the plan of an
+    enable binds: the sha256 of its canonical JSON."""
+    return hashlib.sha256(json.dumps(option, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def option_binding_problem(answers, runtime, option, declared):
+    """Why the enabled OPTION of RUNTIME is not the one the owner approved, or None when it is: the answers keep the digest of its declaration as it was approved
+    (models.run_options.declared.RUNTIME.OPTION) and the definition declares it now with the same digest. An option with no recorded digest was not approved as declared:
+    it is disabled and enabled again."""
+    now = declared.get(option)
+    if now is None:
+        return None            # an option the definition no longer declares is its own finding
+    was = run_option_digests_of(answers).get(runtime, {}).get(option)
+    again = "qargi provider disable PROJECT --runtime %s --option %s, then qargi provider enable PROJECT --runtime %s --option %s" % (runtime, option, runtime, option)
+    if was is None:
+        return "the option %s of the runtime %s has no recorded approval of its declaration (models.run_options.declared): approve it again (%s)" % (option, runtime, again)
+    if was != option_digest(now):
+        return "the definition of the runtime %s changed the option %s since the owner approved it (its declaration digest moved): read what it is now and approve it again (%s)" % (runtime, option, again)
+    return None
+
+
 def declared_options(doc):
     """{name: option} of dispatch.run_config.options of a definition (a runtime's own, or composed), {} when it declares none."""
     disp = doc.get("dispatch") if isinstance(doc, dict) else None
@@ -2877,18 +2947,20 @@ def _option_effective_runtime(profile_entry, own):
 
 
 def option_plan(project, name, option, verb, conf=None, root=None, library=None):
-    """The plan of `qargi provider enable|disable PROJECT --runtime NAME --option OPTION`: {not_enabled, lines, refusal, nothing, new, needs_phrase, phrase}. lines are the plan,
+    """The plan of `qargi provider enable|disable PROJECT --runtime NAME --option OPTION`: {not_enabled, lines, refusal, nothing, new, digests, needs_phrase, phrase}. lines are the plan,
     one per element (the token is made over them); refusal is a message (exit 2); nothing says the project is already as asked; not_enabled is true when NAME is not a runtime
-    the project has enabled (its own or an extra one), which is a refusal of the shell; new is what models.run_options.local.NAME would become. An enable of an option the
+    the project has enabled (its own or an extra one), which is a refusal of the shell; new is what models.run_options.local.NAME would become and digests what
+    models.run_options.declared.NAME would (the digest of each enabled option's declaration, which the approval binds). An enable of an option the
     definition does not declare is a refusal with no plan: an option that is not declared does not exist."""
     conf = conf or _conf()
     answers = _stored_answers(project, conf)
-    out = {"not_enabled": False, "lines": [], "refusal": None, "nothing": None, "new": None, "needs_phrase": False, "phrase": None}
+    out = {"not_enabled": False, "lines": [], "refusal": None, "nothing": None, "new": None, "digests": None, "needs_phrase": False, "phrase": None}
     primary, extra = runtimes_from(answers, project, root, library)
     if name not in [primary] + extra:
         out["not_enabled"] = True
         return out
     cur = run_options_of(answers).get(name, [])
+    held = run_option_digests_of(answers).get(name, {})
     doc = composed(name, "local", project, root, library, conf)
     declared = declared_options(doc)
     if verb == "disable":
@@ -2896,6 +2968,7 @@ def option_plan(project, name, option, verb, conf=None, root=None, library=None)
             out["nothing"] = "nothing to do: the option %s of %s is not enabled for %s" % (option, name, project)
             return out
         out["new"] = [x for x in cur if x != option]
+        out["digests"] = {k: v for k, v in held.items() if k in out["new"]}
         profiles = answers.get("profiles") if isinstance(answers.get("profiles"), dict) else {}
         users = sorted(p for p, pf in profiles.items() if isinstance(pf, dict) and option in profile_options_of(answers, p) and _option_effective_runtime(pf, primary) == name)
         out["lines"] = ["disable run option %s of runtime %s for project %s (models.run_options.local.%s)" % (option, name, project, name),
@@ -2918,6 +2991,8 @@ def option_plan(project, name, option, verb, conf=None, root=None, library=None)
         return out
     o = declared[option]
     out["new"] = cur + [option]
+    digest = option_digest(o)
+    out["digests"] = dict({k: v for k, v in held.items() if k in cur}, **{option: digest})
     out["needs_phrase"], out["phrase"] = True, o["phrase"]
     fmt = (_dict(_dict(doc.get("resources")).get("mcp")).get("format")) or "json"
     try:
@@ -2957,6 +3032,8 @@ def option_plan(project, name, option, verb, conf=None, root=None, library=None)
     lines.append("profiles that could select it now: %s; a profile of base worker selects it with profiles.NAME.options (qargi project set %s profiles.NAME.options '[\"%s\"]'), "
                  "and only a run of that profile gets it" % (", ".join(cand) if cand else "none yet", project, option))
     lines.append("the owner's approval words must contain: \"%s\"" % o["phrase"])
+    lines.append("the approval binds this declaration (digest %s, kept at models.run_options.declared.%s.%s): a definition that changes the option afterwards is refused when a run is prepared, until it is approved again"
+                 % (digest[:16], name, option))
     lines.append("effect: models.run_options.local.%s of project %s becomes %s" % (name, project, json.dumps(out["new"])))
     out["lines"] = lines
     return out
