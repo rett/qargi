@@ -30,7 +30,7 @@ A **document** is one JSON object that a verb prints for a program to read. A **
 | `qargi-handoff` | 1 | `marshal handoff [NAME] --json` | standard output |
 | `qargi-refusal` | 1 | every verb that stops on a rule of the catalogue | standard error, one line |
 
-What each verb writes. This is the `writes` field of the registry file, and a program that decides whether it may call a verb (a freeze allow-list, say) reads that field, not the word "read only" in a help text. `--no-write` is an option of `marshal status` and `marshal check`: with it the call writes nothing and fetches nothing, and `remote` says `not-asked` on the shared refs backend.
+What each verb writes. This is the `writes` field of the registry file, and a program that decides whether it may call a verb (a freeze allow-list, say) reads that field, not the word "read only" in a help text. `--no-write` is an option of `marshal status` and `marshal check`: with it the call writes nothing (no record, no audit line, no cache, and not even the directories that the first load of qargi makes) and fetches nothing, it answers as the call that writes would (a record whose branch is gone is shown abandoned, with no lead, and is not stored), and `remote` says `not-asked` on the shared refs backend.
 
 | Verb | Writes |
 | --- | --- |

@@ -69,6 +69,19 @@
 # The renewer is a background subshell that polls its parent pid once a second, so it needs no trap in the calling script
 # and never outlives it, whatever way the script ended.
 MARSHAL_LIB=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+# --no-write on status or check: the call writes nothing at all, so the first-load setup of lib.sh (DA_NOSETUP: no directory, no file made or changed) and the
+# helpers of the flow (QARGI_DRY=1: no releases directory in project_load; the refs backend reads like a dry run) are switched off before lib.sh is read. Only a
+# run of this file as the verb does it, never a script that sources the shell API below; --project and --as take a value, which is not an option.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case ${1:-} in status|check)
+    _nw_skip=''
+    for _nw_a in "${@:2}"; do
+      if [ -n "$_nw_skip" ]; then _nw_skip=''; continue; fi
+      case $_nw_a in --project|--as) _nw_skip=1;; --no-write) export QARGI_DRY=1 DA_NOSETUP=1; break;; esac
+    done
+    unset _nw_skip _nw_a;;
+  esac
+fi
 command -v die >/dev/null 2>&1 || . "$MARSHAL_LIB/lib.sh"
 
 marshal_ttl() { # PROJ -> the lease length in minutes

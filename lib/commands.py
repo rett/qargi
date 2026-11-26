@@ -97,7 +97,7 @@ FLOW_UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the shared
 FLOW_UNREACHABLE_NOTE = ("It asks the marshal first. With the shared refs backend a remote that cannot be reached is a refusal (exit 3, nothing changed; the message says what could not be reached and why) "
                          "unless --assume-unreachable-ok is given: then it goes on and the audit log gets a marshal:unreachable-ok line. A project whose marshal is local is not affected.")
 UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the remote of the shared records cannot be reached (a claim stays provisional, a check answers from the cache); recorded as marshal:unreachable-ok in the audit log")
-NOWRITE_OPT = opt("--no-write", "write nothing and fetch nothing: no record marked abandoned (a record whose branch is gone is still shown abandoned, as the writing call answers, but not stored), no audit line, no cache of the shared records updated (it implies --no-fetch; the document of --json then says remote not-asked)")
+NOWRITE_OPT = opt("--no-write", "write nothing and fetch nothing: no record marked abandoned (a record whose branch is gone is still shown abandoned, as the writing call answers, but not stored), no audit line, no cache of the shared records updated, and no directory or file made, not even by the first load (it implies --no-fetch; the document of --json then says remote not-asked)")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")

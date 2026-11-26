@@ -378,6 +378,23 @@ call L marshal check f7 --as bob --json
   && diff <(sed 's/[0-9]\+ min/N min/' "$T/f7.nw.err") <(sed 's/[0-9]\+ min/N min/' "$T/e") >/dev/null \
   && ok "check NAME (writing): the same answer and warnings as with --no-write, and only now the record is marked abandoned" || no "check f7 writing: rc=$RC $(diff "$T/f7.nw.json" "$T/o"; diff "$T/f7.nw.err" "$T/e")"
 
+# nothing is made at all: not the releases directory that the project load makes, and not the state or config directories that the first load of lib.sh makes
+rm -rf "$L0/s/releases"
+call L marshal status --all --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && [ ! -e "$L0/s/releases" ] && ok "status --no-write: the releases directory is not made when it is missing" || no "status --no-write makes releases: rc=$RC $(ls "$L0/s")"
+call L marshal check f1 --as alice --no-write
+[ "$RC" = 0 ] && [ ! -e "$L0/s/releases" ] && ok "check --no-write: the releases directory is not made when it is missing" || no "check --no-write makes releases: rc=$RC $(ls "$L0/s")"
+call L marshal status --all
+[ "$RC" = 0 ] && [ -d "$L0/s/releases" ] && ok "status (writing): the releases directory is made, as before" || no "status makes no releases directory: rc=$RC"
+rm -rf "$T/ns"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal status f1 --no-write --json >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ ! -e "$T/ns" ] && ok "status --no-write: with no state directory and no home, none is made (the first-load setup is off)" || no "status --no-write makes the state: rc=$RC $(ls -R "$T/ns" 2>&1 | head)"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal check f1 --as alice --no-write >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ ! -e "$T/ns" ] && ok "check --no-write: the same" || no "check --no-write makes the state: rc=$RC $(ls -R "$T/ns" 2>&1 | head)"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal status f1 >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ -d "$T/ns/s" ] && ok "status without --no-write: the state directory is made by the first load, as before" || no "status makes no state: rc=$RC"
+rm -rf "$T/ns"
+
 # the shared records: nothing fetched, no cache written, the answer says not-asked
 OBS=$T/m/a/s/features/.observed-app.json
 XE a QARGI_MARSHAL_MONO=5000 marshal status --all --brief >/dev/null

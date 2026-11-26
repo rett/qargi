@@ -22,6 +22,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The help of `marshal check` no longer says "This verb only reads": `status` and `check` write unless `--no-write` is given (a record whose branch is gone is marked abandoned, the shared records are fetched into this machine's cache, `--assume-unreachable-ok` appends an audit line).
 
 ### Fixed
+- `qargi marshal status` and `check` with `--no-write` make no directory and no file at all: the first-load setup of the state and config directories and the `releases` directory of the project load are skipped (a missing state directory stays missing).
 - `qargi marshal check NAME --no-write` answers as the call that writes does: a record whose branch is gone is abandoned in the answer, with no lead (it was refused as `marshal-feature-held` when a live lead held it), and `status` shows such a record `abandoned` with `ghost` true; nothing is stored either way.
 - `minutes_since_renewal` of a shared record is a whole number of minutes, as on the local backend (it was a float, `3.0`, with the clock of the refs backend).
 
