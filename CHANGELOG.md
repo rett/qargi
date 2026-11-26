@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The plan token of `qargi local clean --applied --legacy` now moves whenever a run's files change: it covered each run's path and its byte total only, and on a file system whose directories keep one size (ext4) a file added to a run, or one rewritten at the same length, left the token as it was, so a plan for a changed run could still be applied. `lib/legacy_runs.py size` also prints the number of entries and a fingerprint of the tree (sha256 over the sorted names with each entry's size and mtime, no link followed), the token covers them with the path, and the apply recomputes it and refuses the old token as stale; the printed plan still shows each run's size in bytes.
+
 ## [0.3.8] - 2026-11-25
 
 ### Added
