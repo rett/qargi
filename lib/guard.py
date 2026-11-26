@@ -13,8 +13,8 @@ when the hook command names no provider; `--provider NAME` reads it from the bar
 (the shipped ones and the library's), and a provider whose definition has no usable hook data refuses every call, in the plain way (exit 2,
 reason on stderr), since it has no other. A refusal, a failure and an unknown class are given back in the provider's way.
 
-Publishing: git push, send-pack, http-push and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
-push), the programs git-push, git-send-pack, git-http-push and git-receive-pack, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
+Publishing: git push, send-pack, http-push, send-email and imap-send (they mail or upload what they are given) and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
+push), the programs git-push, git-send-pack, git-http-push, git-receive-pack, git-send-email and git-imap-send, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
 changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias,
 runs a program or reads another configuration file (GIT_RUNS_CODE: alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand|askPass|gitProxy, include.path, includeIf.*.path,
 diff.external, credential.*, filter.*, gpg.*, url.*.insteadOf, remote.*.url|uploadpack ...), and `git config` that writes such a key for later (set, --add, --replace-all or
@@ -77,8 +77,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
     without a space), tee, cp, mv, rm, ln, install, rsync, touch, mkdir, chmod, chown, truncate, shred, patch,
-    `sed|perl -i`, `awk -i inplace`, ex, vi, vim, ed, rename, sqlite3, setfacl, mkfifo, `dd of=`, a git command that changes the tree (`--work-tree` and GIT_WORK_TREE
-    name the place as -C does), find with -delete or -exec (rooted above a protected directory too when it removes), the command after find -exec|-execdir|-ok|-okdir
+    `sed|perl -i`, `awk -i inplace`, ex, vi, vim, ed, rename, sqlite3, setfacl, mkfifo, `dd of=`, a git command that changes the tree or the repository (`--work-tree` and GIT_WORK_TREE
+    name the place as -C does, `--git-dir` and GIT_DIR the repository of every git write; a top-level `--bare` the directory it is read in, for `git init` with no DIR), find with -delete or -exec (rooted above a protected directory too when it removes), the command after find -exec|-execdir|-ok|-okdir
     and parallel (a command of its own), ln of a protected location or a directory above one, and any argument of
     tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF, ${NAME:-x} and ${NAME%/} (by the value of NAME when the environment has it, else a write through it is
     refused) and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
@@ -312,7 +312,8 @@ INPLACE = {"sed", "perl"}                                   # with -i
 GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm", "mv", "stash", "merge", "rebase",
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
-              "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
+              "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance", "rerere", "mergetool",
+              "update-server-info", "index-pack", "pack-objects", "commit-graph", "multi-pack-index"}
 FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?\}"             # {fd} or {arr[i]} (the subscript may hold brackets and a blank, quoted in the command and bare in the words: {a[b[1]]}, {a["x y"]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
@@ -321,7 +322,7 @@ GIT_NEW_TREE = {"clone": ("-o", "--origin", "-b", "--branch", "-u", "--upload-pa
                 "init": ("-b", "--initial-branch", "--template", "--separate-git-dir", "--object-format", "--ref-format")}   # git clone and git init: the options that take a value (the next word, or glued: --depth=1, -bmain)
 GIT_NEW_TREE_FLAGS = {"clone": {"-l", "--local", "-s", "--shared", "-q", "--quiet", "-v", "--verbose", "--progress", "-n", "--no-checkout", "--bare", "--mirror", "--tags", "--single-branch",
                                 "--recursive", "--recurse-submodules", "--shallow-submodules", "--remote-submodules", "--dissociate", "--sparse", "--also-filter-submodules",
-                                "--reject-shallow", "-4", "-6", "--ipv4", "--ipv6", "-h", "--help"},
+                                "--checkout", "--hardlinks", "--reject-shallow", "-4", "-6", "--ipv4", "--ipv6", "-h", "--help"},
                       "init": {"-q", "--quiet", "--bare", "--shared", "-h", "--help"}}   # and the ones that take none (--no-NAME takes none, whatever NAME is)
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
@@ -478,8 +479,8 @@ def word_then_subst(word, text):
 
 
 GIT_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")   # git's global options that take the next word
-GIT_PUSHERS = {"push", "send-pack", "http-push"}             # the git subcommands that publish
-GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack"}   # and the programs behind them, run by their own name
+GIT_PUSHERS = {"push", "send-pack", "http-push", "send-email", "imap-send"}             # the git subcommands that publish (send-email and imap-send mail the patches out)
+GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack", "git-send-email", "git-imap-send"}   # and the programs behind them, run by their own name
 # the git configuration keys that make git run a program, read another configuration file, or give a command or a remote another name: refused in
 # `git -c KEY=V`, `--config-env KEY=V` and every `git config` that writes one (one list; git reads the section and the key whatever their case)
 GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy|alternaterefscommand)|"
@@ -1877,19 +1878,20 @@ def write_targets(toks, i):
                 gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
                 chdir = git_chdir(opts)                                               # all the -C options, each against the one before it
                 trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
+                gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]   # the repository git changes, a relative one against the -C options
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                     new_dir, separate, sure, words = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True, [])
-                    gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]
                     if sub == "init" and gitdirs:                                     # git init uses that git directory as the repository (git clone ignores it): the place git runs is judged too
                         sure = False
                         targets += [("git init", g) for d in (chdir, git_under(chdir, new_dir) if new_dir is not None else chdir) for g in (git_under(d, v) for v in gitdirs)]    # a relative one from the -C options, and from DIR
                     if sub == "init":
                         targets += [("git init", git_under(chdir, g)) for g in words]  # an option the guard does not know may take the next word: DIR may be any of the operands, so each is judged
                         for n, (name, _) in enumerate(opts):
-                            if name == "--bare":                                      # git sets GIT_DIR to the directory the shell is in (or the -C options before --bare give) when it reads --bare, and init writes the repository there
-                                sure = False
-                                targets.append(("git init", git_chdir(opts[:n]) or "."))
+                            if name == "--bare":                                      # git sets GIT_DIR to the directory the shell is in (or the -C options before --bare give) when it reads --bare, and init with no DIR writes the repository there; with a DIR it writes DIR only
+                                if new_dir is None:
+                                    sure = False
+                                    targets.append(("git init", git_chdir(opts[:n]) or "."))
                     if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
                         targets.append(("git " + sub, gitdir or "."))
                         if chdir != gitdir:
@@ -1898,9 +1900,12 @@ def write_targets(toks, i):
                         targets.append(("git " + sub, git_under(chdir, new_dir)))
                     targets += [("git " + sub, git_under(chdir, d)) for d in separate]
                     targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
+                    if sub not in ("init", "clone"):                                  # --git-dir DIR and GIT_DIR=DIR name the repository every other write changes (init has its own reading above; clone ignores them)
+                        targets += [("git " + sub, git_under(chdir, g)) for g in gitdirs]
                 if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
                     targets.append(("git " + sub, gitdir or "."))
                     targets += [("git " + sub, tree) for tree in trees]
+                    targets += [("git " + sub, git_under(chdir, g)) for g in gitdirs]
                 if sub == "config":
                     targets += git_config_targets(rest[k + 1:])
                     if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does

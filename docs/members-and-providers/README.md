@@ -51,8 +51,11 @@ guard finds its run; give a member that needs a write tool the write roles alone
 
 ## What the guard refuses
 
-The guard refuses `git push`, `gh`,
-`ssh`, `scp`, `sftp` and changes to a git remote.
+The guard refuses `git push`, `git send-email`, `git imap-send`, `gh`,
+`ssh`, `scp`, `sftp` and changes to a git remote. A git write is judged at the place it changes: `-C DIR`,
+`--work-tree DIR` and `--git-dir DIR` (or `GIT_WORK_TREE`, `GIT_DIR`) name it, and a top-level `--bare` names the
+directory it is read in when `git init` has no DIR. The guard reads the text of a command and is a best-effort
+check, not a sandbox.
 
 It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
