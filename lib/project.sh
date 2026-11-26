@@ -47,9 +47,12 @@
 #   project.sh remove NAME [--plan T --approved W]
 #                                         retire a project: remove its stored answers and its members (what `agent remove` takes away for each) and forget its
 #                                         approved verify.environment declaration, behind a plan and a token; never a git operation that changes anything,
-#                                         never the repository, a branch or the checkout. Refused (exit 2, nothing changed) for an unknown project, in a member
+#                                         never a branch or the history, and the checkout only through the member files the plan lists (a runtime that keeps
+#                                         them in it: link none); the lines of .git/info/exclude stay. Refused (exit 2, nothing changed) for an unknown project, in a member
 #                                         run, and while the project has an open feature, an open run, a live marshal lease, an open release cut, a linked work
-#                                         tree, a cloud binding or a registered instance (lib/project_remove.py; the refusals project-remove-*)
+#                                         tree, a cloud binding or a registered instance, or a source of those that cannot be read (lib/project_remove.py; the
+#                                         refusals project-remove-*). The apply scans again after the token is checked, writes the audit line project:remove
+#                                         before the first removal, and a failing step leaves the stored answers and a line that says where it stopped
 #   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
 #                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
 #                                         status, so storing and the flows after it work as before)
@@ -1315,24 +1318,30 @@ PY
     [ -f "$PROJ_DIR/$n.json" ] || refuse project-remove-unknown name="$n"
     members_shape_ok || fail "$MEMBERS_FILE is not in the current shape (qargi upgrade); nothing was planned or removed"
     scan=$(python3 -I "$(dirname "$(readlink -f "$0")")/project_remove.py" scan "$n") || exit 1
-    if [ "$(jq -r '.held | length' <<<"$scan")" != 0 ]; then
-      # the first thing that holds the project is the refusal; the others are named beside it, so one run says what to clear
-      [ "$(jq -r '.held | length' <<<"$scan")" = 1 ] || echo "qargi: note: also held: $(jq -r '[.held[1:][].code | sub("^project-remove-"; "")] | join(", ")' <<<"$scan")" >&2
-      held=$(jq -r '.held[0].code' <<<"$scan")
-      hv() { jq -r --arg k "$1" '.held[0].values[$k] // ""' <<<"$scan"; }   # the values the scan names for the refusal, one text for each field (a list is joined by commas)
-      [ "$held" != project-remove-feature ] || refuse project-remove-feature name="$n" features="$(hv features)"
-      [ "$held" != project-remove-run ] || refuse project-remove-run name="$n" runs="$(hv runs)"
-      [ "$held" != project-remove-lease ] || refuse project-remove-lease name="$n" features="$(hv features)"
-      [ "$held" != project-remove-release ] || refuse project-remove-release name="$n" versions="$(hv versions)"
-      [ "$held" != project-remove-linked ] || refuse project-remove-linked name="$n" trees="$(hv trees)"
+    remove_refuse_held() { # SCAN: refuse with the first hold the scan names (nothing when it names none); the others are named beside it, so one run says what to clear
+      local held
+      [ "$(jq -r '.held | length' <<<"$1")" != 0 ] || return 0
+      [ "$(jq -r '.held | length' <<<"$1")" = 1 ] || echo "qargi: note: also held: $(jq -r '[.held[1:][].code | sub("^project-remove-"; "")] | join(", ")' <<<"$1")" >&2
+      held=$(jq -r '.held[0].code' <<<"$1")
+      hv() { jq -r --arg k "$1" '.held[0].values[$k] // ""' <<<"$2"; }   # the values the scan names for the refusal, one text for each field (a list is joined by commas)
+      [ "$held" != project-remove-feature ] || refuse project-remove-feature name="$n" features="$(hv features "$1")"
+      [ "$held" != project-remove-run ] || refuse project-remove-run name="$n" runs="$(hv runs "$1")"
+      [ "$held" != project-remove-lease ] || refuse project-remove-lease name="$n" features="$(hv features "$1")"
+      [ "$held" != project-remove-release ] || refuse project-remove-release name="$n" versions="$(hv versions "$1")"
+      [ "$held" != project-remove-linked ] || refuse project-remove-linked name="$n" trees="$(hv trees "$1")"
       [ "$held" != project-remove-cloud ] || refuse project-remove-cloud name="$n"
-      [ "$held" != project-remove-instances ] || refuse project-remove-instances name="$n" instances="$(hv instances)"
+      [ "$held" != project-remove-instances ] || refuse project-remove-instances name="$n" instances="$(hv instances "$1")"
+      [ "$held" != project-remove-unreadable ] || refuse project-remove-unreadable name="$n" what="$(hv what "$1")" fix="$(hv fix "$1")"
       fail "project remove: the scan named a hold this verb does not know ($held); nothing was changed"
-    fi
-    # the token covers the answers (their hash), the approved declaration and each member: it does not depend on what could hold the removal, so a token stays good after a refusal
-    tok=$({ printf '%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$scan")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$scan")"
-            jq -r '.members[] | [.name, (.roles | join(",")), .file, .copy] | join("|")' <<<"$scan"; } \
-          | plan_token --basis "project answers approved member" --verb "project remove" --target "$n:answers")
+    }
+    remove_refuse_held "$scan"
+    # the token covers the answers (their hash), the approved declaration, the raw records of the members (their hash) and each member as the plan shows it: it does not depend on what could hold the removal, so a token stays good after a refusal
+    remove_token() { # SCAN: the token of the plan the scan describes
+      { printf '%s\n%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$1")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$1")" "$(jq -r '.members_sha | if . == "" then "none" else . end' <<<"$1")"
+        jq -r '.members[] | [.name, (.roles | join(",")), .file, .copy] | join("|")' <<<"$1"; } \
+        | plan_token --basis "project answers approved records member" --verb "project remove" --target "$n:answers"
+    }
+    tok=$(remove_token "$scan")
     echo "remove project $n"
     echo "  the stored answers, removed: $(jq -r .answers <<<"$scan")"
     if [ "$(jq -r '.members | length' <<<"$scan")" = 0 ]; then echo "  members: none"; else
@@ -1340,7 +1349,9 @@ PY
       jq -r '.members[] | "    \(.name) (\(.roles | join(","))): \(if .file == "" then "no file recorded" else .file + (if .file_exists then "" else " (not there)" end) end); copy \(if .copy == "" then "none" else .copy + (if .copy_exists then "" else " (not there)" end) end)"' <<<"$scan"
     fi
     jq -r 'if .approved == null then empty else "  the approved verify.environment declaration of the project" + (if .approved == "" then " (it declares none)" else " (id " + .approved + ")" end) + " is forgotten with it (verify-env.json)" end' <<<"$scan"
-    echo "  not touched: the repository, its branches and the checkout (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
+    jq -r '[.members[] | select(.in_repo and .file_exists)] | if length == 0 then empty else "  in the checkout: \(length) member file(s) above are inside the work tree of the repository and are deleted from it (a runtime that keeps its member files there); the lines qargi wrote in .git/info/exclude for them stay" end' <<<"$scan"
+    echo "  not touched: the repository's branches, history and files except the member files above (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
+    jq -r '.stays[] | "  stays: \(.) (a file of the marshal of \($n); the removal leaves it)"' --arg n "$n" <<<"$scan"
     echo "  nothing holds it back: no open feature, run, live lease or release cut, no linked work tree, cloud binding or registered instance names $n"
     echo
     if [ -z "$APPROVED" ]; then
@@ -1349,21 +1360,38 @@ PY
     fi
     need_plan "$tok"
     verify_env_lock   # a change of verify.environment that is going on meanwhile finishes before the declaration is forgotten, and the removal before the next begins
-    nm=0
+    # tests only: QARGI_TEST_REMOVE_HOLD=PATH says PATH.reached and waits (30 s at most) for PATH.go, so a test can change what the scan reads between the plan and the removal
+    if [ -n "${QARGI_TEST_REMOVE_HOLD:-}" ]; then
+      : > "$QARGI_TEST_REMOVE_HOLD.reached"
+      for _ in $(seq 300); do [ -e "$QARGI_TEST_REMOVE_HOLD.go" ] && break; sleep 0.1; done
+    fi
+    # every read the removal depends on is made before the first change, so that a failure leaves nothing half removed: the approved declarations must be readable now
+    venv_load "$n" || fail "the approved declarations could not be read (verify-env.json), so nothing of $n was removed"
+    # what held it back is read again just before the first change: a feature, run, lease or link that appeared since the plan refuses the apply, and so does anything the plan covers that moved
+    scan=$(python3 -I "$(dirname "$(readlink -f "$0")")/project_remove.py" scan "$n") || exit 1
+    remove_refuse_held "$scan"
+    need_plan "$(remove_token "$scan")"
+    nmt=$(jq -r '.members | length' <<<"$scan"); nm=0
+    # the audit line is written before the first removal, so a removal that stops part way is in the log; the steps below stop with a second line that says where
+    audit_log "project:remove" "$n ($nmt member(s)) begun: the members are removed one by one, then the approved declaration, then the stored answers"
+    remove_stopped() { # WHAT: the removal stopped; what was already removed stays removed, the stored answers stay, and the audit log says so
+      audit_log "project:remove" "$n stopped after $nm of $nmt member(s): $1; the stored answers of $n are still there"
+      fail "project remove stopped: $1; $nm of $nmt member(s) were removed and the stored answers of $n are still there (the audit log says so): run project remove again for a plan of what is left"
+    }
     while IFS= read -r m; do
       mf=$(jq -r '.value.file // ""' <<<"$m"); rp=$(jq -r '.value.render.path // ""' <<<"$m")
-      [ -z "$mf" ] || [ ! -f "$mf" ] || rm -f "$mf"
-      case $rp in ''|/*|..|../*|*/..|*/../*) ;; *) rm -f "$DA_CONF/agents/$n/$rp";; esac
+      [ -z "$mf" ] || [ ! -f "$mf" ] || rm -f "$mf" || remove_stopped "the member file $mf of $(jq -r .key <<<"$m") could not be removed"
+      case $rp in ''|/*|..|../*|*/..|*/../*) ;; *) rm -f "$DA_CONF/agents/$n/$rp" || remove_stopped "the copy $DA_CONF/agents/$n/$rp of $(jq -r .key <<<"$m") could not be removed";; esac
       nm=$((nm + 1))
     done < <(jq -c --arg p "$n" '.projects[$p] // {} | to_entries[]' "$MEMBERS_FILE")
     rmdir "$DA_CONF/agents/$n" 2>/dev/null || true
-    [ "$(jq -r --arg p "$n" '.projects | has($p)' "$MEMBERS_FILE")" != true ] || json_update "$MEMBERS_FILE" 'del(.projects[$p])' --arg p "$n"
+    [ "$(jq -r --arg p "$n" '.projects | has($p)' "$MEMBERS_FILE")" != true ] || json_update "$MEMBERS_FILE" 'del(.projects[$p])' --arg p "$n" || remove_stopped "the entries of the members in $MEMBERS_FILE could not be removed"
     frc=0; venv_py approved forget "$n" --state "$DA_STATE" >/dev/null || frc=$?
-    case $frc in 0|1) ;; *) fail "the answers of $n are still stored: the approved declarations could not be read, so none was forgotten (verify-env.json); the members were removed";; esac
-    audit_log "project:remove" "$n ($nm member(s))"
-    rm -f "$PROJ_DIR/$n.json"
+    case $frc in 0|1) ;; *) remove_stopped "the approved declarations could not be written (verify-env.json), so none was forgotten";; esac
+    rm -f "$PROJ_DIR/$n.json" || remove_stopped "the stored answers $PROJ_DIR/$n.json could not be removed"
+    audit_log "project:remove" "$n ($nm member(s)) removed"
     echo "removed project $n: its stored answers and $nm member(s)"
-    echo "approved: $APPROVED; nothing in the repository was touched (no branch, no checkout, no git operation that changes anything)";;
+    echo "approved: $APPROVED; the repository was touched only by the member files listed in the plan (no branch, no git operation that changes anything)";;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"
     # the answers stay the JSON on standard output (it is piped); the declared gates, which replace test_command, are named on standard error
     gates_lines "$PROJ_DIR/$n.json" >&2;;

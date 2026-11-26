@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # qargi project remove NAME: retire a project behind a plan token. The plan changes nothing; the apply removes the project's stored answers, its members
 # (member file, copy of the render, entry in agents.json) and its approved verify.environment declaration, and nothing else: other projects stay byte
-# for byte and the repository is not touched. It refuses (exit 2, nothing changed, the one command that clears it) for an unknown project, an open
-# feature, an open run, a live marshal lease, an open release cut, a linked work tree, a cloud binding and a registered instance; in a member run and
-# under a coordinator label too. A token stays good after a refusal. Hermetic: scratch home, conf and state; a runtime defined by data alone.
+# for byte and the repository is touched only through a member file inside the checkout (a runtime with link none), never a ref or another file. It
+# refuses (exit 2, nothing changed, the one command that clears it) for an unknown project, an open feature, an open run, a live marshal lease, an open
+# release cut, a linked work tree, a cloud binding, a registered instance and a source that cannot be read; in a member run and under a coordinator
+# label too. A token stays good after a refusal. The apply scans again, writes its audit line first and says where it stopped. Hermetic: scratch
+# home, conf and state; a runtime defined by data alone.
 # Run: tests/test_project_remove.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -80,7 +82,9 @@ run "$DA" project remove alpha --plan 000000000000 --approved go; rc=$?
 { [ $rc = 1 ] && grep -q "plan-stale" "$T/e" && [ "$before" = "$(alpha_all)" ]; } && ok "a wrong token is refused (plan-stale), nothing changed" || no "wrong token: rc=$rc $(out)"
 run "$DA" project remove alpha --bogus; rc=$?
 { [ $rc = 2 ] && grep -q "unknown option --bogus" "$T/e"; } && ok "an unknown option is a usage error (exit 2)" || no "bogus option: rc=$rc $(out)"
-run "$DA" project remove; rc=$?; { [ $rc = 2 ] && grep -q "which project" "$T/e"; } && ok "no name is a usage error (exit 2): the project is asked for" || no "no name: rc=$rc $(out)"
+run "$DA" project remove; rc=$?; { [ $rc = 2 ] && grep -q "remove needs a project name" "$T/e"; } && ok "no name is a usage error (exit 2): the name is asked for" || no "no name: rc=$rc $(out)"
+(cd "$T/ralpha" && run "$DA" project remove); rc=$?; { [ $rc = 2 ] && grep -q "remove needs a project name" "$T/e" && ! grep -q "^remove project" "$T/o"; } && ok "inside the project's repository the name is still asked for (it is never taken from the directory)" || no "no name in the repository: rc=$rc $(out)"
+run "$DA" help project remove; { grep -q "qargi project remove NAME \[OPTIONS\]" "$T/o" && ! grep -q "NAME can be left out\|PROJECT can be left out" "$T/o"; } && ok "the usage line shows NAME as a required word" || no "usage of remove: $(head -5 "$T/o")"
 run "$DA" project remove Bad_Name; rc=$?; [ $rc = 2 ] && ok "a name that is not a project name is a usage error (exit 2)" || no "bad name: rc=$rc $(out)"
 
 # --- an unknown project, for the plan and for an apply
@@ -191,6 +195,90 @@ run "$DA" project remove alpha; rc=$?
 { refused $rc "project-remove-feature" "two" && grep -q "note: also held: run, instances" "$T/e"; } && ok "with several holds the first is the refusal (feature) and a note names the others (run, instances)" || no "several holds: rc=$rc $(out)"
 git -C "$T/ralpha" branch -D feature/two >/dev/null; rm -f "$REG"; echo '{}' > "$T/c/instances.json"; before=$(alpha_all)
 
+# what cannot be read holds the project (project-remove-unreadable): a source that is there and fails is never "nothing holds it"; one that is not there holds nothing
+unread() { # LABEL WORDS...: both phases refuse with project-remove-unreadable naming every word, no plan token, no "nothing holds it back", nothing changed
+  local label=$1 s; shift
+  for s in plan apply; do
+    if [ $s = plan ]; then run "$DA" project remove alpha; else run "$DA" project remove alpha --plan "$tok0" --approved go; fi; rc=$?
+    refused $rc "project-remove-unreadable" "could not be read" "$@" && ! grep -q "^plan token\|nothing holds it back" "$T/o" && [ "$before" = "$(alpha_all)" ] || { no "$label ($s): rc=$rc $(out)"; return; }
+  done
+  ok "$label: refused with project-remove-unreadable in the plan and in the apply (exit 2), names $*, nothing changed"
+}
+cp "$T/c/projects/alpha.json" "$T/alpha.json.keep"
+printf '{"schema":1,"project":' > "$T/c/projects/alpha.json"; before=$(alpha_all)
+unread "stored answers that are not JSON" "$T/c/projects/alpha.json" "qargi project validate alpha"
+printf '["not","an","object"]\n' > "$T/c/projects/alpha.json"; before=$(alpha_all)
+unread "stored answers that are not an object" "$T/c/projects/alpha.json" "qargi project validate alpha"
+cp "$T/alpha.json.keep" "$T/c/projects/alpha.json"
+printf '{oops' > "$T/c/instances.json"; before=$(alpha_all)
+unread "an instances.json that is not JSON" "$T/c/instances.json" "qargi instances list"
+echo '{}' > "$T/c/instances.json"
+mkdir "$REG"; before=$(alpha_all)
+unread "a registry of runs that cannot be read" "$REG" "qargi local list"
+rmdir "$REG"; printf '{"run":"%s","project":"beta"}\nthis is not json\n' "$T/runs/qargi.eee555" > "$REG"; before=$(alpha_all)
+unread "a registry line that is not JSON" "1 line(s) of the registry of runs" "$REG"
+rm -f "$REG"
+mv "$T/s/features" "$T/s/features.keep"; echo x > "$T/s/features"; before=$(alpha_all)
+unread "a directory of marshal records that cannot be listed" "$T/s/features" "qargi marshal status --project alpha"
+rm -f "$T/s/features"; mv "$T/s/features.keep" "$T/s/features"
+mv "$T/s/release" "$T/s/release.keep"; echo x > "$T/s/release"; before=$(alpha_all)
+unread "a directory of release cuts that cannot be listed" "$T/s/release" "qargi release status --project alpha"
+rm -f "$T/s/release"; mv "$T/s/release.keep" "$T/s/release"; before=$(alpha_all)
+# git in the repository fails: a shim that stands for a repository whose refs cannot be read (every other git command is the real one)
+REALGIT=$(command -v git); mkdir "$T/shim"
+printf '#!/bin/sh\nfor a in "$@"; do case $a in for-each-ref|worktree) exit 128;; esac; done\nexec %s "$@"\n' "$REALGIT" > "$T/shim/git"; chmod +x "$T/shim/git"
+PATH=$T/shim:$PATH run "$DA" project remove alpha; rc=$?
+refused $rc project-remove-unreadable "could not be read" "for-each-ref" "worktree list" && ! grep -q "^plan token\|nothing holds it back" "$T/o" && [ "$before" = "$(alpha_all)" ] \
+  && ok "git that fails in the repository (for-each-ref, worktree list): refused with project-remove-unreadable, no plan" || no "git fails: rc=$rc $(out)"
+PATH=$T/shim:$PATH run "$DA" project remove alpha --plan "$tok0" --approved go; rc=$?
+refused $rc project-remove-unreadable "for-each-ref" && [ "$before" = "$(alpha_all)" ] && ok "the same in the apply: refused, nothing changed" || no "git fails (apply): rc=$rc $(out)"
+# a repository path that is not a repository has no feature and no work tree: nothing there fails to be read
+mkdir "$T/notrepo"; jq --arg r "$T/notrepo" '.repo.path = $r' "$T/alpha.json.keep" > "$T/c/projects/alpha.json"
+PATH=$T/shim:$PATH run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && ! grep -q "could not be read" "$T/e"; } && ok "a repository path that is not a repository holds nothing (and git is not asked)" || no "not a repository: rc=$rc $(out)"
+cp "$T/alpha.json.keep" "$T/c/projects/alpha.json"; before=$(alpha_all)
+# a git that takes too long, and a plan of project unlink that cannot run, are things that could not be read too (the clock and the process are replaced inside a copy of the module)
+printf '#!/bin/sh\nsleep 5\n' > "$T/shim/git"
+python3 -I - "${DA%/bin/qargi}/lib" "$T/ralpha" "$T/shim" <<'PYEOF' && ok "a git that takes too long, or a plan of project unlink that does not run, is reported as unreadable" || no "timeout/OSError unit checks"
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import project_remove as PR
+repo, shim = sys.argv[2], sys.argv[3]
+os.environ["PATH"] = shim + os.pathsep + os.environ["PATH"]
+PR.GIT_TIMEOUT = 1
+conf = os.path.dirname(repo) + "/c"
+bad = PR.Unreadable()
+assert PR.instances(conf, "alpha", bad) == [] and not bad.items
+open(conf + "/instances.json", "w").write("[1]\n")      # not an object (the help of the command line cannot read it either, so it is tried here)
+assert PR.instances(conf, "alpha", bad) == [] and len(bad.items) == 1 and "instances.json" in bad.items[0][0], bad.items
+open(conf + "/instances.json", "w").write("{}\n")
+bad = PR.Unreadable()
+assert PR.features(repo, bad) == [] and len(bad.items) == 1 and "for-each-ref" in bad.items[0][0] and "took more than 1 s" in bad.items[0][0], bad.items
+real = subprocess.run
+os.environ["PATH"] = os.environ["PATH"].split(os.pathsep, 1)[1]      # the real git again for the work trees
+for exc in (subprocess.TimeoutExpired("x", 1), OSError("no interpreter")):
+    def boom(*a, **k):
+        if a and isinstance(a[0], list) and a[0][0] == "git":
+            return real(*a, **k)
+        raise exc
+    PR.subprocess.run = boom
+    bad = PR.Unreadable()
+    assert PR.linked("alpha", repo, bad) == [] and len(bad.items) >= 1 and "project unlink" in bad.items[0][0] and "run qargi project unlink alpha inside" in bad.items[0][1], bad.items
+PYEOF
+rm -rf "$T/shim" "$T/notrepo"; before=$(alpha_all)
+
+# a project on the shared refs backend: its leases are in refs of the remote, not in the records of this machine (state/features), so the switch file holds it
+mkdir -p "$T/s/marshal"; printf '{"backend":"refs","remote":"origin","words":"test"}\n' > "$T/s/marshal/alpha.enabled"; before=$(alpha_all)
+unread "a project on the shared refs backend (the switch file is there)" "$T/s/marshal/alpha.enabled" "shared refs backend" "qargi marshal disable --project alpha" "qargi marshal release FEATURE --project alpha"
+printf '{"backend":"refs"' > "$T/s/marshal/alpha.enabled"; before=$(alpha_all)
+unread "a switch file that cannot be read holds it too" "$T/s/marshal/alpha.enabled" "qargi marshal disable --project alpha"
+printf '{"backend":"local"}\n' > "$T/s/marshal/alpha.enabled"; printf 'principal ssh-ed25519 AAAA\n' > "$T/s/marshal/alpha.signers"
+run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && grep -qF "stays: $T/s/marshal/alpha.enabled" "$T/o" && grep -qF "stays: $T/s/marshal/alpha.signers" "$T/o" && grep -q "^plan token" "$T/o"; } \
+  && ok "a switch of the local backend holds nothing; the plan lists the switch and the signers file as staying" || no "local switch: rc=$rc $(out)"
+rm -f "$T/s/marshal/alpha.enabled" "$T/s/marshal/alpha.signers"; run "$DA" project remove alpha; ! grep -q "stays:" "$T/o" && ok "no marshal file, no stays line" || no "stays lines without files: $(out)"
+before=$(alpha_all)
+
 # a cloud binding: it is an answer of the project, so it is tried on a project of its own
 lproj gamma "$T/ralpha"; jq '.cloud = {profile:"p1", workspace_id:"wrkspc_01ABCDEFGHIJK"}' "$T/c/projects/gamma.json" > "$T/g" && mv "$T/g" "$T/c/projects/gamma.json"
 g0=$(sha256sum "$T/c/projects/gamma.json")
@@ -201,6 +289,67 @@ run "$DA" cloud unset gamma; run "$DA" project remove gamma; rc=$?
 run "$DA" project remove gamma --plan "$(tokof)" --approved "retire gamma"; rc=$?
 { [ $rc = 0 ] && [ ! -e "$T/c/projects/gamma.json" ] && grep -q "removed project gamma: its stored answers and 0 member(s)" "$T/o"; } && ok "a project with no member is removed (members: none in its plan)" || no "gamma apply: rc=$rc $(out)"
 jq -e 'select(.verb == "project:remove") | .approved == "retire gamma" and (.detail | startswith("gamma"))' "$T/s/audit.log" >/dev/null && ok "the audit line project:remove carries the owner's words" || no "audit: $(tail -2 "$T/s/audit.log")"
+
+# --- the apply reads again before it changes anything, writes its audit line first, and says in the audit log where it stopped
+make_repo "$T/rdelta"; lproj delta "$T/rdelta"
+$DA agent add rune --roles build --project delta >/dev/null 2>&1 && $DA agent add dusk --roles write --project delta >/dev/null 2>&1 && ok "setup: delta has two members" || no "setup delta: agent add"
+python3 -I "$SE" approved set delta '{"fds":"ci-like"}' --by test --state "$T/s" >/dev/null
+DM=$T/s/render/delta/fakelink.agents
+delta_fp() { ( cd "$T" && { find c s -type f \( -path '*delta*' \) ! -name audit.log ! -path 's/plans/*' -print0 | sort -z | xargs -0 sha256sum; sha256sum c/agents.json s/verify-env.json; } ) | sha256sum; }
+delta_audit() { jq -c --arg k "$1" 'select(.verb == "project:remove" and (.detail | startswith("delta")) and (.detail | test($k)))' "$T/s/audit.log" 2>/dev/null | wc -l; }
+held_apply() { # HOLDPATH TOKEN WORDS : start the apply with the hold, return when it reached the point; the caller changes things, creates HOLDPATH.go and calls wait_apply
+  rm -f "$1.reached" "$1.go"
+  QARGI_TEST_REMOVE_HOLD=$1 "$DA" project remove delta --plan "$2" --approved "$3" >"$T/o" 2>"$T/e" & HPID=$!
+  for _ in $(seq 100); do [ -e "$1.reached" ] && return 0; sleep 0.1; done
+  return 1
+}
+wait_apply() { : > "$1.go"; wait "$HPID"; rc=$?; }
+
+# a feature that appears after the plan is shown and before the first removal refuses the apply: nothing changed and no audit line begun
+run "$DA" project remove delta; tokd=$(tokof); d0=$(delta_fp)
+if held_apply "$T/hold1" "$tokd" "retire delta"; then
+  git -C "$T/rdelta" branch -q feature/late develop; wait_apply "$T/hold1"
+  { refused $rc "project-remove-feature" "late" && [ "$d0" = "$(delta_fp)" ] && [ "$(delta_audit begun)" = 0 ]; } && ok "a hold that appeared after the plan (an open feature) refuses the apply (exit 2): nothing changed, no audit line written" || no "hold after the plan: rc=$rc d=$(delta_audit begun) $(out)"
+else no "the hold of the apply was not reached"; kill "$HPID" 2>/dev/null; fi
+git -C "$T/rdelta" branch -D feature/late >/dev/null 2>&1; d0=$(delta_fp)
+
+# the approved declarations are read before a member is removed: one that cannot be read leaves the members, the answers and the audit log as they were
+cp "$T/s/verify-env.json" "$T/venv.keep"; run "$DA" project remove delta; tokd=$(tokof); d0=$(delta_fp)
+if held_apply "$T/hold2" "$tokd" "retire delta"; then
+  printf '{broken' > "$T/s/verify-env.json"; d1=$(delta_fp); wait_apply "$T/hold2"
+  { [ $rc = 1 ] && grep -q "nothing of delta was removed" "$T/e" && [ "$d1" = "$(delta_fp)" ] && [ -f "$DM/rune.toml" ] && [ -f "$T/c/projects/delta.json" ] && [ "$(delta_audit begun)" = 0 ]; } \
+    && ok "approved declarations that cannot be read stop the apply before any member is removed (exit 1): nothing half removed, no audit line" || no "verify-env unreadable: rc=$rc $(out)"
+else no "the hold of the apply was not reached (2)"; kill "$HPID" 2>/dev/null; fi
+cp "$T/venv.keep" "$T/s/verify-env.json"; d0=$(delta_fp)
+
+# a step that fails after the audit line: the log says it began and where it stopped, the answers stay, and a second plan finishes the removal
+mv "$T/c/agents/delta/rune.toml" "$T/rune.copy"; mkdir "$T/c/agents/delta/rune.toml"; : > "$T/c/agents/delta/rune.toml/in-the-way"
+run "$DA" project remove delta; tokd=$(tokof)
+run "$DA" project remove delta --plan "$tokd" --approved "retire delta"; rc=$?
+{ [ $rc = 1 ] && grep -q "project remove stopped" "$T/e" && grep -q "the stored answers of delta are still there" "$T/e" && [ -f "$T/c/projects/delta.json" ] \
+  && [ "$(delta_audit 'begun')" = 1 ] && [ "$(delta_audit 'stopped after [01] of 2 member')" = 1 ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 0 ]; } \
+  && ok "a removal that stops part way writes the audit line before it starts and a second one that says where it stopped; the answers stay" || no "stopped apply: rc=$rc audit=$(grep -c . "$T/s/audit.log") $(out)"
+rm -rf "$T/c/agents/delta/rune.toml"; run "$DA" project remove delta; tokd=$(tokof)
+run "$DA" project remove delta --plan "$tokd" --approved "retire delta, again"; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/c/projects/delta.json" ] && [ ! -e "$DM/rune.toml" ] && [ ! -e "$DM/dusk.toml" ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 1 ] && jq -e '.projects | has("delta") | not' "$T/c/agents.json" >/dev/null; } \
+  && ok "after the cause is cleared a new plan finishes the removal, and the log ends with the line removed" || no "second apply: rc=$rc $(out)"
+before=$(alpha_all)
+
+# --- a runtime that keeps its member files in the checkout (link none, like .claude/agents/NAME.md of Claude Code): the apply deletes those files and says so
+LIB2=$T/c/packs/providers/fakein; mkdir -p "$LIB2"
+jq '.provider = "fakein" | .resources.agents.link.project = "none"' "$LIB/definition.json" > "$LIB2/definition.json"; python3 -I "$HANDSEAL" "$LIB2"
+make_repo "$T/reps"; lproj eps "$T/reps"; jq '.models.provider = "fakein"' "$T/c/projects/eps.json" > "$T/eps.json" && mv "$T/eps.json" "$T/c/projects/eps.json"
+$DA agent add scout --roles build --project eps >/dev/null 2>&1; SF=$(jq -r '.projects.eps.scout.file' "$T/c/agents.json")
+case $SF in "$T/reps/"*) [ -f "$SF" ] && ok "setup: the member file of a link-none runtime is in the checkout ($SF)";; *) no "setup eps: the member file is not in the checkout: $SF";; esac
+grep -qF "$(basename "$(dirname "$SF")")/$(basename "$SF")" "$T/reps/.git/info/exclude" && ok "setup: its line is in .git/info/exclude" || no "setup exclude: $(tail -2 "$T/reps/.git/info/exclude")"
+repo_e=$(repo_state "$T/reps"); ex0=$(cat "$T/reps/.git/info/exclude")
+run "$DA" project remove eps; rc=$?
+{ [ $rc = 0 ] && grep -qF "$SF" "$T/o" && grep -q "in the checkout: 1 member file(s) above are inside the work tree of the repository and are deleted from it" "$T/o" && grep -q "except the member files above" "$T/o" \
+  && ! grep -q "touches nothing\|nothing in the repository" "$T/o"; } && ok "the plan says the member file is in the checkout and is deleted (the contract wording is 'except the member files above')" || no "link none plan: rc=$rc $(out)"
+run "$DA" project remove eps --plan "$(tokof)" --approved "retire eps"; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$SF" ] && grep -q "touched only by the member files listed in the plan" "$T/o" && [ "$repo_e" = "$(repo_state "$T/reps")" ] && [ "$ex0" = "$(cat "$T/reps/.git/info/exclude")" ] && [ ! -e "$T/c/projects/eps.json" ]; } \
+  && ok "the apply deletes the member file in the checkout and nothing else of it: the same refs, a clean tree, the exclude line stays" || no "link none apply: rc=$rc $(out)"
+before=$(alpha_all)
 
 # --- nobody but the lead: a member's run, a member mark, a coordinator label
 mkdir -p "$T/memrun"; : > "$T/memrun/ability"; : > "$T/memrun/refs.before"
@@ -213,6 +362,15 @@ for how in "run directory" "member mark" "coordinator label"; do
   { [ $rc = 2 ] && [ "$before" = "$(alpha_all)" ] && ! grep -q "^plan token" "$T/o"; } && ok "refused in a $how (exit 2), no plan, nothing changed" || no "$how: rc=$rc $(out)"
 done
 grep -q "member-lead-verb" "$T/e" || true
+
+# --- the token is over the raw records of agents.json: a change the plan does not print (a field it cuts or does not show) is a changed token
+cp "$T/c/agents.json" "$T/agents.keep"
+jq '.projects.alpha.forge.note = "a field the plan does not print"' "$T/agents.keep" > "$T/c/agents.json"; before=$(alpha_all)
+run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && [ -n "$(tokof)" ] && [ "$(tokof)" != "$tok0" ]; } && ok "a changed record of a member in agents.json (a field the plan does not show) is another token" || no "raw record token: rc=$rc $(tokof) vs $tok0"
+run "$DA" project remove alpha --plan "$tok0" --approved go; rc=$?
+{ [ $rc = 1 ] && grep -q "plan-stale" "$T/e" && [ "$before" = "$(alpha_all)" ]; } && ok "the old token is refused (plan-stale) after it, nothing changed" || no "old token after a raw change: rc=$rc $(out)"
+cp "$T/agents.keep" "$T/c/agents.json"; before=$(alpha_all)
 
 # --- the token stays good after all those refusals, and the apply removes alpha and only alpha
 run "$DA" project remove alpha; rc=$?
