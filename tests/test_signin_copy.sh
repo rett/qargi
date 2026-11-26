@@ -273,7 +273,7 @@ rm -f "$T/mode" "$T/hold-ready" "$T/hold-go"
 # local clean removes with the run: the sweep is home_residue of lib/local.sh, which reads home.private of the start record
 echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go" "$T/member.pid"; prep kill1; task; K1=$RUN; COPY=$K1/home/.fk/auth.json
 ( $DA local run "$K1" > "$T/k.out" 2>&1; echo $? > "$T/k.rc" ) &
-wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -f "$COPY" ]' 30
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -f "$COPY" ] && [ -n "$(jq -r ".member // empty" "$K1/dispatch.json")" ]' 30   # the record names the member: the runner has recorded it
 kill -KILL "$(jq -r .runner "$K1/dispatch.json")"; wait_until '[ -s "$T/k.rc" ]' 30
 kill -TERM -- -"$(cat "$T/member.pid")"; wait_until '! kill -0 "$(cat "$T/member.pid")" 2>/dev/null' 10
 { [ -f "$COPY" ] && [ ! -L "$COPY" ] && [ "$(jq -r .outcome "$K1/dispatch.json")" = running ] && [ "$(sum "$SRC")" = "$BEFORE" ]; } \
@@ -291,7 +291,7 @@ out=$($DA local run "$K1" --again 2>&1); rc=$?
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"; echo hold > "$T/mode"
 prep kill2; task; K2=$RUN; COPY=$K2/home/.fk/auth.json
 ( $DA local run "$K2" > "$T/k.out" 2>&1; echo $? > "$T/k.rc" ) &
-wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -f "$COPY" ]' 30
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -f "$COPY" ] && [ -n "$(jq -r ".member // empty" "$K2/dispatch.json")" ]' 30
 rm -f "$T/k.rc"; kill -KILL "$(jq -r .runner "$K2/dispatch.json")"; wait_until '[ -s "$T/k.rc" ]' 30
 kill -TERM -- -"$(cat "$T/member.pid")"; wait_until '! kill -0 "$(cat "$T/member.pid")" 2>/dev/null' 10
 out=$($DA local clean "$K2" --discard 2>&1); rc=$?
