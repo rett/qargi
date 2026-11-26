@@ -4,15 +4,17 @@
   project_remove.py scan NAME     print one JSON object on standard output, exit 0; nothing is changed:
 
       {"project": NAME, "answers": PATH, "answers_sha": SHA256-OF-THE-FILE,
-       "members": [{"name", "roles", "file", "file_exists", "copy", "copy_exists"}],      the members of NAME in agents.json, by name
+       "members": [{"name", "roles", "file", "file_exists", "in_repo", "copy", "copy_exists"}],   the members of NAME in agents.json, by name; in_repo: the member file is inside the repository's work tree
        "members_sha": SHA256 of the raw record of the project in agents.json (every member as stored), "" when it has none,
        "approved": the id of the approved verify.environment declaration, "" when there is an entry for it that declares none, null when there is no entry,
        "stays": [PATH],                                                                    files of the marshal that the removal leaves (the switch of the shared refs backend, the allowed signers),
        "held": [{"code": REFUSAL-CODE, "values": {FIELD: TEXT}}]}                          what refuses the removal, in a fixed order
 
 The answers file holds the stored answers; the members are the entries of the project in the members file (config/agents.json) with the written member file
-and the render's copy in config/agents/NAME/ that `qargi agent remove` would take away. The removal never touches the repository: the one thing read from it
-is the list of its feature branches and of its work trees (git for-each-ref, git worktree list: reads).
+and the render's copy in config/agents/NAME/ that `qargi agent remove` would take away. The removal runs no git command that changes anything and touches
+the repository only through the member files listed in the plan: a runtime whose member files are not linked into the checkout (link none, for example
+.claude/agents/NAME.md of Claude Code) keeps them in it, and the apply deletes those files (the lines qargi wrote in .git/info/exclude for them stay). What is
+read from the repository is the list of its feature branches and of its work trees (git for-each-ref, git worktree list: reads).
 
 Held, in this order, each with the refusal code of lib/refusals.json that names the command that clears it:
   project-remove-feature     an open feature: a branch feature/* of the repository (qargi feature list)
@@ -99,7 +101,15 @@ def repo_of(answers):
     return p if p and os.path.isdir(p) else ""
 
 
-def members_of(conf, name):
+def inside(path, repo):
+    """Whether the path is under the repository's work tree (the real paths)."""
+    if not path or not repo:
+        return False
+    root = os.path.realpath(repo)
+    return os.path.realpath(path).startswith(root.rstrip(os.sep) + os.sep)
+
+
+def members_of(conf, name, repo):
     """The members of the project, from agents.json, with what removing each takes away, and the hash of the project's raw record there
     (the text of a member is cut and cleaned for the plan; the hash is of what is stored, so a changed record is a changed token)."""
     doc = load(os.path.join(conf, "agents.json"), {})
@@ -118,7 +128,7 @@ def members_of(conf, name):
         if isinstance(rp, str) and rp and not os.path.isabs(rp) and ".." not in rp.split("/"):
             copy = os.path.join(conf, "agents", name, rp)
         out.append({"name": text(n), "roles": [text(r) for r in rec.get("roles", []) if isinstance(r, str)] if isinstance(rec.get("roles"), list) else [],
-                    "file": text(f), "file_exists": bool(f) and os.path.isfile(f), "copy": text(copy), "copy_exists": bool(copy) and os.path.isfile(copy)})
+                    "file": text(f), "file_exists": bool(f) and os.path.isfile(f), "in_repo": inside(f, repo), "copy": text(copy), "copy_exists": bool(copy) and os.path.isfile(copy)})
     return out, sha
 
 
@@ -343,7 +353,7 @@ def scan(name):
     if bad.items:
         held.append({"code": "project-remove-unreadable", "values": {"what": ",".join(w.replace(",", ";") for w, _ in bad.items),
                                                                       "fix": ",".join(f.replace(",", ";") for _, f in bad.items)}})
-    members, members_sha = members_of(conf, name)
+    members, members_sha = members_of(conf, name, repo)
     return {"project": name, "answers": ap, "answers_sha": hashlib.sha256(raw).hexdigest(), "members": members, "members_sha": members_sha,
             "approved": approved(state, name), "stays": [text(p) for p in marshal_files(state, name)], "held": held}
 

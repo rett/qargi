@@ -47,7 +47,8 @@
 #   project.sh remove NAME [--plan T --approved W]
 #                                         retire a project: remove its stored answers and its members (what `agent remove` takes away for each) and forget its
 #                                         approved verify.environment declaration, behind a plan and a token; never a git operation that changes anything,
-#                                         never the repository, a branch or the checkout. Refused (exit 2, nothing changed) for an unknown project, in a member
+#                                         never a branch or the history, and the checkout only through the member files the plan lists (a runtime that keeps
+#                                         them in it: link none); the lines of .git/info/exclude stay. Refused (exit 2, nothing changed) for an unknown project, in a member
 #                                         run, and while the project has an open feature, an open run, a live marshal lease, an open release cut, a linked work
 #                                         tree, a cloud binding or a registered instance, or a source of those that cannot be read (lib/project_remove.py; the
 #                                         refusals project-remove-*). The apply scans again after the token is checked, writes the audit line project:remove
@@ -1338,7 +1339,8 @@ PY
       jq -r '.members[] | "    \(.name) (\(.roles | join(","))): \(if .file == "" then "no file recorded" else .file + (if .file_exists then "" else " (not there)" end) end); copy \(if .copy == "" then "none" else .copy + (if .copy_exists then "" else " (not there)" end) end)"' <<<"$scan"
     fi
     jq -r 'if .approved == null then empty else "  the approved verify.environment declaration of the project" + (if .approved == "" then " (it declares none)" else " (id " + .approved + ")" end) + " is forgotten with it (verify-env.json)" end' <<<"$scan"
-    echo "  not touched: the repository, its branches and the checkout (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
+    jq -r '[.members[] | select(.in_repo and .file_exists)] | if length == 0 then empty else "  in the checkout: \(length) member file(s) above are inside the work tree of the repository and are deleted from it (a runtime that keeps its member files there); the lines qargi wrote in .git/info/exclude for them stay" end' <<<"$scan"
+    echo "  not touched: the repository's branches, history and files except the member files above (no git operation changes anything); the marshal records, the audit log, the project's memory, the rendered packs and member render, the stored plans"
     jq -r '.stays[] | "  stays: \(.) (a file of the marshal of \($n); the removal leaves it)"' --arg n "$n" <<<"$scan"
     echo "  nothing holds it back: no open feature, run, live lease or release cut, no linked work tree, cloud binding or registered instance names $n"
     echo
@@ -1379,7 +1381,7 @@ PY
     rm -f "$PROJ_DIR/$n.json" || remove_stopped "the stored answers $PROJ_DIR/$n.json could not be removed"
     audit_log "project:remove" "$n ($nm member(s)) removed"
     echo "removed project $n: its stored answers and $nm member(s)"
-    echo "approved: $APPROVED; nothing in the repository was touched (no branch, no checkout, no git operation that changes anything)";;
+    echo "approved: $APPROVED; the repository was touched only by the member files listed in the plan (no branch, no git operation that changes anything)";;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"
     # the answers stay the JSON on standard output (it is piped); the declared gates, which replace test_command, are named on standard error
     gates_lines "$PROJ_DIR/$n.json" >&2;;

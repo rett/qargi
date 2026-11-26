@@ -122,7 +122,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   in `agents.json`) and the approved `verify.environment` declaration the state keeps for it, so that a project made later under
   the same name is not compared with it. The plan lists exactly those files and a token; the apply needs `--plan TOKEN --approved
   "<the owner's words>"`; it reads what could hold the removal back once more and the approved declarations, writes the audit line `project:remove` with the
-  words before the first removal (`begun`) and a last one when it is done (`removed`), and touches nothing in the repository: no branch,
+  words before the first removal (`begun`) and a last one when it is done (`removed`), and touches the repository only through the member files the plan lists: no branch,
   no checkout, no git operation that changes anything. The marshal records, the audit log, the project's memory, the rendered
   packs and member render under `~/.qargi/state`, and the stored plans stay; the plan lists the files of the marshal that are there
   (the switch file of a project on the local backend, the allowed signers) as `stays:` lines. A removal that fails part way (a file that cannot be removed) leaves what was already

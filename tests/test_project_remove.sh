@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # qargi project remove NAME: retire a project behind a plan token. The plan changes nothing; the apply removes the project's stored answers, its members
 # (member file, copy of the render, entry in agents.json) and its approved verify.environment declaration, and nothing else: other projects stay byte
-# for byte and the repository is not touched. It refuses (exit 2, nothing changed, the one command that clears it) for an unknown project, an open
-# feature, an open run, a live marshal lease, an open release cut, a linked work tree, a cloud binding and a registered instance; in a member run and
-# under a coordinator label too. A token stays good after a refusal. Hermetic: scratch home, conf and state; a runtime defined by data alone.
+# for byte and the repository is touched only through a member file inside the checkout (a runtime with link none), never a ref or another file. It
+# refuses (exit 2, nothing changed, the one command that clears it) for an unknown project, an open feature, an open run, a live marshal lease, an open
+# release cut, a linked work tree, a cloud binding, a registered instance and a source that cannot be read; in a member run and under a coordinator
+# label too. A token stays good after a refusal. The apply scans again, writes its audit line first and says where it stopped. Hermetic: scratch
+# home, conf and state; a runtime defined by data alone.
 # Run: tests/test_project_remove.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -329,6 +331,22 @@ rm -rf "$T/c/agents/delta/rune.toml"; run "$DA" project remove delta; tokd=$(tok
 run "$DA" project remove delta --plan "$tokd" --approved "retire delta, again"; rc=$?
 { [ $rc = 0 ] && [ ! -e "$T/c/projects/delta.json" ] && [ ! -e "$DM/rune.toml" ] && [ ! -e "$DM/dusk.toml" ] && [ "$(delta_audit 'member\(s\)\) removed$')" = 1 ] && jq -e '.projects | has("delta") | not' "$T/c/agents.json" >/dev/null; } \
   && ok "after the cause is cleared a new plan finishes the removal, and the log ends with the line removed" || no "second apply: rc=$rc $(out)"
+before=$(alpha_all)
+
+# --- a runtime that keeps its member files in the checkout (link none, like .claude/agents/NAME.md of Claude Code): the apply deletes those files and says so
+LIB2=$T/c/packs/providers/fakein; mkdir -p "$LIB2"
+jq '.provider = "fakein" | .resources.agents.link.project = "none"' "$LIB/definition.json" > "$LIB2/definition.json"; python3 -I "$HANDSEAL" "$LIB2"
+make_repo "$T/reps"; lproj eps "$T/reps"; jq '.models.provider = "fakein"' "$T/c/projects/eps.json" > "$T/eps.json" && mv "$T/eps.json" "$T/c/projects/eps.json"
+$DA agent add scout --roles build --project eps >/dev/null 2>&1; SF=$(jq -r '.projects.eps.scout.file' "$T/c/agents.json")
+case $SF in "$T/reps/"*) [ -f "$SF" ] && ok "setup: the member file of a link-none runtime is in the checkout ($SF)";; *) no "setup eps: the member file is not in the checkout: $SF";; esac
+grep -qF "$(basename "$(dirname "$SF")")/$(basename "$SF")" "$T/reps/.git/info/exclude" && ok "setup: its line is in .git/info/exclude" || no "setup exclude: $(tail -2 "$T/reps/.git/info/exclude")"
+repo_e=$(repo_state "$T/reps"); ex0=$(cat "$T/reps/.git/info/exclude")
+run "$DA" project remove eps; rc=$?
+{ [ $rc = 0 ] && grep -qF "$SF" "$T/o" && grep -q "in the checkout: 1 member file(s) above are inside the work tree of the repository and are deleted from it" "$T/o" && grep -q "except the member files above" "$T/o" \
+  && ! grep -q "touches nothing\|nothing in the repository" "$T/o"; } && ok "the plan says the member file is in the checkout and is deleted (the contract wording is 'except the member files above')" || no "link none plan: rc=$rc $(out)"
+run "$DA" project remove eps --plan "$(tokof)" --approved "retire eps"; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$SF" ] && grep -q "touched only by the member files listed in the plan" "$T/o" && [ "$repo_e" = "$(repo_state "$T/reps")" ] && [ "$ex0" = "$(cat "$T/reps/.git/info/exclude")" ] && [ ! -e "$T/c/projects/eps.json" ]; } \
+  && ok "the apply deletes the member file in the checkout and nothing else of it: the same refs, a clean tree, the exclude line stays" || no "link none apply: rc=$rc $(out)"
 before=$(alpha_all)
 
 # --- nobody but the lead: a member's run, a member mark, a coordinator label
