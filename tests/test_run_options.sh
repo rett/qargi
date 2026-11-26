@@ -397,5 +397,16 @@ ro_store b2 models.run_options.local.fakebind '["image_generation"]'
 prep b2 --slug b2a --profile imgs
 { [ "$PREP_RC" = 2 ] && grep -q 'has no recorded approval of its declaration' <<<"$PREP"; } \
   && ok "binding: an option enabled with no recorded digest is refused at prepare (exit 2), as an approval that cannot be shown" || no "b2a: rc=$PREP_RC $PREP"
+{ grep -q 'take the option out of each profile that selects it' <<<"$PREP" && grep -q 'then select it in the profile again' <<<"$PREP"; } \
+  && ok "binding: the refusal names the whole way (the profile first: a disable is refused while a profile selects the option)" || no "b2a remedy: $PREP"
+# and the way it names works as written: the profile lets go, disable, enable, the profile selects it again
+"$DA" project set b2 profiles.imgs.options '[]' >/dev/null 2>&1
+out=$(DIS b2 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+DIS b2 --runtime fakebind --option "$OPT" --plan "$tok" --approved "stop it" >/dev/null 2>&1
+out=$(EN b2 --runtime fakebind --option "$OPT" 2>&1); tok=$(tokof_ "$out")
+EN b2 --runtime fakebind --option "$OPT" --plan "$tok" --approved "$PHRASE" >/dev/null 2>&1
+"$DA" project set b2 profiles.imgs.options '["image_generation"]' >/dev/null 2>&1
+prep b2 --slug b2b --profile imgs
+{ [ "$PREP_RC" = 0 ] && [ -n "$(line RUN_OPTIONS)" ]; } && ok "binding: the four steps the refusal names approve it again, and a run is prepared" || no "b2b: rc=$PREP_RC $PREP"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }
