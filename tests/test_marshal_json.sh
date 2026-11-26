@@ -344,8 +344,8 @@ call L marshal claim f6 --as alice --goal "branch will go"
 git -C "$R" branch -q -D feature/f6
 cp "$(LREC f6)" "$T/f6.before"; rm -f "$L0/s/audit.log"; cp -a "$L0/s/features" "$T/features.before"
 call L marshal status f6 --no-write --json
-[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].status == "active" and .features[0].ghost == false and .features[0].branch == false and .remote == "none"' "$T/o" >/dev/null \
-  && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status NAME --no-write: a record whose branch is gone is shown as it is and stays byte for byte" || no "status --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o")"
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true and .features[0].lead == null and .features[0].branch == false and .remote == "none"' "$T/o" >/dev/null \
+  && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status NAME --no-write: a record whose branch is gone is shown abandoned (the transition applied in memory) and stays byte for byte" || no "status --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o")"
 call L marshal status --all --no-write --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write: the same" || no "status --all --no-write: rc=$RC $(cat "$T/v")"
 call L marshal status --all --no-write
@@ -358,6 +358,25 @@ call L marshal status f6 --json
 [ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true' "$T/o" >/dev/null && ! cmp -s "$(LREC f6)" "$T/f6.before" \
   && ok "status NAME (without --no-write): the default is unchanged, the record is marked abandoned" || no "status f6 default: rc=$RC $(head -c 300 "$T/o")"
 git -C "$R" branch -q feature/f6 develop
+
+# a record whose branch is gone but whose lead is another live lead: the writing call clears the lead (the feature is abandoned) and answers
+# free; --no-write must give the same answer from the same transition applied in memory, and leave the record byte for byte
+git -C "$R" branch feature/f7 develop
+call L marshal claim f7 --as alice --goal "branch will go too"
+git -C "$R" branch -q -D feature/f7
+cp "$(LREC f7)" "$T/f7.before"
+call L marshal check f7 --as bob --no-write --json
+rc_nw=$RC; cp "$T/o" "$T/f7.nw.json"; cp "$T/e" "$T/f7.nw.err"
+cmp -s "$(LREC f7)" "$T/f7.before" && rec_same=1 || rec_same=0
+[ "$rc_nw" = 0 ] && valid qargi-marshal-check && jq -e '.answer == "free" and .feature == "f7"' "$T/o" >/dev/null && [ "$rec_same" = 1 ] \
+  && ok "check NAME --no-write: a gone branch with a live foreign lead answers free (not marshal-feature-held) and the record is byte for byte" || no "check f7 --no-write: rc=$rc_nw same=$rec_same $(cat "$T/v"; head -c 300 "$T/o"; cat "$T/e")"
+call L marshal status f7 --no-write --json
+[ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true and .features[0].lead == null' "$T/o" >/dev/null && cmp -s "$(LREC f7)" "$T/f7.before" \
+  && ok "status NAME --no-write: the same record leads with ghost true and no lead" || no "status f7 --no-write: rc=$RC $(head -c 300 "$T/o")"
+call L marshal check f7 --as bob --json
+[ "$RC" = 0 ] && ! cmp -s "$(LREC f7)" "$T/f7.before" && diff <(jq -S 'del(.generated_at)' "$T/f7.nw.json") <(jq -S 'del(.generated_at)' "$T/o") >/dev/null \
+  && diff <(sed 's/[0-9]\+ min/N min/' "$T/f7.nw.err") <(sed 's/[0-9]\+ min/N min/' "$T/e") >/dev/null \
+  && ok "check NAME (writing): the same answer and warnings as with --no-write, and only now the record is marked abandoned" || no "check f7 writing: rc=$RC $(diff "$T/f7.nw.json" "$T/o"; diff "$T/f7.nw.err" "$T/e")"
 
 # the shared records: nothing fetched, no cache written, the answer says not-asked
 OBS=$T/m/a/s/features/.observed-app.json

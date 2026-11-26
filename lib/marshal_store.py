@@ -1221,8 +1221,9 @@ def worktrees_of(ctx, name):
 
 def ghost_fix(ctx, name, rec):
     """A record whose branch is gone and that never finished is abandoned: record the transition. -> the record.
-    Only the local backend writes it (a read never pushes, and another machine may simply not have the branch)."""
-    if rec is None or not ctx.be.ghost_fix or ctx.no_write or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
+    Only the local backend writes it (a read never pushes, and another machine may simply not have the branch).
+    Under --no-write the transition is applied to a copy in memory and nothing is written, so the answer is the writing call's."""
+    if rec is None or not ctx.be.ghost_fix or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
         return rec
 
     def fn(r):
@@ -1232,6 +1233,8 @@ def ghost_fix(ctx, name, rec):
         r["status"], r["lead"] = "abandoned", None
         r["note"] = r["note"] or "branch feature/%s is gone" % name
         return r, r
+    if ctx.no_write:
+        return fn(dict(rec))[1]
     return update(ctx, name, fn)
 
 
