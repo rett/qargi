@@ -3182,8 +3182,10 @@ class RunHome(LibraryBase):
     def with_home(self, home, **disp):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
-    def test_the_codex_runtime_links_only_its_sign_in(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]})
+    def test_the_codex_runtime_links_only_its_sign_in_as_a_private_copy(self):
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [
+            {"from": "~/.codex-members/auth.json", "to": "auth.json",
+             "private": {"set": {"tokens.refresh_token": "qargi-no-refresh"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}}}]})
         self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
 
@@ -4630,8 +4632,10 @@ class Review(unittest.TestCase):
 
     def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
         rv, got = self.home_lines(shipped("codex.json"))
-        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex-members/auth.json as auth.json"]})
-        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex-members/auth.json as auth.json"])
+        copy = ("~/.codex-members/auth.json as auth.json (a private copy, not a link: a placeholder is put at tokens.refresh_token; the run is refused when the value at "
+                "tokens.access_token, read as jwt-exp, ends within its bound plus 900 s)")
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": [copy]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: " + copy])
         two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
         self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
                                                    "~/.f/a.json as a.json, ~/.f/b as b"])

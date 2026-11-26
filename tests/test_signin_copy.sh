@@ -299,5 +299,9 @@ out=$($DA local clean "$K2" --discard 2>&1); rc=$?
   && ok "local clean --discard removes a SIGKILLed run with its copy, says so, and the source is untouched" || no "clean: rc=$rc $out"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
 
+# --- the shipped runtime that declares it ------------------------------------------------------------------------------------------------------
+{ [ "$(jq -c '.dispatch.home.link[0].private' lib/providers/codex.json)" = '{"set":{"tokens.refresh_token":"qargi-no-refresh"},"expiry":{"path":"tokens.access_token","encoding":"jwt-exp"}}' ] \
+  && [ "$(jq -r '.dispatch.home.link[0].from' lib/providers/codex.json)" = \~/.codex-members/auth.json ] && [ "$(jq '.dispatch.home.link | length' lib/providers/codex.json)" = 1 ]; } \
+  && ok "codex declares its members' sign-in as a private copy with the placeholder and the access token's expiry (the default margin)" || no "codex descriptor: $(jq -c .dispatch.home lib/providers/codex.json)"
 rm -rf "$T"
 exit $fail
