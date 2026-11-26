@@ -2423,7 +2423,7 @@ def check_signin_early(plan):
     """A private copy whose token would end inside the run's bound refuses the run here, before anything is made or recorded: no attempt is consumed (no
     dispatch.json, so no --again is needed once the sign-in is made again). The runner checks again once it holds the locks of its plain links, for
     the wait has no bound; the copy is made from that second read."""
-    home = plan["home"]
+    home = plan.get("home")
     if home and home.get("copies"):
         prepare_copies(home, plan)
         home["expires"].clear()
