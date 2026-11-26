@@ -101,7 +101,8 @@ BR=$B0/app; make_repo "$BR"
 for i in $(seq 1 120); do git -C "$BR" branch "feature/a-long-feature-name-for-the-size-limit-$(printf %03d "$i")" develop; done
 project_answers "$B0/home" "$B0/c" "$B0/s" "$BR" \
   | jq '.methodology_accepted = [range(60) | {gap: ("file: DOC-" + tostring + ".md"), reason: ("x" * 480), date: "2026-01-01"}]' > "$B0/c/projects/app.json"
-B() { env HOME="$B0/home" QARGI_CONF="$B0/c" QARGI_STATE="$B0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" "$@"; }
+# B and XE run from the scratch directory, which is no git tree: the `cwd` of a handoff is then null whether or not the checkout under test is one
+B() { (cd "$T" && env HOME="$B0/home" QARGI_CONF="$B0/c" QARGI_STATE="$B0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" "$@"); }
 keep handoff.local-truncated.json B marshal handoff --json
 
 # ================================================================ the shared refs backend, integrity advisory (an unkeyed machine: its records are unsigned)
@@ -109,7 +110,7 @@ ORIGIN=$T/origin.git
 make_origin "$ORIGIN"
 make_machine a
 for n in r1 r2; do git -C "$T/m/a/app" branch "feature/$n" develop; done
-XE() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="${MONO:-1000}" QARGI_LEAD=op "$@"; }
+XE() { (cd "$T" && env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="${MONO:-1000}" QARGI_LEAD=op "$@"); }
 WORDS="the shared refs are fine for this project"
 tk=$(XE "$DA" marshal enable | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 XE "$DA" marshal enable --plan "$tk" --approved "$WORDS" >/dev/null || die "enable the shared refs"

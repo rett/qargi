@@ -328,14 +328,25 @@ env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$N
 [ "$RC" = 1 ] && [ ! -e "$W/full.json" ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "handoff --json --write to a full stdout: exit 1 and no file" || no "handoff full stdout: rc=$RC file=$(ls "$W") $(cat "$T/e")"
 env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" "$DA" marshal handoff --json >&- 2>"$T/e"; RC=$?
 [ "$RC" != 0 ] && ok "handoff --json with stdout closed: a non-zero exit ($RC)" || no "handoff --json closed: rc=$RC $(cat "$T/e")"
-# the file cannot be made after the document was written: a refusal naming the file, exit 1, and the document stays on stdout
+# a directory that is not writable is known before anything is printed: a refusal, exit 1, standard output empty, the file named in the sentence
 mkdir -p "$W/ro"; chmod 555 "$W/ro"
 call L marshal handoff --json --write "$W/ro/note.json"
 if [ "$(id -u)" != 0 ]; then
-  [ "$RC" = 1 ] && jq -e '.kind == "qargi-handoff"' "$T/o" >/dev/null && grep -q 'marshal-handoff-file' "$T/e" && grep -q "ro/note.json" "$T/e" \
-    && ok "handoff --json --write: a file that cannot be made after the document was written is a refusal (exit 1) naming the file" || no "handoff write fails late: rc=$RC $(head -c 200 "$T/o"; cat "$T/e")"
+  refusal marshal-handoff-file 1 && grep -q "ro/note.json" "$T/e" && [ ! -e "$W/ro/note.json" ] \
+    && ok "handoff --json --write: a directory that is not writable is a refusal before the document (marshal-handoff-file, exit 1, empty stdout)" || no "handoff write to a read-only directory: $(refusal marshal-handoff-file 1; head -c 200 "$T/o"; cat "$T/e")"
+  call L marshal handoff --write "$W/ro/note.txt"
+  refusal marshal-handoff-file 1 && ok "handoff --write (text): the same refusal" || no "handoff text write to a read-only directory: $(refusal marshal-handoff-file 1)"
 fi
 chmod 755 "$W/ro"
+# a file that cannot be made although every check passed (a name the file system refuses) is found after the document was printed: the document stays on
+# standard output, standard error has one plain line, the exit is 1 and there is no refusal line, so a refusal still means an empty standard output
+LONG=$(printf 'n%.0s' $(seq 1 300))
+call L marshal handoff --json --write "$W/$LONG"
+if [ "$RC" = 1 ] && valid qargi-handoff && ! grep -q '^qargi-refusal/1 ' "$T/e" && grep -q '^qargi: cannot write ' "$T/e" && ! grep -q Traceback "$T/e" && [ "$(wc -l <"$T/e")" = 1 ]; then
+  ok "handoff --json --write: a file that cannot be made after the document was printed is one plain line on stderr and exit 1, with no refusal line"
+else no "handoff write fails late: rc=$RC $(cat "$T/v"; head -c 200 "$T/o"; cat "$T/e")"; fi
+call L marshal handoff --write "$W/$LONG"
+refusal marshal-handoff-file 1 && ok "handoff --write (text): the same file is a refusal with empty stdout (nothing was printed before it)" || no "handoff text write fails: $(refusal marshal-handoff-file 1; head -c 200 "$T/o")"
 
 # ================================================================ (8) --no-write: nothing is written and nothing is fetched
 # a local record whose branch is gone: status and check mark it abandoned (and write the record); with --no-write the record stays byte for byte
@@ -344,8 +355,8 @@ call L marshal claim f6 --as alice --goal "branch will go"
 git -C "$R" branch -q -D feature/f6
 cp "$(LREC f6)" "$T/f6.before"; rm -f "$L0/s/audit.log"; cp -a "$L0/s/features" "$T/features.before"
 call L marshal status f6 --no-write --json
-[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].status == "active" and .features[0].ghost == false and .features[0].branch == false and .remote == "none"' "$T/o" >/dev/null \
-  && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status NAME --no-write: a record whose branch is gone is shown as it is and stays byte for byte" || no "status --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o")"
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true and .features[0].lead == null and .features[0].branch == false and .remote == "none"' "$T/o" >/dev/null \
+  && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status NAME --no-write: a record whose branch is gone is shown abandoned (the transition applied in memory) and stays byte for byte" || no "status --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o")"
 call L marshal status --all --no-write --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write: the same" || no "status --all --no-write: rc=$RC $(cat "$T/v")"
 call L marshal status --all --no-write
@@ -358,6 +369,42 @@ call L marshal status f6 --json
 [ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true' "$T/o" >/dev/null && ! cmp -s "$(LREC f6)" "$T/f6.before" \
   && ok "status NAME (without --no-write): the default is unchanged, the record is marked abandoned" || no "status f6 default: rc=$RC $(head -c 300 "$T/o")"
 git -C "$R" branch -q feature/f6 develop
+
+# a record whose branch is gone but whose lead is another live lead: the writing call clears the lead (the feature is abandoned) and answers
+# free; --no-write must give the same answer from the same transition applied in memory, and leave the record byte for byte
+git -C "$R" branch feature/f7 develop
+call L marshal claim f7 --as alice --goal "branch will go too"
+git -C "$R" branch -q -D feature/f7
+cp "$(LREC f7)" "$T/f7.before"
+call L marshal check f7 --as bob --no-write --json
+rc_nw=$RC; cp "$T/o" "$T/f7.nw.json"; cp "$T/e" "$T/f7.nw.err"
+cmp -s "$(LREC f7)" "$T/f7.before" && rec_same=1 || rec_same=0
+[ "$rc_nw" = 0 ] && valid qargi-marshal-check && jq -e '.answer == "free" and .feature == "f7"' "$T/o" >/dev/null && [ "$rec_same" = 1 ] \
+  && ok "check NAME --no-write: a gone branch with a live foreign lead answers free (not marshal-feature-held) and the record is byte for byte" || no "check f7 --no-write: rc=$rc_nw same=$rec_same $(cat "$T/v"; head -c 300 "$T/o"; cat "$T/e")"
+call L marshal status f7 --no-write --json
+[ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true and .features[0].lead == null' "$T/o" >/dev/null && cmp -s "$(LREC f7)" "$T/f7.before" \
+  && ok "status NAME --no-write: the same record leads with ghost true and no lead" || no "status f7 --no-write: rc=$RC $(head -c 300 "$T/o")"
+call L marshal check f7 --as bob --json
+[ "$RC" = 0 ] && ! cmp -s "$(LREC f7)" "$T/f7.before" && diff <(jq -S 'del(.generated_at)' "$T/f7.nw.json") <(jq -S 'del(.generated_at)' "$T/o") >/dev/null \
+  && diff <(sed 's/[0-9]\+ min/N min/' "$T/f7.nw.err") <(sed 's/[0-9]\+ min/N min/' "$T/e") >/dev/null \
+  && ok "check NAME (writing): the same answer and warnings as with --no-write, and only now the record is marked abandoned" || no "check f7 writing: rc=$RC $(diff "$T/f7.nw.json" "$T/o"; diff "$T/f7.nw.err" "$T/e")"
+
+# nothing is made at all: not the releases directory that the project load makes, and not the state or config directories that the first load of lib.sh makes
+rm -rf "$L0/s/releases"
+call L marshal status --all --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && [ ! -e "$L0/s/releases" ] && ok "status --no-write: the releases directory is not made when it is missing" || no "status --no-write makes releases: rc=$RC $(ls "$L0/s")"
+call L marshal check f1 --as alice --no-write
+[ "$RC" = 0 ] && [ ! -e "$L0/s/releases" ] && ok "check --no-write: the releases directory is not made when it is missing" || no "check --no-write makes releases: rc=$RC $(ls "$L0/s")"
+call L marshal status --all
+[ "$RC" = 0 ] && [ -d "$L0/s/releases" ] && ok "status (writing): the releases directory is made, as before" || no "status makes no releases directory: rc=$RC"
+rm -rf "$T/ns"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal status f1 --no-write --json >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ ! -e "$T/ns" ] && ok "status --no-write: with no state directory and no home, none is made (the first-load setup is off)" || no "status --no-write makes the state: rc=$RC $(ls -R "$T/ns" 2>&1 | head)"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal check f1 --as alice --no-write >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ ! -e "$T/ns" ] && ok "check --no-write: the same" || no "check --no-write makes the state: rc=$RC $(ls -R "$T/ns" 2>&1 | head)"
+call env HOME="$T/ns/home" QARGI_CONF="$L0/c" QARGI_STATE="$T/ns/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "$DA" marshal status f1 >"$T/o" 2>"$T/e"
+[ "$RC" = 0 ] && [ -d "$T/ns/s" ] && ok "status without --no-write: the state directory is made by the first load, as before" || no "status makes no state: rc=$RC"
+rm -rf "$T/ns"
 
 # the shared records: nothing fetched, no cache written, the answer says not-asked
 OBS=$T/m/a/s/features/.observed-app.json

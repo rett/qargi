@@ -78,6 +78,7 @@ CAP = 2000
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 ID_RE = re.compile(r"^[A-Za-z0-9._@:+-]{1,128}$")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+MAX_REV = 2 ** 53 - 1      # the largest integer a pinned JSON document holds (lib/jsonkind.py MAX_INT): a record with a larger rev could not be shown
 CTRL_ALL_RE = re.compile(r"[\x00-\x1f\x7f]+")        # every control character, a newline and a tab too
 
 
@@ -412,6 +413,8 @@ def sane(rec):
     rev = rec.get("rev")
     if rev is not None and (not isinstance(rev, int) or isinstance(rev, bool) or rev < 0):
         return "its rev is not a number"
+    if rev is not None and rev > MAX_REV:
+        return "its rev is beyond 2^53 - 1"      # a pinned document holds no integer past that (docs/reference/json-output.md): the record is as unusable as a wrong type
     return None
 
 
@@ -1221,8 +1224,9 @@ def worktrees_of(ctx, name):
 
 def ghost_fix(ctx, name, rec):
     """A record whose branch is gone and that never finished is abandoned: record the transition. -> the record.
-    Only the local backend writes it (a read never pushes, and another machine may simply not have the branch)."""
-    if rec is None or not ctx.be.ghost_fix or ctx.no_write or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
+    Only the local backend writes it (a read never pushes, and another machine may simply not have the branch).
+    Under --no-write the transition is applied to a copy in memory and nothing is written, so the answer is the writing call's."""
+    if rec is None or not ctx.be.ghost_fix or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
         return rec
 
     def fn(r):
@@ -1232,6 +1236,8 @@ def ghost_fix(ctx, name, rec):
         r["status"], r["lead"] = "abandoned", None
         r["note"] = r["note"] or "branch feature/%s is gone" % name
         return r, r
+    if ctx.no_write:
+        return fn(dict(rec))[1]
     return update(ctx, name, fn)
 
 

@@ -6,7 +6,7 @@
      or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
   3. a kind has no v<schema> directory, a rule that applies to the kind has no broken file, or a file of the directory is in no cases.json;
   4. lib/kinds/KIND.json differs from the frozen KIND/vN/registry.json by more than R-J3 allows (a field removed or renamed, a type changed, an enum
-     word lost or added to a closed enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
+     word lost, added to a closed enum, or a null added to any enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
   5. a field of the live registry appears in no valid fixture;
   6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag).
 
@@ -402,8 +402,12 @@ def compare(frozen, live):
             new = [e for e in b["enum"] if e not in a["enum"]]
             if gone:
                 out.append("%s: the enum lost %s" % (where, ", ".join(map(repr, gone))))
-            if new and not a.get("x-open"):
-                out.append("%s: the closed enum gained %s (a new word is additive only where the frozen registry declares x-open)" % (where, ", ".join(map(repr, new))))
+            if any(e is None for e in new):
+                # null is not a word: a reader that was told the field is never null breaks on it, so it raises the integer even where the enum is x-open
+                out.append("%s: the enum now allows null (a nullability change, whether or not the enum is x-open)" % where)
+            words = [e for e in new if e is not None]
+            if words and not a.get("x-open"):
+                out.append("%s: the closed enum gained %s (a new word is additive only where the frozen registry declares x-open)" % (where, ", ".join(map(repr, words))))
         if set(a.get("required", [])) != set(b.get("required", [])):
             diff = set(b.get("required", [])) - set(a.get("required", []))
             back = set(a.get("required", [])) - set(b.get("required", []))
@@ -773,6 +777,15 @@ def self_test():
         r = copy_tree()
         edit(r, "qargi-marshal-status", lambda g: g["document"]["properties"]["remote"].update(enum=g["document"]["properties"]["remote"]["enum"] + ["elsewhere"]))
         expect("a word added to a closed enum fails point 4", r, [4], "the closed enum gained 'elsewhere'")
+        r = copy_tree()
+        edit(r, "qargi-marshal-status", lambda g: g["document"]["$defs"]["feature"]["properties"]["integrity"].update(enum=g["document"]["$defs"]["feature"]["properties"]["integrity"]["enum"] + ["fresh"]))
+        expect("a word added to an x-open enum passes point 4", r, [], None)
+        r = copy_tree()
+        edit(r, "qargi-marshal-status", lambda g: g["document"]["$defs"]["feature"]["properties"]["integrity"].update(enum=g["document"]["$defs"]["feature"]["properties"]["integrity"]["enum"] + [None]))
+        expect("a null added to an x-open enum fails point 4 as a nullability change", r, [4], "the enum now allows null", exact=True)
+        r = copy_tree()
+        edit(r, "qargi-marshal-status", lambda g: g["document"]["properties"]["remote"].update(enum=g["document"]["properties"]["remote"]["enum"] + [None]))
+        expect("a null added to a closed enum fails point 4 as a nullability change", r, [4], "the enum now allows null")
         r = copy_tree()
         edit(r, "qargi-marshal-status", lambda g: g["document"]["properties"].update(extra_field={"type": "string"}))
         expect("a new field without x-since fails point 4", r, [4], "the new field extra_field has no x-since")

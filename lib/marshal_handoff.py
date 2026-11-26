@@ -1083,6 +1083,8 @@ def write_refusal(path, conf, state, repo=""):
     parent = os.path.realpath(os.path.dirname(os.path.abspath(path)) or ".")
     if not os.path.isdir(parent):
         return "the directory of %s does not exist" % path
+    if not os.access(parent, os.W_OK | os.X_OK):
+        return "the directory of %s is not writable by you" % path
     real = os.path.join(parent, os.path.basename(path))
     for label, d in (("configuration", conf), ("state", state)):
         if d:
@@ -1153,6 +1155,11 @@ def main(argv):
             try:
                 write_note(a.write, text)
             except OSError as e:
+                if a.json:
+                    # the document is on standard output already: a refusal promises an empty standard output, so this is a plain sentence and exit 1 (write_refusal
+                    # catches what can be known before the document is printed)
+                    print("qargi: cannot write %s: %s (the document was printed on standard output; no file was made)" % (a.write, e.strerror or e), file=sys.stderr)
+                    return 1
                 raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e), "marshal-handoff-file")
             record_written(a, M, F, text)
             # with --json the document is the output, so the sentence goes to standard error, after the file is made
