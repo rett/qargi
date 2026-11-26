@@ -506,6 +506,10 @@ def private_problems(ln, at):
                 bad.append("%s.expiry.margin_seconds: %s is not a whole number of seconds from 0 to %d" % (where, _show(m), PRIVATE_MARGIN_MAX))
             if "encoding" in ex and ex["encoding"] not in PRIVATE_ENCODINGS:
                 bad.append("%s.expiry.encoding: %s is not one of %s" % (where, _show(ex["encoding"]), ", ".join(PRIVATE_ENCODINGS)))
+    if isinstance(st, dict) and isinstance(ex, dict) and isinstance(ex.get("path"), str):
+        for k in st:                                     # a placeholder put at the expiry path, or at a part of it, would replace the token the expiry is read from
+            if isinstance(k, str) and (ex["path"] == k or ex["path"].startswith(k + ".")):
+                bad.append("%s.set[%s]: the placeholder would replace the token at expiry.path %s (a set path is neither the expiry path nor a part of it)" % (where, _show(k), _show(ex["path"])))
     frm = ln.get("from")
     if isinstance(frm, str) and not frm.endswith(".json"):
         bad.append("%s: the source %s of a private copy is a JSON file (its name ends in .json)" % (where, _show(frm)))

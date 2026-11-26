@@ -3277,6 +3277,39 @@ class RunHome(LibraryBase):
                 home = {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": frm, "to": "auth.json", "private": self.PRIVATE}]}
                 self.assertTrue(P.home_problems(home) or P.home_source_forbidden(self.with_home(home), "fakecli"))
 
+    def test_a_placeholder_may_not_replace_the_token_the_expiry_is_read_from(self):
+        """A `set` path equal to expiry.path, or a dotted prefix of it, would put the placeholder where the expiry token is: refused by the definition check
+        and by qargi local run. A sibling or a longer path is not that."""
+        def link(st, path="tokens.access_token"):
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json",
+                                                                    "private": {"set": st, "expiry": {"path": path, "encoding": "jwt-exp"}}}]}
+        for st, path in (({"tokens.access_token": "x"}, "tokens.access_token"), ({"tokens": "x"}, "tokens.access_token"),
+                         ({"tokens.refresh_token": "x", "tokens": "x"}, "tokens.access_token"), ({"a": "x"}, "a")):
+            with self.subTest(set=st):
+                home = link(st, path)
+                needle = "the placeholder would replace the token at expiry.path"
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))
+                f = fails(self.with_home(home), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+        for st, path in (({"tokens.refresh_token": "x"}, "tokens.access_token"), ({"tokens.access_token.x": "x"}, "tokens.access_token"),
+                         ({"tokens.refresh": "x"}, "tokens.refresh_token"), ({"token": "x"}, "tokens.access_token")):
+            with self.subTest(fine=st):
+                self.assertEqual([m for m in P.home_problems(link(st, path)) if "expiry.path" in m], [])
+
+    def test_the_expiry_is_read_from_the_source_before_a_placeholder_is_put_in(self):
+        """prepare_copies reads the value at expiry.path from the parsed source first, so the order of `set` can never hide the token."""
+        import local_run as L
+        sys.path.insert(0, HERE)
+        from dummy_signin import signin
+        spec = {"set": {"tokens.access_token": "qargi-placeholder"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp", "margin_seconds": 0}}
+        home = {"copies": [("auth.json", "/nowhere/auth.json")], "from": {"auth.json": "~/.fakecli/auth.json"}, "private": {"auth.json": spec}, "expires": {},
+                "runtime": "fakecli", "env": "FAKECLI_HOME", "doc": {}}
+        with mock.patch.object(L, "read_source", lambda *a: signin(3000).encode()):
+            out = L.prepare_copies(home, {"timeout_s": 60})
+        doc = json.loads(out["auth.json"].decode())
+        self.assertEqual(doc["tokens"]["access_token"], "qargi-placeholder")         # the placeholder is in the copy, though the expiry was read from the same path
+        self.assertTrue(2900 < home["expires"]["auth.json"] <= 3000, home["expires"])
+
     def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
         d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
         self.assertTrue(any("is also in dispatch.env_pass" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))

@@ -679,16 +679,16 @@ def prepare_copies(home, plan):
         if not isinstance(doc, dict):
             fail("the sign-in %s for %s member runs is not a JSON object, which a private copy needs (a program may be writing it; try again, or if it is damaged, %s); "
                  "nothing is copied" % (frm, home["runtime"], how))
-        for path, text in spec["set"].items():
-            parent, _, key = path.rpartition(".")
+        path = spec["expiry"]["path"]
+        ok, value = dig(doc, path)                       # the expiry is read from the source as read, before any placeholder is put in: the order of `set` cannot matter
+        exp = jwt_exp(value) if ok else None
+        for sp, text in spec["set"].items():
+            parent, _, key = sp.rpartition(".")
             ok, at = dig(doc, parent) if parent else (True, doc)
             if not ok or not isinstance(at, dict):
                 fail("the sign-in %s for %s member runs has no object at %s, where the private copy puts its placeholder; nothing is copied. %s" % (
                     frm, home["runtime"], parent, how[0].upper() + how[1:]))
             at[key] = text
-        path = spec["expiry"]["path"]
-        ok, value = dig(doc, path)
-        exp = jwt_exp(value) if ok else None
         if exp is None:
             fail("the sign-in %s for %s member runs has no token with an expiry at %s (%s); nothing is copied. %s" % (
                 frm, home["runtime"], path, spec["expiry"]["encoding"], how[0].upper() + how[1:]))
