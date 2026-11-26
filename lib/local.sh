@@ -66,7 +66,7 @@ NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so
 
 # home_residue RUN -> what a start of `local run` left in the run home (dispatch.home), one line each, nothing while a runner of the run is alive. RUN/dispatch.json
 # (the start record, or the end record of a run that ended) names the run home's directory and its links; each that is still a link, and a run home that is a link
-# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it; so is a private copy (home.private, a regular file). The record is a
+# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it; so is a private copy (home.private, a regular file, found by its name, or by its sha256 when it was renamed). The record is a
 # member's to write, so this only reports; local run --again replaces the links and copies and local clean removes the run with them.
 home_residue() {
   local d=$1 rec dir r n
@@ -87,6 +87,18 @@ home_residue() {
     [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
     [ ! -f "$d/home/$dir/$n" ] || [ -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a private copy of a sign-in that a start of qargi local run left: its runner did not end)"
   done < <(jq -r '.home.private[]? | .to | strings' "$rec" 2>/dev/null)
+  # a copy the runtime or the member renamed inside the run home: a regular file under it with the sha256 the start record names (home.private[].sha256, the copy as
+  # written; the record holds no content), found by content under another name; no link is followed, files over 1 MiB are not read, and at most 5000 files are looked at
+  local s f
+  while IFS=$'\t' read -r n s; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [[ $s =~ ^[0-9a-f]{64}$ ]] || continue
+    while IFS= read -r -d '' f; do
+      [ "$f" != "$d/home/$dir/$n" ] || continue
+      if [ "$(sha256sum < "$f" 2>/dev/null | cut -c1-64)" = "$s" ]; then
+        echo "$f (a private copy of a sign-in, moved from $n inside the run home, that a start of qargi local run left: its runner did not end)"
+      fi
+    done < <(find -P "$d/home" -type f -size -1048577c -print0 2>/dev/null | head -z -n 5000)
+  done < <(jq -r '.home.private[]? | select((.to | type) == "string" and (.sha256 | type) == "string") | [.to, .sha256] | @tsv' "$rec" 2>/dev/null)
 }
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend

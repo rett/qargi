@@ -58,6 +58,9 @@ case \$(cat "$T/mode" 2>/dev/null) in
   rewrite) echo '{"rewritten": "by the member"}' > "\$a";;
   replace) rm -f "\$a"; echo '{"replaced": "by the member"}' > "\$a";;
   delete)  rm -f "\$a";;
+  move)    mv "\$a" "\$FAKESI_HOME/renamed.bak";;
+  holdmove) mv "\$a" "\$FAKESI_HOME/renamed.bak"; echo \$\$ > "$T/member.pid"; : > "$T/hold-ready"
+           while [ ! -e "$T/hold-go" ]; do sleep 0.1; done;;
   hold)    echo \$\$ > "$T/member.pid"; : > "$T/hold-ready"
            while [ ! -e "$T/hold-go" ]; do sleep 0.1; done;;
 esac
@@ -116,17 +119,21 @@ for r in "$R1" "$R2"; do
 done
 { [ "$(sum "$SRC")" = "$BEFORE" ] && [ "$(stat -c %a "$SRC")" = 600 ] && notokens "$R1/dispatch.json" "$R2/dispatch.json" "$T/p1.out" "$T/p2.out"; } \
   && ok "the source is byte for byte as it was, and no token is in an output or in dispatch.json" || no "source or record: $(cat "$R1/dispatch.json")"
-want='[{"expires_in_seconds":0,"set":["tokens.refresh_token"],"to":"auth.json"}]'
-got=$(jq -c '.home.private | map(.expires_in_seconds |= (if . > 259000 and . <= 259200 then 0 else . end))' "$R1/dispatch.json")
+want='[{"expires_in_seconds":0,"set":["tokens.refresh_token"],"sha256":"x","to":"auth.json"}]'
+got=$(jq -c '.home.private | map(.expires_in_seconds |= (if . > 259000 and . <= 259200 then 0 else . end) | .sha256 |= (if test("^[0-9a-f]{64}$") then "x" else . end))' "$R1/dispatch.json")
 { [ "$got" = "$want" ] && [ "$(jq -c '.home | {links, private: (.private | length)}' "$R1/dispatch.json")" = '{"links":[],"private":1}' ]; } \
-  && ok "dispatch.json records home.private: the name, the paths set and the seconds left at the start, and no link" || no "record: $got $(jq -c .home "$R1/dispatch.json")"
+  && ok "dispatch.json records home.private: the name, the paths set, the seconds left at the start and the sha256 of the copy as written, and no link" || no "record: $got $(jq -c .home "$R1/dispatch.json")"
 rm -f "$T/mode" "$T"/in.*
 
 # --- what the member does to its copy stays in the run home and is removed: nothing is written to the source ------------------------------
-for mode in rewrite replace delete; do
+for mode in rewrite replace delete move; do
   echo "$mode" > "$T/mode"; prep "cp-$mode"; task
   out=$($DA local run "$RUN" 2>&1); rc=$?
-  case $mode in delete) note='the private copy auth.json was removed from the run home during the run';; *) note='the private copy auth.json was changed during the run';; esac
+  case $mode in
+    delete) note='the private copy auth.json was not found at its name in the run home at the end of the run (removed or moved, by the runtime or the member); your sign-in is untouched';;
+    move) note='the private copy auth.json was not found at its name in the run home at the end of the run (removed or moved, by the runtime or the member); a file with its content, '"$RUN/home/.fk/renamed.bak"', was found and removed; your sign-in is untouched';;
+    *) note='the private copy auth.json was changed during the run';;
+  esac
   { [ "$rc" = 0 ] && grep -qF "$note" <<<"$out" && [ "$(sum "$SRC")" = "$BEFORE" ] && [ ! -e "$RUN/home/.fk/auth.json" ] && [ -z "$(ls -A "$RUN/home/.fk")" ] \
     && notext "$out" && notokens "$RUN/dispatch.json" && ! grep -qF 'by the member' <<<"$out"; } \
     && ok "the member $mode its copy: the source is untouched, the copy is removed with a note that names it and holds no value" || no "copy $mode: rc=$rc $out $(ls -lA "$RUN/home/.fk")"
@@ -297,6 +304,19 @@ kill -TERM -- -"$(cat "$T/member.pid")"; wait_until '! kill -0 "$(cat "$T/member
 out=$($DA local clean "$K2" --discard 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ ! -e "$K2" ] && grep -qF "removed with the run what its run home held: $COPY (a private copy of a sign-in that a start" <<<"$out" && [ "$(sum "$SRC")" = "$BEFORE" ]; } \
   && ok "local clean --discard removes a SIGKILLed run with its copy, says so, and the source is untouched" || no "clean: rc=$rc $out"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
+# a member that renamed its copy inside the run home and whose runner was killed: local list finds the file by the sha256 the start record names
+echo holdmove > "$T/mode"; prep kill3; task; K3=$RUN; MOVED=$K3/home/.fk/renamed.bak
+( $DA local run "$K3" > "$T/k.out" 2>&1; echo $? > "$T/k.rc" ) &
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -f "$MOVED" ] && [ -n "$(jq -r ".member // empty" "$K3/dispatch.json")" ]' 30
+rm -f "$T/k.rc"; kill -KILL "$(jq -r .runner "$K3/dispatch.json")"; wait_until '[ -s "$T/k.rc" ]' 30
+kill -TERM -- -"$(cat "$T/member.pid")"; wait_until '! kill -0 "$(cat "$T/member.pid")" 2>/dev/null' 10
+out=$($DA local list 2>&1)
+{ grep -qF "  residue: $MOVED (a private copy of a sign-in, moved from auth.json inside the run home, that a start of qargi local run left: its runner did not end)" <<<"$out" \
+  && ! grep -qF "residue: $K3/home/.fk/auth.json" <<<"$out" && notokens "$K3/dispatch.json"; } \
+  && ok "a copy the member renamed inside the run home, runner killed: local list finds the file by the sha256 of the start record (and the record holds no token)" || no "moved residue: $out $(jq -c .home "$K3/dispatch.json")"
+out=$($DA local clean "$K3" --discard 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$K3" ]; } && ok "and local clean --discard removes that run with the moved copy" || no "clean moved: rc=$rc $out"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid"
 
 # --- the shipped runtime that declares it ------------------------------------------------------------------------------------------------------

@@ -62,7 +62,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        private copy still hands the member a live access token in its own home, as the link did: the read barrier does not change, but the
                        refresh token no longer reaches the member. The real sign-in is refreshed by the lead with the runtime's own login (an automatic
                        refresh is a later change). --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
-                       [{to, set (the paths), expires_in_seconds (when the run started)}].
+                       [{to, set (the paths), expires_in_seconds (when the run started), sha256 (of the copy as written)}].
                        The directory is made and the links are removed without following a link a member may have put in the run
                        directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
                        source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
@@ -422,7 +422,7 @@ def plan_home(disp, run, runtime, doc=None):
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
     return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "copies": copies, "missing": missing, "notes": notes, "start": {},
-            "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "expires": {},
+            "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "copy_len": {}, "expires": {},
             "residue": [], "declared": [ln["from"] for ln in h.get("link", [])], "from": {ln["to"]: ln["from"] for ln in h.get("link", [])},
             "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime}
 
@@ -701,12 +701,15 @@ def prepare_copies(home, plan):
 
 
 def private_record(home):
-    """What dispatch.json says of the private copies: [{to, set (the dotted paths, never the texts), expires_in_seconds (when the run started)}]; no value."""
+    """What dispatch.json says of the private copies: [{to, set (the dotted paths, never the texts), expires_in_seconds (when the run started), sha256 (of the
+    copy as written)}]; no value."""
     out = []
     for to, _ in home["copies"]:
         one = {"to": to, "set": sorted(home["private"][to]["set"])}
         if to in home["expires"]:
             one["expires_in_seconds"] = home["expires"][to]
+        if to in home["copy_sum"]:
+            one["sha256"] = home["copy_sum"][to]         # of the copy as written, so a copy renamed in the run home is found again (local list, verify)
         out.append(one)
     return out
 
@@ -735,6 +738,7 @@ def make_copies(fd, home, data):
         finally:
             os.close(cfd)
         home["copy_sum"][to] = hashlib.sha256(data[to]).hexdigest()
+        home["copy_len"][to] = len(data[to])
 
 
 def make_home(run, home, data=None):
@@ -827,7 +831,7 @@ def clear_home(run, home, names):
         return notes + (sweep_home(run, home, names) if names else [])
     try:
         for to in copies:
-            notes += clear_copy(fd, to, home)
+            notes += clear_copy(fd, to, home, run)
         home["copied"] = []
         for to in names:
             src = dict(home["links"]).get(to)
@@ -855,14 +859,57 @@ def clear_home(run, home, names):
     return notes
 
 
-def clear_copy(fd, to, home):
-    """Remove the private copy `to` of the run home (a name only, never through a link), with a note when it is not as qargi wrote it: gone, replaced by a
-    link or another kind of file, or changed (its sha256 is not the one written). What a runtime or a member wrote to it stays in the run home until it is
-    removed here, and is never written to the source; a note names the copy, never a value."""
+def moved_copies(run, home, to, remove):
+    """The regular files under RUN/home (no link followed or entered) whose sha256 is the one of the private copy `to` as qargi wrote it (home["copy_sum"],
+    in memory): the copy a runtime or a member renamed inside the run home. remove: they are removed, a name only. The paths found, never a content."""
+    import hashlib
+    want, size = home["copy_sum"].get(to), home["copy_len"].get(to)
+    if want is None or size is None:
+        return []
+    found = []
+    try:
+        top = sub_fd(run, "home")
+    except OSError:
+        return found
+    try:
+        for dirpath, dirnames, filenames, dfd in os.fwalk(".", dir_fd=top, follow_symlinks=False):
+            for n in filenames:
+                try:
+                    st = os.lstat(n, dir_fd=dfd)
+                    if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+                        continue
+                    rfd = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
+                    try:
+                        h = hashlib.sha256()
+                        while True:
+                            chunk = os.read(rfd, 65536)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+                    finally:
+                        os.close(rfd)
+                    if h.hexdigest() == want:
+                        if remove:
+                            os.unlink(n, dir_fd=dfd)
+                        found.append(os.path.normpath(os.path.join(run, "home", dirpath, n)))
+                except OSError:
+                    continue
+    finally:
+        os.close(top)
+    return found
+
+
+def clear_copy(fd, to, home, run):
+    """Remove the private copy `to` of the run home (a name only, never through a link), with a note when it is not as qargi wrote it: not found at its name
+    (removed, or moved: a file under RUN/home with the sha256 of the copy as written is removed too), replaced by a link or another kind of file, or changed
+    (its sha256 is not the one written). What a runtime or a member wrote to it stays in the run home until it is removed here, and is never written to the
+    source; a note names the copy, never a value."""
     try:
         st = os.lstat(to, dir_fd=fd)
     except FileNotFoundError:
-        return ["the private copy %s was removed from the run home during the run (by the runtime or the member); your sign-in is untouched" % to]
+        gone = moved_copies(run, home, to, True)
+        return ["the private copy %s was not found at its name in the run home at the end of the run (removed or moved, by the runtime or the member)%s; your "
+                "sign-in is untouched" % (to, "; a file with its content, %s, was found and removed" % ", ".join(gone) if gone else "")]
     except OSError as e:
         return ["the private copy %s in the run home could not be checked (%s); it was left in place" % (to, e.strerror or e)]
     if stat.S_ISDIR(st.st_mode):
@@ -2503,10 +2550,11 @@ def run_started(plan, run, store, dispatch_state, sig):
                 locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
                 drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
                 data = prepare_copies(home, plan) if home.get("copies") else {}   # a token that would end inside the run's bound is refused here
-                if home.get("copies"):
-                    begun["home"]["private"] = private_record(home)   # with the seconds each had left at the start
                 made = make_home(run, home, data)        # the links and copies exist for the length of the run only
                 data.clear()
+                if home.get("copies"):                   # with the seconds each had left at the start and the sha256 of each copy as written, on disk before the member starts
+                    begun["home"]["private"] = private_record(home)
+                    write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
             if plan.get('skills') is not None:
                 MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
                 MS.deliver(store, plan['prepared'])
