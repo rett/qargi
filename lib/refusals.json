@@ -516,6 +516,16 @@
       "message": "the run was prepared for the runtime {name}, which it can no longer start on ({why})",
       "next": {"lead": "prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare", "host": "prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare"}
     },
+    "runtime-signin-expiring": {
+      "rule": "A member run starts only when its private copy of the sign-in outlasts the run",
+      "why": "a private copy of a sign-in cannot be refreshed by the runtime (it holds a placeholder in place of the refresh token, so that runs sharing one sign-in do not race on it); a run that outlived the token in the copy would fail half way, after its member had spent its time",
+      "class": "state",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"name": "label", "path": "path", "left": "count", "bound": "count", "margin": "count", "login": "name"},
+      "message": "the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s plus a margin of {margin} s: no member is started",
+      "next": {"lead": "sign in again for members with {login}, which refreshes that sign-in, then start the run again (qargi local run); the run's bound is its profile's timeout or --timeout", "host": "sign in again for members with {login}, which refreshes that sign-in, then start the run again (qargi local run); the run's bound is its profile's timeout or --timeout"}
+    },
     "runtime-hidden-path": {
       "rule": "A member sees its clone, contract and OUT",
       "why": "a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in",

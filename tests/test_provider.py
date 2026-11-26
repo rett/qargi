@@ -3234,6 +3234,42 @@ class RunHome(LibraryBase):
                 self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))     # what qargi local run asks too
         self.assertEqual([m for m in fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link})) if "dispatch.home" in m], [])
 
+    PRIVATE = {"set": {"tokens.refresh_token": "placeholder"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}}
+
+    def test_a_private_link_is_a_copy_with_a_placeholder_and_an_expiry(self):
+        """A link entry may carry private: {set, expiry}. The shape is refused by the definition check and again by qargi local run (home_problems)."""
+        def link(**private):
+            pv = dict(self.PRIVATE, **private)
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": pv}]}
+        good = link()
+        self.assertEqual(P.home_problems(good), [])
+        self.assertEqual([m for m in fails(self.with_home(good), "fakecli") if "dispatch.home" in m], [])
+        cases = (
+            (link(extra=1), "dispatch.home.link[0].private.extra: additional property is not allowed"),
+            (link(set={}), "private.set: {} is not an object of one to 8"),
+            (link(set={"tokens..x": "a"}), "is not a dotted path of keys"),
+            (link(set={"tokens.refresh_token": "caf\u00e9"}), "the text is not 1 to 64 printable characters"),
+            (link(set={"tokens.refresh_token": "x" * 65}), "the text is not 1 to 64 printable characters"),
+            (link(set={"tokens.refresh_token": 5}), "the text is not 1 to 64 printable characters"),
+            (link(expiry={"path": "tokens.access_token", "encoding": "pem"}), "private.expiry.encoding: 'pem' is not one of jwt-exp"),
+            (link(expiry={"path": "tokens.access_token"}), "private.expiry: missing required property 'encoding'"),
+            (link(expiry={"path": "a b", "encoding": "jwt-exp"}), "private.expiry.path: 'a b' is not a dotted path of keys"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "skew": 1}), "private.expiry.skew: additional property is not allowed"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": {"set": self.PRIVATE["set"]}}]}, "private: missing required property 'expiry'"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": []}]}, "private: [] is not an object {set, expiry}"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.yaml", "to": "auth.yaml", "private": self.PRIVATE}]}, "the source '~/.fakecli/auth.yaml' of a private copy is a JSON file"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                f = fails(self.with_home(home), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))
+        # a private link meets the same rules as a plain one: the source in the user's own directory, and a credential store, stay refused
+        for frm in ("~/.codex/auth.json", "~/.ssh/id_ed25519.json"):
+            with self.subTest(frm):
+                home = {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": frm, "to": "auth.json", "private": self.PRIVATE}]}
+                self.assertTrue(P.home_problems(home) or P.home_source_forbidden(self.with_home(home), "fakecli"))
+
     def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
         d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
         self.assertTrue(any("is also in dispatch.env_pass" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))

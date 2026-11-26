@@ -432,6 +432,11 @@ HOME_KEYS = ("env", "dir", "link", "skills_dir")
 HOME_ENV_SET = ("LANG", "LC_ALL", "TZ", "TERM")          # set by qargi local run for every member, beside what env_pass_problem refuses
 HOME_LINK_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 HOME_LINKS_MAX = 8
+PRIVATE_KEYS = ("set", "expiry")                        # a link entry may carry private: {set, expiry}; a private link is a copy, not a link
+PRIVATE_ENCODINGS = ("jwt-exp",)                        # how the value at expiry.path tells when it ends: the exp claim of a JWT, read without a signature check
+PRIVATE_PATH = re.compile(r"^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,5}$")   # a dotted path of keys in a JSON object
+PRIVATE_TEXT = re.compile(r"^[ -~]{1,64}$")             # the plain text a private copy is given at a path: short, printable, one line
+PRIVATE_MAX = 8
 HOME_LINK_DENIED = (                                    # under the user's home: never linked into a run, whatever the runtime says
     (".qargi", "qargi's own configuration, state and credentials"), (".ssh", "the user's ssh keys"), (".gnupg", "the user's keys"),
     (".netrc", "the user's stored logins"), (".git-credentials", "the user's stored git logins"), (".gitconfig", "the user's git configuration"),
@@ -462,6 +467,44 @@ def home_link_problem(src):
         if rel == p or rel.startswith(p + "/"):
             return "%s is never linked into a run: %s" % (_show(src), why)
     return None
+
+
+def private_problems(ln, at):
+    """The findings of the `private` of one link entry (at names it, dispatch.home.link[N]): {set: {PATH: TEXT}, expiry: {path, encoding}}. The link is then
+    a private copy: qargi local run reads the source (a JSON object), puts each TEXT at its dotted PATH, checks that the value at expiry.path (read by
+    expiry.encoding) outlasts the run's bound, and writes the result as a file of the run home that it removes when the run ends; the source is never
+    written. Both keys are required: a copy that cannot refresh must say how long it lasts."""
+    pv = ln.get("private")
+    where = "%s.private" % at
+    if not isinstance(pv, dict):
+        return ["%s: %s is not an object {set, expiry}" % (where, _show(pv))]
+    bad = ["%s.%s: additional property is not allowed" % (where, k) for k in pv if k not in PRIVATE_KEYS]
+    bad += ["%s: missing required property '%s'" % (where, k) for k in PRIVATE_KEYS if k not in pv]
+    st = pv.get("set")
+    if "set" in pv:
+        if not isinstance(st, dict) or not st or len(st) > PRIVATE_MAX:
+            bad.append("%s.set: %s is not an object of one to %d {PATH: TEXT}" % (where, _show(st), PRIVATE_MAX))
+        else:
+            for k, v in st.items():
+                if not isinstance(k, str) or not PRIVATE_PATH.match(k):
+                    bad.append("%s.set: %s is not a dotted path of keys (letters, digits, _ and -, at most 6 parts)" % (where, _show(k)))
+                if not isinstance(v, str) or not PRIVATE_TEXT.match(v):
+                    bad.append("%s.set[%s]: the text is not 1 to 64 printable characters on one line" % (where, _show(k)))
+    ex = pv.get("expiry")
+    if "expiry" in pv:
+        if not isinstance(ex, dict):
+            bad.append("%s.expiry: %s is not an object {path, encoding}" % (where, _show(ex)))
+        else:
+            bad += ["%s.expiry.%s: additional property is not allowed" % (where, k) for k in ex if k not in ("path", "encoding")]
+            bad += ["%s.expiry: missing required property '%s'" % (where, k) for k in ("path", "encoding") if k not in ex]
+            if "path" in ex and (not isinstance(ex["path"], str) or not PRIVATE_PATH.match(ex["path"])):
+                bad.append("%s.expiry.path: %s is not a dotted path of keys" % (where, _show(ex["path"])))
+            if "encoding" in ex and ex["encoding"] not in PRIVATE_ENCODINGS:
+                bad.append("%s.expiry.encoding: %s is not one of %s" % (where, _show(ex["encoding"]), ", ".join(PRIVATE_ENCODINGS)))
+    frm = ln.get("from")
+    if isinstance(frm, str) and not frm.endswith(".json"):
+        bad.append("%s: the source %s of a private copy is a JSON file (its name ends in .json)" % (where, _show(frm)))
+    return bad
 
 
 def home_problems(home, env_pass=(), shape=True):
@@ -506,12 +549,14 @@ def home_problems(home, env_pass=(), shape=True):
             bad += ["dispatch.home.link[%d]: %s is not an object {from, to}" % (i, _show(ln))] if shape else []
             continue
         if shape:
-            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to")]
+            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to", "private")]
             bad += ["dispatch.home.link[%d]: missing required property '%s'" % (i, k) for k in ("from", "to") if k not in ln]
         if "from" in ln:
             why = home_link_problem(ln["from"])
             if why:
                 bad.append("dispatch.home.link[%d].from: %s" % (i, why))
+        if "private" in ln:
+            bad += private_problems(ln, "dispatch.home.link[%d]" % i)
         to = ln.get("to")
         if "to" in ln and (not isinstance(to, str) or not HOME_LINK_NAME.match(to) or to in (".", "..")):
             bad.append("dispatch.home.link[%d].to: %s is not a plain file name (letters, digits, . _ and -, no /)" % (i, _show(to)))
@@ -588,9 +633,14 @@ def home_source_forbidden(doc, runtime):
     return None
 
 
+def login_command(h, frm, cmd):
+    """The command that signs in again for the members' directory of the declared source frm (~/PATH): VAR=DIR COMMAND login, from the definition's own data."""
+    return "%s=%s %s login" % (h.get("env"), os.path.dirname(frm), cmd)
+
+
 def _login_how(h, frm, cmd):
-    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -p %s && chmod 700 %s && %s=%s %s login"
-            % (os.path.dirname(frm), os.path.dirname(frm), h.get("env"), os.path.dirname(frm), cmd))
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -p %s && chmod 700 %s && %s"
+            % (os.path.dirname(frm), os.path.dirname(frm), login_command(h, frm, cmd)))
 
 
 def home_source_problem(doc, runtime):
@@ -2819,11 +2869,15 @@ def _link_lines(doc, runtime):
         one = copy.deepcopy(doc)
         one["dispatch"]["home"]["link"] = [ln]
         forbidden = home_source_forbidden(one, runtime)
-        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, state,
+        lines.append("%s: %s -> %s (real path %s): %s, %s" % ("copy" if isinstance(ln, dict) and "private" in ln else "link", frm, to, real, state,
                      "not inside ~/.codex" if forbidden is None else "refused: " + _first_line(forbidden)))
     why = ("dispatch.home: " + shape[0]) if shape else home_source_problem(doc, runtime)
     if why is None:
-        lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
+        plain = [ln for ln in links if isinstance(ln, dict) and "private" not in ln]
+        if not plain:
+            lines.append("every source is a private copy that cannot refresh the real sign-in, so the runs of %s overlap; a run that would outlive the copy's token is refused before it starts" % runtime)
+        else:
+            lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
     return lines, why
 
 
