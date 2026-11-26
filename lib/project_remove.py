@@ -5,6 +5,7 @@
 
       {"project": NAME, "answers": PATH, "answers_sha": SHA256-OF-THE-FILE,
        "members": [{"name", "roles", "file", "file_exists", "copy", "copy_exists"}],      the members of NAME in agents.json, by name
+       "members_sha": SHA256 of the raw record of the project in agents.json (every member as stored), "" when it has none,
        "approved": the id of the approved verify.environment declaration, "" when there is an entry for it that declares none, null when there is no entry,
        "held": [{"code": REFUSAL-CODE, "values": {FIELD: TEXT}}]}                          what refuses the removal, in a fixed order
 
@@ -97,12 +98,14 @@ def repo_of(answers):
 
 
 def members_of(conf, name):
-    """The members of the project, from agents.json, with what removing each takes away."""
+    """The members of the project, from agents.json, with what removing each takes away, and the hash of the project's raw record there
+    (the text of a member is cut and cleaned for the plan; the hash is of what is stored, so a changed record is a changed token)."""
     doc = load(os.path.join(conf, "agents.json"), {})
     if doc is None or not isinstance(doc, dict):
         sys.exit("qargi: %s cannot be read as the members file; nothing was planned" % os.path.join(conf, "agents.json"))
     projects = doc.get("projects", {}) if doc else {}
     mine = projects.get(name) if isinstance(projects, dict) else None
+    sha = hashlib.sha256(json.dumps(mine, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() if mine is not None else ""
     out = []
     for n in sorted(mine or {}):
         rec = mine[n] if isinstance(mine[n], dict) else {}
@@ -114,7 +117,7 @@ def members_of(conf, name):
             copy = os.path.join(conf, "agents", name, rp)
         out.append({"name": text(n), "roles": [text(r) for r in rec.get("roles", []) if isinstance(r, str)] if isinstance(rec.get("roles"), list) else [],
                     "file": text(f), "file_exists": bool(f) and os.path.isfile(f), "copy": text(copy), "copy_exists": bool(copy) and os.path.isfile(copy)})
-    return out
+    return out, sha
 
 
 def features(repo, bad):
@@ -319,7 +322,8 @@ def scan(name):
     if bad.items:
         held.append({"code": "project-remove-unreadable", "values": {"what": ",".join(w.replace(",", ";") for w, _ in bad.items),
                                                                       "fix": ",".join(f.replace(",", ";") for _, f in bad.items)}})
-    return {"project": name, "answers": ap, "answers_sha": hashlib.sha256(raw).hexdigest(), "members": members_of(conf, name),
+    members, members_sha = members_of(conf, name)
+    return {"project": name, "answers": ap, "answers_sha": hashlib.sha256(raw).hexdigest(), "members": members, "members_sha": members_sha,
             "approved": approved(state, name), "held": held}
 
 

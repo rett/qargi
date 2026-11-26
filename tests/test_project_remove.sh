@@ -286,6 +286,15 @@ for how in "run directory" "member mark" "coordinator label"; do
 done
 grep -q "member-lead-verb" "$T/e" || true
 
+# --- the token is over the raw records of agents.json: a change the plan does not print (a field it cuts or does not show) is a changed token
+cp "$T/c/agents.json" "$T/agents.keep"
+jq '.projects.alpha.forge.note = "a field the plan does not print"' "$T/agents.keep" > "$T/c/agents.json"; before=$(alpha_all)
+run "$DA" project remove alpha; rc=$?
+{ [ $rc = 0 ] && [ -n "$(tokof)" ] && [ "$(tokof)" != "$tok0" ]; } && ok "a changed record of a member in agents.json (a field the plan does not show) is another token" || no "raw record token: rc=$rc $(tokof) vs $tok0"
+run "$DA" project remove alpha --plan "$tok0" --approved go; rc=$?
+{ [ $rc = 1 ] && grep -q "plan-stale" "$T/e" && [ "$before" = "$(alpha_all)" ]; } && ok "the old token is refused (plan-stale) after it, nothing changed" || no "old token after a raw change: rc=$rc $(out)"
+cp "$T/agents.keep" "$T/c/agents.json"; before=$(alpha_all)
+
 # --- the token stays good after all those refusals, and the apply removes alpha and only alpha
 run "$DA" project remove alpha; rc=$?
 { [ $rc = 0 ] && [ "$(tokof)" = "$tok0" ]; } && ok "the plan is the same token after every refusal (nothing that holds the project is part of it)" || no "token after refusals: rc=$rc $(tokof) vs $tok0"

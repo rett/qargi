@@ -124,7 +124,7 @@ the `local`, `review` and `backlog` verbs work with `--base` set to its branch.
   "<the owner's words>"`, writes the audit line `project:remove` with the words, and touches nothing in the repository: no branch,
   no checkout, no git operation that changes anything. The marshal records, the audit log, the project's memory, the rendered
   packs and member render under `~/.qargi/state`, and the stored plans stay. The token covers the project, the hash of the answers
-  file, the approved declaration and each member, and nothing that could hold the removal back, so it stays good after a
+  file, the approved declaration, the hash of the project's raw record in `agents.json` and each member, and nothing that could hold the removal back, so it stays good after a
   refusal. It is refused (exit 2, nothing changed, with the plan as with the apply) when something still names the project, each
   refusal naming the one command that clears it:
 

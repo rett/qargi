@@ -1322,10 +1322,10 @@ PY
       fail "project remove: the scan named a hold this verb does not know ($held); nothing was changed"
     }
     remove_refuse_held "$scan"
-    # the token covers the answers (their hash), the approved declaration and each member: it does not depend on what could hold the removal, so a token stays good after a refusal
-    tok=$({ printf '%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$scan")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$scan")"
+    # the token covers the answers (their hash), the approved declaration, the raw records of the members (their hash) and each member as the plan shows it: it does not depend on what could hold the removal, so a token stays good after a refusal
+    tok=$({ printf '%s\n%s\n%s\n%s\n' "$n" "$(jq -r .answers_sha <<<"$scan")" "$(jq -r 'if .approved == null then "none" elif .approved == "" then "off" else .approved end' <<<"$scan")" "$(jq -r '.members_sha | if . == "" then "none" else . end' <<<"$scan")"
             jq -r '.members[] | [.name, (.roles | join(",")), .file, .copy] | join("|")' <<<"$scan"; } \
-          | plan_token --basis "project answers approved member" --verb "project remove" --target "$n:answers")
+          | plan_token --basis "project answers approved records member" --verb "project remove" --target "$n:answers")
     echo "remove project $n"
     echo "  the stored answers, removed: $(jq -r .answers <<<"$scan")"
     if [ "$(jq -r '.members | length' <<<"$scan")" = 0 ]; then echo "  members: none"; else
