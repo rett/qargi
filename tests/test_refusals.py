@@ -75,10 +75,15 @@ class TheCatalogue(unittest.TestCase):
     def test_the_lint_rejects_what_breaks_a_rule(self):
         self.assertEqual(R.check_catalogue(demo()), [])
         self.assertEqual(R.check_catalogue(demo(**{"class": "methodology", "exit": 2})), [], "a methodology code exits 2")
+        self.assertEqual(R.check_catalogue(demo(**{"class": "marshal-remote", "exit": 3})), [], "a marshal-remote code exits 3")
+        self.assertEqual(R.check_catalogue(demo(**{"class": "marshal", "exit": 1})), [], "a marshal code exits 1")
         cases = {
             "an unknown placeholder": demo(message="{nowhere}"),
             "a why with a placeholder": demo(why="because {verb}"),
-            "an exit that no class uses": demo(exit=3),
+            "an exit that no class uses": demo(exit=4),
+            "an exit 3 in a class that exits 1": demo(exit=3),
+            "a marshal code that exits 3": demo(**{"class": "marshal", "exit": 3}),
+            "a marshal-remote code that exits 1": demo(**{"class": "marshal-remote"}),
             "an exit that is a float": demo(exit=1.0),
             "an exit that is a boolean": demo(exit=True),
             "a seat-gate code that exits 1": demo(**{"class": "seat-gate"}),
@@ -123,12 +128,25 @@ class Rendering(unittest.TestCase):
         lines = text.split("\n")
         self.assertTrue(lines[0].startswith("qargi-refusal/1 {"))
         obj = json.loads(lines[0][len("qargi-refusal/1 "):])
-        self.assertEqual(list(obj), ["code", "exit", "verb", "project", "role", "epoch", "state", "tx", "detail"])
+        self.assertEqual(list(obj), ["code", "exit", "verb", "project", "role", "epoch", "state", "tx", "detail", "schema", "kind"], "schema and kind are the last two keys")
+        self.assertEqual((obj["schema"], obj["kind"]), (1, "qargi-refusal"))
+        self.assertIs(type(obj["schema"]), int)
+        self.assertEqual(obj["schema"], int(lines[0].split(" ", 1)[0].split("/")[1]), "the number in the prefix and schema are equal")
         self.assertEqual((obj["code"], obj["exit"], obj["verb"], obj["project"], obj["role"]), ("demo-code", 1, "release push", "acme", "lead"))
         self.assertEqual((obj["epoch"], obj["state"], obj["tx"]), (None, None, None))
         self.assertEqual(lines[1], "qargi: refused [demo-code] release push moved head at release/1.4.0 (?, 2)")
         self.assertEqual(lines[2:5], ["  why: a reason", "  next: lead: fix release/1.4.0", ""])
         self.assertTrue(text.endswith("\n"))
+
+    def test_a_code_of_the_class_marshal_remote_exits_3_and_the_line_says_so(self):
+        text, rc = self.render([], cat=demo(**{"class": "marshal-remote", "exit": 3}))
+        self.assertEqual(rc, 3)
+        self.assertEqual(json.loads(text.split("\n")[0].split(" ", 1)[1])["exit"], 3, "exit equals the status of the process")
+
+    def test_the_catalogue_page_shows_the_two_keys_and_the_exit_classes(self):
+        page = R.page_text(real())
+        self.assertIn('"detail":"moved=head","schema":1,"kind":"qargi-refusal"}', page)
+        self.assertIn("marshal-remote", page)
 
     def test_a_value_a_lead_chose_is_a_digest_in_detail_and_whole_in_the_human_lines(self):
         text, _ = self.render([("ref", "feature/secret-name"), ("refs", "a,b,c,d,e"), ("moved", "head,base"), ("n", "5")])
