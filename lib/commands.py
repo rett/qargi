@@ -935,7 +935,10 @@ COMMANDS = {
                                "but its output (_site/) is not committed, because a Pages build of the branch needs _site/ empty; a _site/ that an earlier build "
                                "committed is removed by the commit. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the tree to commit; "
                                "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
-                               "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
+                               "command for you to run. With an origin it first asks origin live for the branch (git ls-remote, at most QARGI_REMOTE_TIMEOUT seconds; "
+                               "the remote-tracking ref when origin does not answer, and it says so) and writes a release:site line to the ref journal for the push it prints, "
+                               "from what origin had to the commit just made, so a run prepared before the push still verifies once you push exactly that commit; "
+                               "without an origin nothing more is journaled. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
                          examples=["qargi release site 0.2.3", "qargi release site 0.2.3 --plan TOKEN --approved \"yes, commit the site\""]),
         },

@@ -137,6 +137,14 @@ P2=$(git -C "$R" rev-parse gh-pages)
 jn=$(jq -c --arg o "$P1" --arg n "$P2" 'select(.verb == "release:site" and .ref == "refs/heads/gh-pages" and .remote == "origin" and .old == $o and .new == $n)' "$T/s/ref-journal.jsonl" 2>/dev/null | wc -l)
 [ "$jn" = 1 ] && grep -q "^journaled the push of gh-pages to origin (${P1:0:7} to ${P2:0:7}) ahead of it" "$T/o" && ok "with an origin the push it prints is journaled first: origin's value to the new commit, verb release:site" || no "push journal ($jn): $(grep journal "$T/o"; tail -3 "$T/s/ref-journal.jsonl")"
 [ "$(jq -c 'select(.verb == "release:site" and has("remote"))' "$T/s/ref-journal.jsonl" | wc -l)" = 1 ] && ok "and the first run, without an origin, journaled no push (only the branch move)" || no "remote journal lines: $(cat "$T/s/ref-journal.jsonl")"
+# origin does not answer: the line starts at the remote-tracking ref, and the closing message says that origin was not asked (it does not promise what it cannot know)
+git -C "$R" remote set-url origin "$T/nowhere.git"
+out=$($REL site 0.6.0 2>&1); t=$(tok <<<"$out")
+$REL site 0.6.0 --plan "$t" --approved go > "$T/o" 2>&1; rc=$?
+P4=$(git -C "$R" rev-parse gh-pages)
+{ [ $rc = 0 ] && [ "$P4" != "$P2" ] && grep -q "^journaled the push of gh-pages to origin (${P1:0:7} to ${P4:0:7}) ahead of it, from the remote-tracking ref: origin was not asked (" "$T/o" && ! grep -q "a run prepared before it still verifies" "$T/o"; } \
+  && ok "origin that does not answer: the message says so (origin not asked, journaled from the remote-tracking ref) and promises nothing more" || no "unchecked: rc=$rc $(cat "$T/o")"
+git -C "$R" remote set-url origin "$T/origin.git"
 git -C "$R" checkout -q gh-pages
 printf -- '---\ntitle: Broken\ndescription: A page that names a command the release does not have, so that the build of the site refuses it.\n---\n\n## 1. Run\n\n```bash\nqargi nosuchverb\n```\n' > "$R/site/pages/broken.md"
 git -C "$R" add -A && git -C "$R" commit -q -m "Site: a broken page" && git -C "$R" checkout -q scratch
