@@ -1560,7 +1560,7 @@ COMMANDS = {
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose ref comparison fails (verify's outcome is printed as a warning)"),
-                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
+                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, one line each (a legacy run whose refs changed says what is the matter and the one command to run), and the exit status is 1 when an applied run was kept"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
                            opt("--orphans", "list the qargi-run.XXXXXX directories under /dev/shm (or QARGI_RUN_TMP) that no run of your registry names, each with its age and whether it is named; a plan and a token, nothing removed"),
@@ -1583,6 +1583,10 @@ COMMANDS = {
                                 "It also refuses, --discard or not, a run whose review apply is running (the apply holds a pid lock in the lead's state, apply/RUN-ID.json.run); a lock whose process is gone does not block, and clean removes it. "
                                 "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. "
+                                "--applied and --stale --yes work through many runs at once and do the repeated work once: the registry is read once, the refs of the repository and of its origin are asked once for all the runs "
+                                "(the answer is the one of the moment the verb began), and a legacy run whose ref comparison fails is decided without a clean of its own. "
+                                "A legacy run (made by a qargi before the lifecycle: its registry line has no lifecycle marker) that --applied keeps because its refs changed since it was prepared, or could not be compared, "
+                                "is named in one line with the one command to run: when its work is merged, qargi local clean RUN --discard once its out/ is archived; when it is not, qargi feature merge first. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
                                 "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
                                 "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only. "

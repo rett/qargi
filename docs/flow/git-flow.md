@@ -63,7 +63,11 @@ refusal changes nothing.
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
    - `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is applied and merged;
-     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest. `qargi local clean --stale DAYS --scratch DIR`
+     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest, one line for each kept run; over hundreds
+     of run directories both verbs read the registry once and ask the repository's refs once for all the runs. A legacy run (made before
+     the lifecycle) that is kept because its refs changed since it was prepared gets a line with the one command to run next: when its work
+     is merged, `qargi local clean RUN --discard` once its `out/` is archived.
+     `qargi local clean --stale DAYS --scratch DIR`
      lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
    - `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that
      no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`,
