@@ -15,6 +15,8 @@
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others, one line each (the registry is read once, the refs
 #                                        of the repository asked once for all the runs, and a legacy run whose refs changed is decided here and named with the one command to run)
+#   local.sh clean --applied --legacy --scratch DIR [--plan TOKEN --approved WORDS]   the legacy runs (no lifecycle marker) that are applied and merged: a plan and a token; with the
+#                                        token and the words, each run's out/ is archived to STATE/runs-archive/NAME.tar.gz, read back and checked, and the run is removed (clean_legacy)
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
@@ -591,7 +593,7 @@ bulk_begin() {
 
 # legacy_remnants RUN -> 0 when the lead's state holds private lifecycle evidence for the unmarked run RUN: attempt state, a cleanup intent or tombstone, a saved attempt marker, a
 # saved record that carries a lifecycle marker. What lib/attempts.py legacy_check refuses for (a marker that was stripped from the registry line does not make a legacy run): such a
-# run is left to clean, which names the evidence.
+# run is left to clean, which names the evidence, and is not in the plan of clean --applied --legacy.
 legacy_remnants() {
   local id=${1##*/}
   if [ -e "$DA_STATE/attempts/$id" ] || [ -e "$DA_STATE/attempts/$id.clean" ] || [ -e "$DA_STATE/attempts/$id.clean.json" ] \
@@ -636,6 +638,74 @@ legacy_kept_line() {
     *) read -r ab _ < "$d/applied" 2>/dev/null || true; plain_v ab "${ab:-BRANCH}"
        printf 'kept %s: legacy run, refs changed or could not be compared, and its work is not merged: qargi feature merge NAME %s, then archive its out/ and qargi local clean %s --discard\n' "$d" "$ab" "$d";;
   esac
+}
+
+# clean_legacy SCRATCH -> clean --applied --legacy: the bulk, planned removal of the legacy runs under SCRATCH whose work is applied and merged. Without --approved it prints
+# the plan (each run, its size, what is done to it) and its token and changes nothing; with --plan TOKEN --approved WORDS it archives each run's out/ (lib/legacy_runs.py archive:
+# STATE/runs-archive/NAME.tar.gz, read back and checked against the files before anything is removed) and then removes the run as clean RUN --discard does. A run that is not
+# legacy, not applied, not merged, of a repository URL, or has a runner or member alive, or a run of another directory, is not in the plan and is never touched.
+clean_legacy() {
+  local scr d cl rp rc i n total=0 tok pj p1 sz arch apath abytes afiles rest rr why err rm_n=0 kept_n=0 ecode=0
+  local n_life=0 n_unap=0 n_url=0 n_unm=0 n_live=0
+  local -a cand=() mp=() merged_ok=() elig=() szs=()
+  local -A LIVE=()
+  scr=$(readlink -f "$1"); REG_BULK=1 reg_load
+  for d in "$scr"/qargi.??????; do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
+    reg_val cl "$d" cleaned; [ -z "$cl" ] || continue
+    if ! reg_legacy "$d" || legacy_remnants "$d"; then n_life=$((n_life + 1)); continue; fi   # a lifecycle run, or one whose marker was stripped and whose private evidence is there
+    if [ ! -f "$d/applied" ]; then n_unap=$((n_unap + 1)); continue; fi
+    reg_val rp "$d" repo
+    if [ -z "$rp" ]; then n_url=$((n_url + 1)); continue; fi
+    cand+=("$d"); mp+=("$d" "$d/applied")
+  done
+  merged_prefetch ${mp[@]+"${mp[@]}"}
+  for d in ${cand[@]+"${cand[@]}"}; do
+    if [ "${MRC[$d]:-1}" = 0 ]; then merged_ok+=("$d"); else n_unm=$((n_unm + 1)); fi
+  done
+  if [ "${#merged_ok[@]}" -gt 0 ]; then
+    while IFS=$'\t' read -r d why; do [ -z "$d" ] || LIVE[$d]=$why; done < <(python3 -I "$(dirname "$0")/legacy_runs.py" live "${merged_ok[@]}" 2>/dev/null)
+    for d in "${merged_ok[@]}"; do
+      if [ -n "${LIVE[$d]+x}" ]; then n_live=$((n_live + 1)); else elig+=("$d"); fi
+    done
+  fi
+  if [ "${#elig[@]}" -gt 0 ]; then
+    while read -r sz d; do szs+=("$sz"); total=$((total + sz)); done < <(python3 -I "$(dirname "$0")/legacy_runs.py" size "${elig[@]}")
+  fi
+  echo "$((${#elig[@]} + n_unm + n_live)) legacy run(s) under $scr are applied; ${#elig[@]} of them merged, with no runner or member alive, and so in the plan ($total bytes in all)"
+  for i in "${!elig[@]}"; do echo "  ${elig[i]}  ${szs[i]} bytes"; done
+  [ "$n_unm" = 0 ] || echo "  not in the plan: $n_unm applied and not merged (qargi feature merge NAME BRANCH first)"
+  [ "$n_live" = 0 ] || echo "  not in the plan: $n_live with a runner or a member alive"
+  [ "$n_life$n_unap$n_url" = 000 ] || echo "  not in the plan: $n_life with a lifecycle or private lifecycle evidence (qargi local clean RUN), $n_unap not applied (open: unverified or unmerged work), $n_url of a repository URL"
+  if [ "${#elig[@]}" = 0 ]; then echo "plan: nothing to archive or remove under $scr"; exit 0; fi
+  pj=''
+  for d in "${elig[@]}"; do reg_val p1 "$d" project; if [[ $p1 =~ ^[a-z][a-z0-9]{0,23}$ ]]; then pj=$p1; break; fi; done
+  [ -n "$pj" ] || pj=local
+  tok=$({ printf '%s\n' "$scr" "$DA_STATE/runs-archive"; for i in "${!elig[@]}"; do printf '%s %s\n' "${elig[i]}" "${szs[i]}"; done; } \
+        | plan_token --basis "scratch:path archive:path runs:path" --verb "local clean" --target "$pj:legacy")
+  if [ -z "$APPROVED" ]; then
+    echo "plan: for each run above, archive its out/ (with its records, bundle, the lead's saved copy and its registry line) to $DA_STATE/runs-archive/NAME.tar.gz, read the archive back and check its size and its list of files, and only then remove the run (clone, bare copy, output, temporary directory) as qargi local clean RUN --discard does; nothing else is touched; ${#elig[@]} run(s); nothing changed"
+    echo "plan token: $tok   (apply with: qargi local clean --applied --legacy --scratch $SCR --plan $tok --approved \"...\")"
+    exit 0
+  fi
+  need_plan "$tok"   # the token is always needed
+  err=$BULK_DIR/err
+  for d in "${elig[@]}"; do
+    reg_rp rr "$d"
+    if ! arch=$(printf '%s\n' "${LRUNS[$rr]}" | python3 -I "$(dirname "$0")/legacy_runs.py" archive "$DA_STATE" "$d" 2>"$err"); then
+      echo "kept $d: not archived, so not removed: $(sed -n 1p "$err" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-300)"; kept_n=$((kept_n + 1)); continue
+    fi
+    arch=${arch#archive }; afiles=${arch##* }; rest=${arch% *}; abytes=${rest##* }; apath=${rest% *}
+    if why=$("$0" clean "$d" --discard 2>"$err" </dev/null); then
+      echo "archived $d: $apath ($abytes bytes, $afiles entries)"; echo "$why"; rm_n=$((rm_n + 1))
+    else
+      echo "kept $d: archived to $apath, but not removed: $(grep -v '^qargi: warning' "$err" | sed -n 1p | LC_ALL=C tr -d '\000-\037\177' | cut -c1-300)"; kept_n=$((kept_n + 1))
+    fi
+  done
+  audit_log "local:clean-legacy" "$scr: $rm_n removed, $kept_n kept (each archived first in $DA_STATE/runs-archive)"
+  echo "removed $rm_n legacy run(s), kept $kept_n"
+  [ "$kept_n" = 0 ] || ecode=1
+  exit "$ecode"
 }
 
 # render_warning REPO URL -> when the project this run belongs to has a render of its packs (packs apply --target T, T the render target of its
@@ -1266,11 +1336,12 @@ WRAP
     #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
     #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
     #   clean --stale DAYS --scratch DIR [--yes]   the finished runs (RUN/verified or RUN/applied) older than DAYS: a plan, removed only with --yes
-    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED=''
+    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED='' LEGACY=''
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
+        --legacy) LEGACY=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
         --orphans) ORPH=1; shift;;
@@ -1282,13 +1353,15 @@ WRAP
         *) [ -z "$CLEAN_RUN" ] || usage_die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
-    [ -n "$ORPH" ] || [ -z "$DAYS$PLAN_ARG$APPROVED" ] || usage_die "clean: --days, --plan and --approved are for --orphans"
+    [ -n "$ORPH" ] || [ -z "$DAYS" ] || usage_die "clean: --days is for --orphans"
+    [ -n "$ORPH" ] || [ -n "$LEGACY" ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
+    [ -z "$LEGACY" ] || [ -n "$ALL" ] || usage_die "clean: --legacy is for --applied (qargi local clean --applied --legacy --scratch DIR)"
     if [ -n "$ORPH" ]; then
       # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
       # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
       # Only an unnamed one that is older than N days (default 2) and has nothing in it newer than that is ever removed, and only behind a plan token and the lead's
       # words. A named directory is never removed here, live or not: clean RUN removes it with its run.
-      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --discard, --stale, --yes and no --scratch"
+      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR$LEGACY" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --legacy, --discard, --stale, --yes and no --scratch"
       DAYS=${DAYS:-2}
       case $DAYS in ''|*[!0-9]*|0) usage_die "clean --orphans --days needs a whole number of days, at least 1 (a directory prepare made a moment ago is not yet named), got '$DAYS'";; esac
       oroot=${QARGI_RUN_TMP:-/dev/shm}
@@ -1333,7 +1406,7 @@ WRAP
       exit 0
     fi
     if [ -n "$STALE" ]; then
-      [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
+      [ -z "$ALL$CLEAN_RUN$DISCARD$LEGACY" ] || usage_die "clean --stale takes no RUN dir, no --applied, no --legacy and no --discard: it cleans only finished runs, and each by the rules of clean"
       case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac
       [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
       REG_BULK=1 reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
@@ -1381,7 +1454,9 @@ WRAP
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || usage_die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || usage_die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
-      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; REG_BULK=1 reg_load
+      [ -z "$APPROVED$PLAN_ARG" ] || [ -n "$LEGACY" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
+      if [ -n "$LEGACY" ]; then bulk_begin; clean_legacy "$SCR"; fi
+      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; leg_n=0; REG_BULK=1 reg_load
       bulk_begin   # the refs of the repository are asked once for all the runs below (QARGI_SNAP_CACHE), and the registry read once by this process
       cand=(); mp=()
       for d in "$scr"/qargi.??????; do
@@ -1394,11 +1469,12 @@ WRAP
         if [ ! -f "$d/applied" ] && [ -z "$cl" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
         if [ -z "$rp" ] && [ -z "$cl" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         # a legacy run whose refs comparison fails is kept whatever else is true of it: said here, in one line and with the one command to run, instead of by a clean of its own
-        if legacy_refs_verdict "$d"; then legacy_kept_line "$d"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        if legacy_refs_verdict "$d"; then legacy_kept_line "$d"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); leg_n=$((leg_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done
       echo "cleaned $done_n run(s), kept $kept_n"
+      [ "$leg_n" = 0 ] || echo "$leg_n legacy run(s) kept for their refs: qargi local clean --applied --legacy --scratch $SCR plans archiving the out/ of those that are applied and merged and removing them"
       [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
       exit 0
     fi

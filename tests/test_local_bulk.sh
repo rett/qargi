@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# local list and local clean over many runs: the work done once for all the runs (one process for the merged test, one refs question for the repository) and the one-line
-# reason of a legacy run clean --applied keeps. Synthetic runs: a few real prepares, turned into legacy runs (no lifecycle marker, no attempt state) by hand, as runs of an
-# older qargi are. Run: tests/test_local_bulk.sh
+# local list and local clean over many runs: the work done once for all the runs (one process for the merged test, one refs question for the repository), the one-line reason
+# of a legacy run clean --applied keeps, and clean --applied --legacy (a plan, a token, the archive of each run's out/ read back before the run is removed). Synthetic runs:
+# a few real prepares, turned into legacy runs (no lifecycle marker, no attempt state) by hand, as runs of an older qargi are. Run: tests/test_local_bulk.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
@@ -128,8 +128,69 @@ one() { grep -c "^kept $1:" <<<"$out"; }
 grep -q "^kept $LX1: legacy run, refs changed" <<<"$out" && ok "a legacy run with a member alive is kept for its refs like the others (the bulk form is where liveness is asked)" || no "x run: $out"
 { ! grep "^kept $LM1" <<<"$out" | grep -q -e 'unmarked legacy run' -e 'writable snapshots' && [ "$(grep -c "$LM1" <<<"$out")" = 1 ] && [ "$(grep -c "$LU1" <<<"$out")" = 1 ]; } \
   && ok "no paragraph of warnings for a kept legacy run: one line each" || no "legacy warnings in the output: $out"
-{ [ $rca = 1 ] && grep -q "^cleaned 2 run(s), kept 6\$" <<<"$out" ; } \
-  && ok "the summary counts the runs cleaned and kept; the exit status is 1 as before" || no "summary (rc=$rca): $out"
+{ [ $rca = 1 ] && grep -q "^cleaned 2 run(s), kept 6\$" <<<"$out" && grep -q "^4 legacy run(s) kept for their refs: qargi local clean --applied --legacy --scratch $SCR plans archiving" <<<"$out"; } \
+  && ok "the summary counts them and names the bulk form; the exit status is 1 as before" || no "summary (rc=$rca): $out"
 
+# --- clean --applied --legacy: the usage errors, the plan, the approval
+for bad in "--legacy" "--legacy --scratch $SCR" "--applied --legacy" "--applied --legacy --scratch $SCR $LM1" "--applied --legacy --discard --scratch $SCR" "--stale 5 --legacy --scratch $SCR" "--orphans --legacy" "--plan abc --scratch $SCR" "--approved go --applied --scratch $SCR --discard"; do
+  # shellcheck disable=SC2086
+  $DA local clean $bad >/dev/null 2>&1; rcb=$?
+  { [ $rcb = 2 ] && [ -d "$LM1" ]; } && ok "clean $bad is a usage error and removes nothing" || no "clean $bad (rc=$rcb)"
+done
+QARGI_MEMBER_RUN=$LX1 spawn_bg sleep 600   # a member of LX1: a process that carries the run's mark in its environment
+before=$(find "$SCR" "$S" -type f -printf '%p %T@ %s\n' | grep -v '/plans/' | sort | sha256sum)
+out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); rcp=$?; tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ $rcp = 0 ] && [ -n "$tok" ] && grep -q "^  $LM1  [0-9]* bytes\$" <<<"$out" && grep -q "^  $LM2  [0-9]* bytes\$" <<<"$out" && ! grep -q "^  $LU1 " <<<"$out" && ! grep -q "^  $LO1 " <<<"$out" \
+  && ! grep -q "^  $LX1 " <<<"$out" && ! grep -q "$LV1" <<<"$out" && ! grep -q "$LK1" <<<"$out" && grep -q 'not in the plan: 1 applied and not merged' <<<"$out" && grep -q 'not in the plan: 1 with a runner or a member alive' <<<"$out" \
+  && grep -q 'not in the plan: 1 with a lifecycle or private lifecycle evidence' <<<"$out" \
+  && grep -q "archive its out/ .* to $S/runs-archive/NAME.tar.gz, read the archive back and check its size and its list of files, and only then remove the run" <<<"$out"; } \
+  && ok "the plan names the applied and merged legacy runs with their sizes and says what is done to each; the unmerged, the open and the one with a member alive are not in it" || no "plan (rc=$rcp): $out"
+{ [ "$before" = "$(find "$SCR" "$S" -type f -printf '%p %T@ %s\n' | grep -v '/plans/' | sort | sha256sum)" ] && [ ! -e "$S/runs-archive/$(basename "$LM1").tar.gz" ]; } \
+  && ok "and the plan changes nothing (no archive, no run touched)" || no "the plan changed a file"
+$DA plan show "$tok" 2>&1 | grep -q 'local clean' && ok "the plan is kept as a record (qargi plan show TOKEN) for the verb local clean" || no "plan show: $($DA plan show "$tok" 2>&1 | head -3)"
+$DA plan show "$tok" 2>&1 | grep -q 'bulkproj' && ok "its target names the project" || no "plan target: $($DA plan show "$tok" 2>&1 | head -5)"
+out=$($DA local clean --applied --legacy --scratch "$SCR" --approved "go" 2>&1); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$LM1" ] && [ -d "$LM2" ]; } && ok "--approved without --plan removes nothing" || no "approved without plan (rc=$rcs): $out"
+out=$($DA local clean --applied --legacy --scratch "$SCR" --plan 000000000000 --approved "go" 2>&1); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$LM1" ] && [ ! -e "$S/runs-archive" ]; } && ok "a wrong token removes nothing and archives nothing" || no "wrong token (rc=$rcs): $out"
+out=$(QARGI_NESTED=1 $DA local clean --applied --legacy --scratch "$SCR" --approved "go" 2>&1); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$LM1" ]; } && ok "QARGI_NESTED does not stand in for the token" || no "nested (rc=$rcs): $out"
+# a changed fixture changes the token
+touch "$LM2/out/another-file"
+out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok2=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ -n "$tok2" ] && [ "$tok2" != "$tok" ]; } && ok "a run that changed since the plan (a file added to its out/) makes a new token" || no "the token did not move: $tok $tok2"
+out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok" --approved "go" 2>&1); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$LM1" ] && [ -d "$LM2" ]; } && ok "so the old token is stale: nothing is removed" || no "stale token (rc=$rcs): $out"
+tok=$tok2
+# an archive that is there already and is not this run's is never replaced: that run is kept, the other goes
+mkdir -p "$S/runs-archive"; chmod 700 "$S/runs-archive"; echo garbage > "$S/runs-archive/$(basename "$LM2").tar.gz"
+out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok" --approved "the owner said archive and remove them" 2>&1); rcs=$?
+{ [ $rcs = 1 ] && [ ! -e "$LM1" ] && [ -d "$LM2" ] && grep -q "^kept $LM2: not archived, so not removed: qargi: an archive .* is there already and .*it is kept" <<<"$out" && grep -q '^removed 1 legacy run(s), kept 1$' <<<"$out"; } \
+  && ok "an archive of the same name that does not match is never replaced: that run is kept, with its reason, and the other one is archived and removed (exit 1)" || no "apply (rc=$rcs): $out"
+A1=$S/runs-archive/$(basename "$LM1").tar.gz
+{ [ -f "$A1" ] && [ "$(stat -c %a "$A1")" = 600 ] && [ "$(stat -c %a "$S/runs-archive")" = 700 ]; } && ok "the archive is there, private" || no "archive mode: $(ls -l "$A1")"
+lst=$(tar tzf "$A1" 2>&1)
+{ grep -q "^$(basename "$LM1")/out/manifest.json\$" <<<"$lst" && grep -q "^$(basename "$LM1")/out/report.md\$" <<<"$lst" && grep -q "^$(basename "$LM1")/verified\$" <<<"$lst" && grep -q "^$(basename "$LM1")/applied\$" <<<"$lst" \
+  && grep -q "^$(basename "$LM1")/saved/out/manifest.json\$" <<<"$lst" && grep -q "^$(basename "$LM1")/record.json\$" <<<"$lst" && ! grep -q '/clone/' <<<"$lst"; } \
+  && ok "it holds the run's out/, its records, the lead's saved copy and its registry line, and not its clone" || no "archive list: $lst"
+[ "$(tar xzOf "$A1" "$(basename "$LM1")/out/report.md")" = r ] && ok "and what it holds reads back" || no "archive content"
+{ [ ! -e "$LM1" ] && [ -d "$LU1" ] && [ -d "$LO1" ] && [ -d "$LX1" ] && [ -f "$LX1/out/manifest.json" ]; } && ok "the runs that were not in the plan are untouched" || no "a run outside the plan changed"
+[ ! -e "$S/runs/$(basename "$LM1")" ] && jq -e --arg r "$LM1" 'select(.run == $r and (.cleaned | type) == "string")' "$S/local-runs.jsonl" >/dev/null && ok "the removed run is marked cleaned in the registry and its saved copy is gone (it is in the archive)" || no "registry/saved copy of the removed run"
+jq -e 'select(.verb == "local:clean-legacy" and .approved == "the owner said archive and remove them")' "$S/audit.log" >/dev/null 2>&1 && ok "the removal is in the audit log with the words" || no "audit: $(tail -2 "$S/audit.log")"
+# the archive is read back before the run goes: a run whose archive cannot be made is not removed
+rm -f "$S/runs-archive/$(basename "$LM2").tar.gz"; mv "$S/runs-archive" "$S/ra.keep"; ln -s "$T/log" "$S/runs-archive"   # the archive directory is a link, not a directory
+out=$($DA local clean --applied --legacy --scratch "$SCR" 2>&1); tok3=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+out=$($DA local clean --applied --legacy --scratch "$SCR" --plan "$tok3" --approved "go on" 2>&1); rcs=$?
+rm -f "$S/runs-archive"; mv "$S/ra.keep" "$S/runs-archive"
+{ [ $rcs = 1 ] && [ -d "$LM2" ] && grep -q "^kept $LM2: not archived, so not removed" <<<"$out"; } && ok "when the archive cannot be written (its directory is a link) the run is kept: nothing is removed before its archive exists" || no "no archive (rc=$rcs): $out"
+# the unit: legacy_runs.py archive checks the list it wrote against the files, and an existing archive that matches is reused
+out=$(sed -n 1p "$S/local-runs.jsonl" | python3 -I lib/legacy_runs.py archive "$S" "$LM2" 2>&1); rca=$?
+{ [ $rca = 0 ] && grep -q "^archive $S/runs-archive/$(basename "$LM2").tar.gz [0-9]* [0-9]*\$" <<<"$out"; } && ok "legacy_runs.py archive writes and checks an archive" || no "archive unit (rc=$rca): $out"
+out2=$(sed -n 1p "$S/local-runs.jsonl" | python3 -I lib/legacy_runs.py archive "$S" "$LM2" 2>&1); [ "$out" = "$out2" ] && ok "and an archive there already that matches is reused as it is" || no "reuse: $out | $out2"
+echo more > "$LM2/out/changed-after"
+out=$(sed -n 1p "$S/local-runs.jsonl" | python3 -I lib/legacy_runs.py archive "$S" "$LM2" 2>&1); rca=$?
+{ [ $rca = 1 ] && grep -q 'is there already and its list does not match the files' <<<"$out"; } && ok "one that no longer matches the run's files is kept and refused, never replaced" || no "mismatch (rc=$rca): $out"
+out=$(python3 -I lib/legacy_runs.py live "$LX1" "$LM2" 2>&1)
+{ grep -q "^$LX1	a process carries QARGI_MEMBER_RUN for it\$" <<<"$out" && ! grep -q "$LM2" <<<"$out"; } && ok "legacy_runs.py live names a run whose member carries QARGI_MEMBER_RUN, and no other" || no "live: $out"
 kill_bg
 exit $fail

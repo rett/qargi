@@ -667,6 +667,7 @@ class RefusalCodes(HookCase):
             ("member-push", "Bash", {"command": "cd src && gh pr list"}, c, "gh is not available to an agent"),
             ("member-push", "Monitor", {"command": "git push"}, c, "Agents never push"),
             ("member-lead-verb", "Bash", {"command": "qargi local clean x --discard"}, c, "qargi local clean is the lead's"),
+            ("member-lead-verb", "Bash", {"command": "qargi local clean --applied --legacy --scratch /tmp/s --plan abc123abc123 --approved go"}, c, "qargi local clean is the lead's"),
             ("member-lead-verb", "Bash", {"command": "qargi marshal key"}, c, "manages the marshal's signing key"),
             ("member-lead-verb", "Bash", {"command": "qargi skill new x"}, c, "changes a skill and is not available to an agent"),
             ("member-lead-verb", "Bash", {"command": "bash -c 'qargi project set p gates x'"}, c, "changes a command or an environment the lead later runs"),

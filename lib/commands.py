@@ -1561,12 +1561,13 @@ COMMANDS = {
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose ref comparison fails (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, one line each (a legacy run whose refs changed says what is the matter and the one command to run), and the exit status is 1 when an applied run was kept"),
+                           opt("--legacy", "with --applied: the bulk, planned removal of the legacy runs (made by a qargi before the lifecycle) whose work is applied and merged: a plan and a token, then with --plan and --approved each run's out/ is archived to <state>/runs-archive/NAME.tar.gz, read back, and the run removed; a run that is open (not applied, not merged), has a member alive or is not legacy is never touched"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
                            opt("--orphans", "list the qargi-run.XXXXXX directories under /dev/shm (or QARGI_RUN_TMP) that no run of your registry names, each with its age and whether it is named; a plan and a token, nothing removed"),
                            opt("--days", "with --orphans: remove only the orphans older than DAYS days, and with nothing in them newer (default 2, at least 1)", "DAYS"),
-                           opt("--plan", "with --orphans: the plan token printed by the same command without --approved", "TOKEN"),
-                           opt("--approved", "with --orphans and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
+                           opt("--plan", "with --orphans, or --applied --legacy: the plan token printed by the same command without --approved", "TOKEN"),
+                           opt("--approved", "with --orphans or --applied --legacy, and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Lifecycle clean records ownership and atomically renames saved output and attempt state before recording cleaned in the registry and deleting them. Rerun clean after interruption; recorded deletion is idempotent even after partial marker or state removal. Unknown or replaced tombstones refuse cleanup. Cleaned registry rows remain as recovery evidence. "
                                 "Clean of a lifecycle run writes an outcome receipt below <state>/attempts/.receipts/ before it removes anything, and the receipt stays when the run is gone "
@@ -1587,9 +1588,15 @@ COMMANDS = {
                                 "(the answer is the one of the moment the verb began), and a legacy run whose ref comparison fails is decided without a clean of its own. "
                                 "A legacy run (made by a qargi before the lifecycle: its registry line has no lifecycle marker) that --applied keeps because its refs changed since it was prepared, or could not be compared, "
                                 "is named in one line with the one command to run: when its work is merged, qargi local clean RUN --discard once its out/ is archived; when it is not, qargi feature merge first. "
+                                "--applied --legacy --scratch DIR is the bulk form of that command, a plan first: it lists the legacy runs under DIR that are applied and merged, with their sizes, and prints a token; nothing changes. "
+                                "With --plan TOKEN --approved WORDS it archives the out/ of each run (with its records, its bundle, the saved copy in the state and its registry line) to <state>/runs-archive/NAME.tar.gz, "
+                                "reads the archive back in full and checks its size and its list of files against the run's files, and only then removes the run as clean RUN --discard does; an archive that is there already is "
+                                "reused when it matches and never replaced when it does not (that run is kept), and a run whose archive cannot be made is kept. A run that is not legacy, is not applied or not merged (open work), "
+                                "is of a repository URL, or has a runner or a member alive (its dispatch.json, or a process that carries QARGI_MEMBER_RUN for it) is not in the plan and is never touched; each run is checked again "
+                                "when the plan is applied, and the removal is in the audit log with your words. A member cannot run it (it is a lead verb, and a coordinator label refuses --legacy); --legacy is for --applied only. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
                                 "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
-                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only. "
+                                "takes no RUN_DIR, no --applied, no --legacy and no --discard, and --yes is for --stale only. "
                                 "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
                                 "the saved work is applied and merged, and refuses otherwise; clean RUN --discard deliberately drops their evidence; lifecycle runs remain subject to ownership and quiescence, while legacy recovery proves neither. Missing legacy RUN recovery leaves TMP as an orphan. --stale counts such a run by "
                                 "the start time of its record, and with --yes keeps unapplied saved work; retained lifecycle evidence without a current copy requires explicit discard. "
@@ -1603,9 +1610,11 @@ COMMANDS = {
                                 "on the host (another QARGI_STATE or QARGI_HOME) are not, so their directories look orphaned once they are older than --days; check the age and the directory before you approve. Without --approved it prints the plan and its token and removes nothing. "
                                 "With --plan TOKEN --approved WORDS it removes only the directories that no registry names, that are older than --days (default 2, at least 1) and have nothing in them newer; "
                                 "each is checked again at the moment of removal, a directory that appeared or changed since the plan makes the token stale, and the removal is in the audit log with your words. "
-                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --discard, --stale, --yes or --scratch; --days, --plan and --approved are for it only. "
+                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --legacy, --discard, --stale, --yes or --scratch; --days is for it only, and --plan and --approved are for it and for --applied --legacy. "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --applied --legacy --scratch /tmp/scratch",
+                                    "qargi local clean --applied --legacy --scratch /tmp/runs --plan TOKEN --approved \"go\"",
+                                    "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
                                     "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
             "report": verb("A read-only member's own way to write its report: standard input, or a file under OUT, as RUN/out/report.md with a minimal manifest.json", [("RUN", "dir", True)],
                            [opt("--findings", "write RUN/out/findings.md instead of report.md"), opt("--from", "read the report from this file under OUT (a relative name is relative to OUT) instead of standard input", "FILE", "file"),
@@ -2039,7 +2048,7 @@ for _area, _names, _words in (
     for _verb in (_words.split() or [""]):
         ACTOR_VERBS[(_area, _verb)] = _names
 ACTOR_OPTS = {
-    ("local", "clean"): ("--discard", "--applied", "--stale", "--orphans", "--yes"),   # only clean RUN: the other forms reach runs of other features
+    ("local", "clean"): ("--discard", "--applied", "--legacy", "--stale", "--orphans", "--yes"),   # only clean RUN: the other forms reach runs of other features
     ("marshal", "handoff"): ("--write",),                                                # a coordinator does not change who leads
     ("release", "plan"): ("--again",),                                                   # it discards a recorded cut
 }
