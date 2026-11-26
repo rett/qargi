@@ -531,6 +531,30 @@ stub_ready() {   # the wrapper named argv[0] first on PATH: it records its envir
       printf 'd=$(printenv %s)\n' "$HOMEENV"
       printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.home"
       printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -f \"\$f\" ] || [ -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.copies"
+      # each private file of the run home: whether any path the definition sets still holds the sentinel (a placeholder was not put in), one line NAME ok|leak|unreadable
+      cat > "$W/sentcheck.py" <<'PY'
+import json, sys
+path, sent, name = sys.argv[1:4]
+try:
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+except (OSError, ValueError):
+    print(name, "unreadable")
+    sys.exit(0)
+leak = False
+for dotted in sys.argv[4:]:
+    cur = doc
+    for part in dotted.split("."):
+        cur = cur.get(part) if isinstance(cur, dict) else None
+    if isinstance(cur, str) and sent in cur:
+        leak = True
+print(name, "leak" if leak else "ok")
+PY
+      local ptn pset
+      while IFS=$'\t' read -r ptn pset; do
+        [[ $ptn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $pset =~ ^[A-Za-z0-9_.\ -]+$ ]] || continue
+        printf "'%s' -I '%s' \"\$d/%s\" '%s' '%s' %s >> '%s'\n" "$(command -v python3)" "$W/sentcheck.py" "$ptn" "$SENT" "$ptn" "$pset" "$W/cmd.sent"
+      done < <(jq -r '.dispatch.home.link[]? | select(.private != null) | [.to, (.private.set | keys | join(" "))] | @tsv' "$DESC")
       if [ "$CFGIN" = home ] && [[ $CFGFILE =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then   # the run's configuration file as the command finds it
         printf "[ ! -f \"\$d/%s\" ] || cp \"\$d/%s\" '%s'\n" "$CFGFILE" "$CFGFILE" "$W/cmd.cfg"
       fi
@@ -635,7 +659,7 @@ cmdprep() {   # CLASS [SCRATCH [TMP-PARENT]]: a run of the class made by qargi l
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
 }
 cmdgo() {   # qargi local run of CRUN with the stub in place of the command (the project, the runtime and the class are the lead's record's); COUT, CRC
-  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.copies" "$W/cmd.cfg"
+  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.copies" "$W/cmd.cfg" "$W/cmd.sent"
   COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" "$CTOOL/bin/qargi" local run "$CRUN" 2>"$W/cmd.err"); CRC=$?
 }
 cmdrun() {   # CLASS [SCRATCH [TMP-PARENT]]: cmdprep, then cmdgo unless the run could not be made
@@ -760,6 +784,8 @@ case13() {
       if [ -n "$priv" ]; then   # a private link is a regular file of the run home, a copy that is made for the run and is not a link
         grep -qx -- "$to" "$W/cmd.copies" 2>/dev/null || problem "$to was not a regular file (a private copy) in the run home while the command ran"
         grep -qx -- "$to" "$W/cmd.home" 2>/dev/null && problem "$to was a link in the run home, and its definition declares it private"
+        if grep -qx -- "$to leak" "$W/cmd.sent" 2>/dev/null; then problem "the private copy $to still held the content of its source at a path its definition sets (no placeholder was put in)"
+        elif ! grep -qx -- "$to ok" "$W/cmd.sent" 2>/dev/null; then problem "the private copy $to was not checked for the placeholder while the command ran (the stub recorded no line for it)"; fi
       else
         grep -qx -- "$to" "$W/cmd.home" 2>/dev/null || problem "$to was not a link in the run home while the command ran"
       fi

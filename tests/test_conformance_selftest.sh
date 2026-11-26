@@ -126,12 +126,13 @@ declare -A CXF=(
   [gitinro]='.dispatch.argv |= map(if type == "object" and .class == "read-only" then .then += ["--add-dir", "{clone}/.git"] else . end)'
   [homewrite]='del(.dispatch.home.link[0].private)'   # the stub below writes through the sign-in file the run home links in: that is a fault of a plain link only (a private copy is the run's own file)
 )
-declare -A CXWANT=([norogroup]='11 12 14 15' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14' [nohide]='15')
+declare -A CXWANT=([norogroup]='11 12 14 15' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14' [nohide]='15' [noplaceholder]='13')
 declare -A CXWHY=([norogroup]='carries no arguments of its own' [twosandbox]='also sets --sandbox outside its read-only arguments'
   [nousage]='records no usage: dispatch.output.usage matches no line' [roinwrite]='the write run carries the arguments of the read-only class: --sandbox read-only'
   [gitinro]='a read-only run carries --add-dir /conformance/run/clone/.git of the write class'
   [homewrite]='the run changed a file of the caller.s home' [nobaseline]='the run.s configuration file home/.codex/config.toml is missing'
-  [nohide]='write, run hidden: qargi local run exited 0, not 2 .refused.')
+  [nohide]='write, run hidden: qargi local run exited 0, not 2 .refused.'
+  [noplaceholder]='the private copy auth.json still held the content of its source at a path its definition sets')
 for f in "${!CXF[@]}"; do
   mkdir -p "$T/cx.$f"; cp -R lib agents "$T/cx.$f/"
   jq "${CXF[$f]}" lib/providers/codex.json > "$T/cx.$f/lib/providers/codex.json" || no "the codex mutation $f did not apply"
@@ -145,6 +146,10 @@ cmp -s "$T/cx.nobaseline/lib/local_run.py" lib/local_run.py && no "the local run
 mkdir -p "$T/cx.nohide"; cp -R lib agents "$T/cx.nohide/"
 sed -i 's|^    if hidden:$|    if False:|' "$T/cx.nohide/lib/local_run.py"
 cmp -s "$T/cx.nohide/lib/local_run.py" lib/local_run.py && no "the local run mutation nohide changed nothing"
+# a qargi local run that does not put the placeholder in a private copy: the copy holds the source's content at the paths the definition sets (the refresh token would reach the member)
+mkdir -p "$T/cx.noplaceholder"; cp -R lib agents "$T/cx.noplaceholder/"
+sed -i 's|^            at\[key\] = text$|            pass|' "$T/cx.noplaceholder/lib/local_run.py"
+cmp -s "$T/cx.noplaceholder/lib/local_run.py" lib/local_run.py && no "the local run mutation noplaceholder changed nothing"
 # a stub that writes through the sign-in file the run home links in: the caller's own file changes (on a copy of codex that declares the link plain: the shipped one declares it private, so the
 # same stub writes only to the run's own copy, which is no fault, as the case after the loop says)
 mkdir -p "$T/cxstub"; cp -R tests/providers/codex tests/providers/lib "$T/cxstub/"
