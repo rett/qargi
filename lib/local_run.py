@@ -516,42 +516,65 @@ def lock_name(path, home, runtime):
     return LOCK_NAME
 
 
+LOCK_RETRIES = 5               # how many times a lock file that was replaced under the run is opened again before the run is refused
+
+
+def same_file(fd, path):
+    """Is the open descriptor fd still the file at path (st_dev and st_ino of fstat against lstat)? False when the path is gone, is another file, or a link."""
+    try:
+        a, b = os.fstat(fd), os.lstat(path)
+    except OSError:
+        return False
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
 def lock_one(path, home, runtime, sig):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
     that finds it held says so (a note on standard error) and waits for it, a signal ending the wait (Interrupted). The file is made when it is missing
-    (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock."""
+    (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock. The lock
+    is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the one it waited on is
+    then nobody's) is closed and the path opened again, at most LOCK_RETRIES times, with a note, and then the run is refused. A run that opens the path
+    after a holder's file was replaced finds a new, free file: nothing here can see that holder, which is why the member keeps the descriptor too (take_lock)."""
     shown = lock_name(path, home, runtime)
-    try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-    except OSError as e:
-        fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
-             "make its directory writable for you" % (runtime, shown, e.strerror or e))
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            fail("the lock file %s is not a regular file; remove it" % shown)
+    waited = False
+    for _ in range(LOCK_RETRIES + 1):
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fd
-        except BlockingIOError:
-            pass
-        print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
-              file=sys.stderr, flush=True)
-        sig.armed = True
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except OSError as e:
+            fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
+                 "make its directory writable for you" % (runtime, shown, e.strerror or e))
         try:
-            while True:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                fail("the lock file %s is not a regular file; remove it" % shown)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if not waited:
+                    waited = True
+                    print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
+                          file=sys.stderr, flush=True)
+                sig.armed = True
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    time.sleep(LOCK_POLL)
-        finally:
-            sig.armed = False
-        sig.check()
-        print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
-        return fd
-    except BaseException:
-        os.close(fd)
-        raise
+                    while True:
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            time.sleep(LOCK_POLL)
+                finally:
+                    sig.armed = False
+                sig.check()
+            if same_file(fd, path):
+                if waited:
+                    print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
+                return fd
+        except BaseException:
+            os.close(fd)
+            raise
+        os.close(fd)                                     # the file at the path is not the one that was locked: it was deleted or replaced meanwhile
+        print("qargi: note: the lock file %s was replaced or removed while this run took it; taking the file that is there now" % shown, file=sys.stderr, flush=True)
+    fail("the lock file %s was replaced %d times while this run took it; something keeps removing it (the sign-in lock is never started without): "
+         "look at the directory, then start the run again" % (shown, LOCK_RETRIES + 1))
 
 
 def take_lock(home, runtime, sig):
@@ -2698,7 +2721,8 @@ def run_started(plan, run, store, dispatch_state, sig):
                     if plan.get('skills') is not None:
                         MS.launch_ready(store, plan['prepared'])
                     try:
-                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True, close_fds=True)
+                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True, close_fds=True,
+                                                pass_fds=tuple(locks))   # the member keeps the lane: the lock descriptors go to it, so a runner killed with SIGKILL leaves them held until the member's group ends
                     except OSError as e:
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:

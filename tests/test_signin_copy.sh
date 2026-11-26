@@ -424,6 +424,56 @@ signin 400
   && ok "a refresh needed once the lock of a plain link is held runs under that lock, takes no second one, and the run goes on" || no "refresh under held lock: $(cat "$T/r1.rc" "$T/r2.rc") $(cat "$T/r2.out")"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF" "$T/refmode" "$T/refresh.log" "$T/refresh.count"; unset FAKESI_LEAK; signin 259200; setprov fakeall
 
+# --- the lane lock of a plain link: it outlives a killed runner, and a lock file replaced under a waiting run is noticed ------------------------------------
+# SIGKILL of the runner: the member got the lock descriptor, so the lane stays held until the member's group ends, and a second run waits
+setprov fakeplain; echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$LOCKF"
+prep ln1; task; N1=$RUN; prep ln2; task; N2=$RUN
+( $DA local run "$N1" > "$T/n1.out" 2>&1; echo $? > "$T/n1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -n "$(jq -r ".member // empty" "$N1/dispatch.json")" ]' 30
+NR=$(jq -r .runner "$N1/dispatch.json"); NM=$(cat "$T/member.pid")
+kill -KILL "$NR"; wait_until '[ -s "$T/n1.rc" ]' 30
+{ ! kill -0 "$NR" 2>/dev/null && kill -0 "$NM" 2>/dev/null && ! flock -n "$LOCKF" true; } \
+  && ok "SIGKILL of the runner: the lane stays held while the member lives (the member holds the lock descriptor)" || no "lane after SIGKILL: runner $NR member $NM $(ls -lA "$MEM")"
+( $DA local run "$N2" > "$T/n2.out" 2>&1; echo $? > "$T/n2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/n2.out"' 30
+{ [ ! -s "$T/n2.rc" ] && [ ! -e "$N2/out/transcript" ] && [ ! -e "$N2/home/.fk/auth.json" ]; } \
+  && ok "a second run of another run id waits for the member of the killed runner, and starts nothing" || no "second run beside a live member: $(cat "$T/n2.out")"
+: > "$T/hold-go"; wait_until '[ -s "$T/n2.rc" ]' 60
+{ [ "$(cat "$T/n2.rc")" = 0 ] && grep -qF 'is free; the run starts' "$T/n2.out" && flock -n "$LOCKF" true; } \
+  && ok "when the member ends the lane is free: the second run starts, ends ok, and the lock is free again" || no "after the member: rc=$(cat "$T/n2.rc") $(cat "$T/n2.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$T/n1.rc" "$T/n2.rc" "$LOCKF"
+# a lock file removed and made anew while a run waits on the old one: when the old one is let go the run notices that it holds a file that is no longer the lock, and takes the new one
+echo hold > "$T/mode"; prep rp1; task; Q1=$RUN; prep rp2; task; Q2=$RUN
+( $DA local run "$Q1" > "$T/q1.out" 2>&1; echo $? > "$T/q1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$Q2" > "$T/q2.out" 2>&1; echo $? > "$T/q2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/q2.out"' 30
+rm -f "$LOCKF"; : > "$LOCKF"; chmod 600 "$LOCKF"
+: > "$T/hold-go"; wait_until '[ -s "$T/q1.rc" ] && [ -s "$T/q2.rc" ]' 60
+{ [ "$(cat "$T/q1.rc")" = 0 ] && [ "$(cat "$T/q2.rc")" = 0 ] && grep -qxF 'qargi: note: the lock file ~/.fakesi-members/.qargi-run.lock was replaced or removed while this run took it; taking the file that is there now' "$T/q2.out" \
+  && grep -qF 'is free; the run starts' "$T/q2.out" && [ -s "$Q2/out/transcript" ] && flock -n "$LOCKF" true; } \
+  && ok "a lock file replaced under a waiting run is noticed (the descriptor is not the file at the path): the run retries onto the new file, then runs" || no "replaced lock file: $(cat "$T/q1.rc" "$T/q2.rc") $(cat "$T/q2.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF"
+# the retries are bounded: a file that is replaced every time refuses the run (exit 2) and holds nothing
+got=$(python3 -I - "$T/tool/lib" "$MEM" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+home = {"declared": [], "runtime": "fakeplain"}
+path = os.path.join(sys.argv[2], ".qargi-run.lock")
+n = [0]
+L.same_file = lambda fd, p: (n.__setitem__(0, n[0] + 1), False)[1]
+try:
+    L.lock_one(path, home, "fakeplain", L.Signals())
+    print("NOEXC")
+except L.Stop as e:
+    print("STOP code=%d tries=%d %s" % (e.code, n[0], "replaced" in str(e)))
+PY
+)
+{ grep -q '^STOP code=2 tries=6 True$' <<<"$got" && [ "$(grep -c 'was replaced or removed' <<<"$got")" = 6 ] && flock -n "$LOCKF" true; } \
+  && ok "a lock file that is replaced every time is tried six times, then the run is refused (exit 2), and no descriptor is left holding the lock" || no "replace bound: $got"
+rm -f "$LOCKF"
+
 # --- the shipped runtime that declares it ------------------------------------------------------------------------------------------------------
 { [ "$(jq -c '.dispatch.home.link[0].private | del(.refresh)' lib/providers/codex.json)" = '{"set":{"tokens.refresh_token":"qargi-no-refresh"},"expiry":{"path":"tokens.access_token","encoding":"jwt-exp"}}' ] \
   && [ "$(jq -r '.dispatch.home.link[0].from' lib/providers/codex.json)" = \~/.codex-members/auth.json ] && [ "$(jq '.dispatch.home.link | length' lib/providers/codex.json)" = 1 ]; } \
