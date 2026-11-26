@@ -7,7 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- `qargi local list` and `qargi local clean --applied` over hundreds of run directories are much faster, with the same rows and the same refusals: the registry is read once by one process (a `reg_get` is no process), `lib/merged.py --batch` answers the merged test of every applied run in one process, and `clean --applied` and `clean --stale --yes` ask the repository's refs and its origin once for all the runs. In a scratch with 400 runs `local list` fell from 45 s to under 4 s and a legacy-only `clean --applied` from minutes (about 1.3 s for each kept run) to about 40 ms for each.
+- `qargi local list` and `qargi local clean --applied` over hundreds of run directories are much faster, with the same rows and the same refusals: the registry is read once by one process (a `reg_get` is no process), `lib/merged.py --batch` answers the merged test of every applied run in one process, and `clean --applied` and `clean --stale --yes` ask the repository's refs and its origin once for all the runs. In a scratch of 400 legacy runs, all kept for their refs, `local list` fell from 40 s to 4 s and `clean --applied` from 1149 s (about 2.9 s for each run) to 15 s, the same runs kept.
 - `qargi local clean --applied` names a legacy run it keeps because its refs changed or could not be compared in one line, with the one command to run next (`qargi local clean RUN --discard` once its `out/` is archived, or `qargi feature merge` first when its work is not merged), where it printed the registry warnings and a paragraph. The exit status is as before (1 when an applied run was kept).
 
 ## [0.3.7] - 2026-11-25
