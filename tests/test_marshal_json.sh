@@ -318,7 +318,7 @@ jq '.rev = 1' "$(LREC f4)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f4)"
 # --json --write: the document on stdout first, then the file, then the sentence on stderr
 W=$T/scratch; mkdir -p "$W"
 call L marshal handoff --json --write "$W/note.json"
-[ "$RC" = 0 ] && valid qargi-handoff && cmp -s "$T/o" "$W/note.json" && [ "$(stat -c %a "$W/note.json")" = 600 ] && grep -q "^wrote $W/note.json " "$T/e" && ! grep -q wrote "$T/o" \
+[ "$RC" = 0 ] && valid qargi-handoff && cmp -s "$T/o" "$W/note.json" && [ "$(stat -c %a "$W/note.json")" = 600 ] && grep -q "^wrote $W/note.json " "$T/e" && ! grep -q "^wrote " "$T/o" \
   && ok "handoff --json --write: stdout is the document alone, the file holds the same bytes (mode 600), the sentence is on stderr" || no "handoff json write: rc=$RC $(cat "$T/v"; head -c 300 "$T/e")"
 call L marshal handoff --write "$W/note.txt"
 [ "$RC" = 0 ] && grep -q "^wrote $W/note.txt " "$T/o" && [ -s "$W/note.txt" ] && ok "handoff --write (text): the sentence stays on stdout" || no "handoff text write: rc=$RC $(out)"
