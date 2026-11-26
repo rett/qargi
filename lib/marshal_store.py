@@ -1326,6 +1326,9 @@ def write_stdout(text):
         raise Unwritable("cannot write the document to standard output (%s)" % (getattr(e, "strerror", None) or e))
 
 
+DERIVED = ("tasks", "agent_branches", "worktrees", "overlap")      # the lists of a status row that a row of check does not carry
+
+
 def lead_word(d, brief=False):
     if not d["lead"]:
         return "none"
@@ -1744,24 +1747,33 @@ def v_check(ctx, a):
                 # the lead's id is the one value another machine or a hand edit chooses: report_refusal passes it as a field only when it is one clean line
                 raise Refuse(led_by_msg(ctx, a.name, rec), "marshal-feature-held",
                              [("feature", a.name), ("lead", clean(ld["id"])), ("minutes", "" if mins is None else str(mins)), ("ttl", str(ctx.ttl))])
-        elif ld and a.renew:
+        elif ld and a.renew and not ctx.no_write:
             rec = renew_own(ctx, a.name, rec)
         d = describe(ctx, a.name, rec, {})
-        for w in warnings_for(ctx, d, rec is not None):
-            print("qargi: warning: " + w, file=sys.stderr)
-        if ld and ld["id"] == ctx.id:
-            print("yours")
-        elif ld:
-            print("free (the lead %s is stale)" % clean(ld["id"]))
-        else:
-            print("free")
+        warns = warnings_for(ctx, d, rec is not None)
+        for w in warns:
+            print("qargi: warning: " + w, file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
+        answer = "yours" if ld and ld["id"] == ctx.id else ("free-stale" if ld else "free")
+        if a.json:
+            write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+                                                              "remote": remote_of(ctx), "feature": a.name, "answer": answer,
+                                                              "lead": d["lead"] if answer == "free-stale" else None, "warnings": warns}))
+            return
+        print({"yours": "yours", "free-stale": "free (the lead %s is stale)" % clean((ld or {}).get("id")), "free": "free"}[answer])
         return
     items = listed(ctx)
+    rows = []
     for n, d, rec in items:
-        print(brief_line(d))
-        for w in warnings_for(ctx, d, True):
+        warns = warnings_for(ctx, d, True)
+        if not a.json:
+            print(brief_line(d))
+        for w in warns:
             print("qargi: warning: " + w, file=sys.stderr)
-    if not items:
+        rows.append(dict({k: v for k, v in d.items() if k not in DERIVED}, warnings=warns))
+    if a.json:
+        write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+                                                          "remote": remote_of(ctx), "feature": None, "answer": None, "lead": None, "warnings": [], "features": rows}))
+    elif not items:
         print("no open features")
 
 

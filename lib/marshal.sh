@@ -10,6 +10,8 @@
 #   marshal.sh claim|check NAME [--assume-unreachable-ok]   with the shared refs backend, a remote that cannot be reached is a refusal (exit 3, the message says what
 #                                                could not be reached and why; nothing is changed). The flag lets the verb go on (a claim stays provisional, a check
 #                                                answers from the cache) and records marshal:unreachable-ok in the audit log. The shell API below never refuses for this.
+#   marshal.sh status [NAME|--all] --json, check [NAME] --json   one document each (lib/kinds/qargi-marshal-status.json and qargi-marshal-check.json; qargi help json KIND
+#                                                lists the fields): on standard output alone, exit 0 only after a complete valid document, remote says whether the answer was checked
 #   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
@@ -179,7 +181,7 @@ marshal_main() {
     status) want=' --project --as --all --history --brief --json --no-fetch --no-write ';;
     handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
-    check) want=' --project --as --no-fetch --assume-unreachable-ok ';;
+    check) want=' --project --as --json --no-fetch --no-write --assume-unreachable-ok ';;
     renew|take|finish) want=' --project --as ';;
     release) want=' --project --as --note ';;
     takeover) want=' --project --as --approved ';;
@@ -381,7 +383,8 @@ marshal_main() {
   # marshal:unreachable-ok records it. The shell API below (marshal_start, marshal_check) refuses only with --need-remote, which the flow verbs pass (marshal_gate in gitflow.sh).
   local ovf=''
   case $verb in claim|check)
-    if [ -n "$assume" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX"); else opt+=(--need-remote); fi;;
+    if [ -n "$nowrite" ] && [ "$verb" = check ]; then :   # --no-write: nothing is asked, so no remote is unreachable and no override is audited (no temporary file either)
+    elif [ -n "$assume" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX"); else opt+=(--need-remote); fi;;
   esac
   if [ "$verb" = claim ]; then
     local crc=0 caf

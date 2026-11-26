@@ -153,6 +153,27 @@ for how in unreadable broken missing; do
 done
 
 
+# ================================================================ (2b) the same refusals of check --json: no document, the line, the status
+call L marshal check nosuch --as bob --json
+refusal marshal-feature-unknown 1 && ok "check --json: no such feature is marshal-feature-unknown, exit 1, no document" || no "check --json unknown: $(refusal marshal-feature-unknown 1; out)"
+call L marshal check f1 --as bob --json
+refusal marshal-feature-held 1 && ok "check --json: a feature another live lead holds is marshal-feature-held, exit 1, no document" || no "check --json held: $(refusal marshal-feature-held 1; out)"
+call L marshal check 'Not_A_Name' --json
+refusal marshal-refused 1 && ok "check --json: not a feature name is the generic code" || no "check --json bad name: $(refusal marshal-refused 1; out)"
+for kind in long newline; do
+  if [ $kind = long ]; then id=$long; else id=$'ali\nce'; fi
+  jq --arg id "$id" '.lead.id = $id' "$(LREC f1)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f1)"
+  call L marshal check f1 --as bob --json
+  refusal marshal-feature-held 1 && ok "check --json: a held feature whose lead id is $kind is still exit 1 with its line and no document" || no "check --json held, $kind id: $(refusal marshal-feature-held 1; head -c 500 "$T/e")"
+done
+jq '.lead.id = "alice"' "$(LREC f1)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(LREC f1)"
+mv "$ORIGIN" "$ORIGIN.gone"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --json
+refusal marshal-remote-unreachable 3 && ok "check --json: a remote that cannot be asked is marshal-remote-unreachable, exit 3, no document" || no "check --json unreachable: $(refusal marshal-remote-unreachable 3; out)"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal check --json
+refusal marshal-remote-unreachable 3 && ok "check --json with no NAME: the same, exit 3" || no "check --json all unreachable: $(refusal marshal-remote-unreachable 3; out)"
+mv "$ORIGIN.gone" "$ORIGIN"
+
 # ================================================================ (3) status --json: one shape, with or without NAME, on both backends
 NOW=$((1000000 + 20))
 call L marshal status --all --json
@@ -216,6 +237,43 @@ env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$N
 env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_NO_JSON_WRAP=1 "$DA" marshal status --all --json >/dev/full 2>"$T/e"; RC=$?
 [ "$RC" = 1 ] && [ "$(wc -l < "$T/e")" = 1 ] && grep -q '^qargi: cannot write the document' "$T/e" && ok "status --json to a full disk: exit 1 and one plain line" || no "status full stdout: rc=$RC $(cat "$T/e")"
 
+# ================================================================ (6) check --json: the answer, the lead and the warnings; one row each without NAME
+NOW=$((1000000 + 30))
+call L marshal check f1 --as alice --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.kind == "qargi-marshal-check" and .backend == "local" and .remote == "none" and .feature == "f1" and .answer == "yours" and .lead == null and .warnings == [] and (has("features") | not)' "$T/o" >/dev/null \
+  && ok "check NAME --json: the caller leads the feature (answer yours, no lead, no warnings)" || no "check yours: rc=$RC $(cat "$T/v"; head -c 400 "$T/o")"
+call L marshal check f1 --as alice
+[ "$RC" = 0 ] && [ "$(cat "$T/o")" = yours ] && ok "check NAME (text): still the one word on stdout" || no "check text yours: rc=$RC $(out)"
+call L marshal check f3 --as bob --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.answer == "free" and .lead == null and (.warnings | length) == 1 and (.warnings[0] | test("has no lead"))' "$T/o" >/dev/null && grep -q 'warning: feature f3 has no lead' "$T/e" \
+  && ok "check NAME --json: a feature with no lead is free, the warning is in the document and on stderr" || no "check free: rc=$RC $(cat "$T/v"; head -c 400 "$T/o"; cat "$T/e")"
+NOW=$((1000000 + 30 + 900))
+call L marshal check f1 --as bob --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.answer == "free-stale" and .lead.id == "alice" and .lead.user != null and (.warnings | length) >= 1' "$T/o" >/dev/null \
+  && ok "check NAME --json: a feature whose lead is stale is free-stale and the document holds that lead" || no "check free-stale: rc=$RC $(cat "$T/v"; head -c 500 "$T/o")"
+call L marshal check f1 --as bob
+[ "$RC" = 0 ] && [ "$(cat "$T/o")" = "free (the lead alice is stale)" ] && ok "check NAME (text): the stale lead is said as before" || no "check text stale: rc=$RC $(out)"
+call L marshal check --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.feature == null and .answer == null and .lead == null and .warnings == [] and (.features | length) == 6 and ([.features[] | has("tasks") or has("overlap")] | any | not) and ([.features[] | .warnings | type] | all(. == "array"))' "$T/o" >/dev/null \
+  && ok "check --json with no NAME: feature and answer null, one row for each open feature, each with its own warnings" || no "check all: rc=$RC $(cat "$T/v"; head -c 500 "$T/o")"
+jq -e '[.features[] | select(.feature == "f1")] | .[0] | .lease == "stale" and .lease_clock == "wall" and (.warnings | length) >= 1' "$T/o" >/dev/null && ok "check --json with no NAME: the row of a stale lead says stale and carries its warning" || no "check all row f1: $(jq -c '.features[0]' "$T/o")"
+call L marshal check
+[ "$RC" = 0 ] && grep -q '^f1  lead=stale(alice)' "$T/o" && ok "check (text) with no NAME: the brief lines as before" || no "check text all: rc=$RC $(out)"
+
+# the remote of the shared records: checked, not asked, unchecked
+call XE a QARGI_MARSHAL_MONO=2000 marshal check r1 --as alice --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.backend == "refs" and .remote == "checked" and .answer == "yours"' "$T/o" >/dev/null && ok "check --json (refs): remote checked" || no "check refs checked: rc=$RC $(cat "$T/v"; head -c 300 "$T/o"; cat "$T/e")"
+call XE a marshal check r1 --as alice --json --no-fetch
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.remote == "not-asked"' "$T/o" >/dev/null && ok "check --json --no-fetch (refs): remote not-asked" || no "check refs not-asked: rc=$RC $(head -c 300 "$T/o"; cat "$T/e")"
+mv "$ORIGIN" "$ORIGIN.gone"
+rm -f "$T/m/a/s/audit.log"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --json --assume-unreachable-ok
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.remote == "unchecked" and .answer == "yours"' "$T/o" >/dev/null && grep -q '"verb":"marshal:unreachable-ok"' "$T/m/a/s/audit.log" \
+  && ok "check --json --assume-unreachable-ok (refs, remote unreachable): exit 0 from the cache, remote unchecked, one audit line" || no "check refs unchecked: rc=$RC $(head -c 300 "$T/o"; cat "$T/e"; cat "$T/m/a/s/audit.log" 2>&1)"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --json
+refusal marshal-remote-unreachable 3 && ok "check --json (refs, remote unreachable, no override): exit 3, the line, no document" || no "check refs unreachable: $(refusal marshal-remote-unreachable 3; out)"
+mv "$ORIGIN.gone" "$ORIGIN"
+
 # ================================================================ (8) --no-write: nothing is written and nothing is fetched
 # a local record whose branch is gone: status and check mark it abandoned (and write the record); with --no-write the record stays byte for byte
 NOW=$((1000000 + 50))
@@ -229,6 +287,10 @@ call L marshal status --all --no-write --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write: the same" || no "status --all --no-write: rc=$RC $(cat "$T/v")"
 call L marshal status --all --no-write
 [ "$RC" = 0 ] && cmp -s "$(LREC f6)" "$T/f6.before" && ok "status --all --no-write (text): the same" || no "status --all --no-write text: rc=$RC $(out)"
+call L marshal check f6 --as alice --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && cmp -s "$(LREC f6)" "$T/f6.before" && ok "check NAME --no-write --json: the record stays byte for byte" || no "check --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/e")"
+call L marshal check --no-write --assume-unreachable-ok --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && cmp -s "$(LREC f6)" "$T/f6.before" && [ ! -e "$L0/s/audit.log" ] && diff -r "$T/features.before" "$L0/s/features" >/dev/null && ok "check --no-write --assume-unreachable-ok: no audit line, and nothing under the records changed" || no "check --no-write --assume-unreachable-ok: rc=$RC $(cat "$T/v"; ls -la "$L0/s")"
 call L marshal status f6 --json
 [ "$RC" = 0 ] && jq -e '.features[0].status == "abandoned" and .features[0].ghost == true' "$T/o" >/dev/null && ! cmp -s "$(LREC f6)" "$T/f6.before" \
   && ok "status NAME (without --no-write): the default is unchanged, the record is marked abandoned" || no "status f6 default: rc=$RC $(head -c 300 "$T/o")"
@@ -255,5 +317,16 @@ call L marshal claim f5 --as carol --goal "prepared"
 mkdir -p "$T/scratch2"
 env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=carol "$DA" local prepare --repo "$R" --base feature/f5 --slug pj1 --scratch "$T/scratch2" >"$T/o" 2>"$T/e"; RC=$?
 [ "$RC" = 0 ] && [ "$(jq -r 'select(.slug == "pj1") | .lead' "$L0/s/local-runs.jsonl" 2>/dev/null)" = carol ] && ok "local prepare: the run record of a claimed feature holds the lead id" || no "local prepare lead: rc=$RC $(cat "$T/e"; cat "$L0/s/local-runs.jsonl" 2>&1 | head -c 300)"
+
+# the shared records, check: nothing fetched, nothing written under the state's features, the answer says not-asked
+cp "$OBS" "$T/obs.before2"; rm -rf "$T/afeatures.before2"; cp -a "$T/m/a/s/features" "$T/afeatures.before2"
+mv "$ORIGIN" "$ORIGIN.gone"
+call XE a QARGI_MARSHAL_MONO=12000 QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --no-write --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.remote == "not-asked" and .answer == "yours"' "$T/o" >/dev/null && cmp -s "$OBS" "$T/obs.before2" && diff -r "$T/afeatures.before2" "$T/m/a/s/features" >/dev/null \
+  && ok "check --no-write (refs): remote not-asked, nothing under the state's features changed" || no "check refs --no-write: rc=$RC $(cat "$T/v"; head -c 300 "$T/o"; cat "$T/e")"
+rm -f "$T/m/a/s/audit.log"
+call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --no-write --assume-unreachable-ok --json
+[ "$RC" = 0 ] && jq -e '.remote == "not-asked"' "$T/o" >/dev/null && [ ! -e "$T/m/a/s/audit.log" ] && ok "check --no-write --assume-unreachable-ok (refs): no audit line" || no "check refs --no-write --assume: rc=$RC $(cat "$T/e"; cat "$T/m/a/s/audit.log" 2>&1)"
+mv "$ORIGIN.gone" "$ORIGIN"
 [ "$fail" = 0 ] && echo "all ok" || echo "FAILURES"
 exit "$fail"
