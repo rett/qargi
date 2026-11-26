@@ -78,6 +78,7 @@ CAP = 2000
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 ID_RE = re.compile(r"^[A-Za-z0-9._@:+-]{1,128}$")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+MAX_REV = 2 ** 53 - 1      # the largest integer a pinned JSON document holds (lib/jsonkind.py MAX_INT): a record with a larger rev could not be shown
 CTRL_ALL_RE = re.compile(r"[\x00-\x1f\x7f]+")        # every control character, a newline and a tab too
 
 
@@ -412,6 +413,8 @@ def sane(rec):
     rev = rec.get("rev")
     if rev is not None and (not isinstance(rev, int) or isinstance(rev, bool) or rev < 0):
         return "its rev is not a number"
+    if rev is not None and rev > MAX_REV:
+        return "its rev is beyond 2^53 - 1"      # a pinned document holds no integer past that (docs/reference/json-output.md): the record is as unusable as a wrong type
     return None
 
 
