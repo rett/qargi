@@ -14,6 +14,7 @@ import jsonkind as J  # noqa: E402
 
 PY = [sys.executable, "-B", "-I", os.path.join(LIB, "jsonkind.py")]
 FIRST_KINDS = ("qargi-refusal", "qargi-handoff", "qargi-marshal-status", "qargi-marshal-check")
+DRAFT_KINDS = ("qargi-run-plan", "qargi-run-plan-check")      # registered, not pinned: no fixtures yet (tests/test_json_registry.py skips them)
 MAX_NEST = J.MAX_DEPTH
 RULE_NAMES = list(J.RULES)
 DOC_RULES = RULE_NAMES[:RULE_NAMES.index("registry-not-object")]
@@ -420,10 +421,15 @@ class RegistryFormat(Tmp):
             self.assertTrue(J.RULES[r].strip(), r)
 
     def test_the_four_first_kinds_are_pinned_at_the_first_release_and_named_after_their_files(self):
-        self.assertEqual(J.kind_names(), sorted(FIRST_KINDS))
+        self.assertEqual(J.kind_names(), sorted(FIRST_KINDS + DRAFT_KINDS))
         for kind in FIRST_KINDS:
             r = registry(kind)
             self.assertEqual((r["registry"], r["schema"], r["status"], r["since"]), (1, 1, "pinned", "0.3.9"), kind)
+
+    def test_the_run_plan_kinds_are_drafts_of_the_release_that_adds_them(self):
+        for kind in DRAFT_KINDS:
+            r = registry(kind)
+            self.assertEqual((r["registry"], r["schema"], r["status"], r["since"]), (1, 1, "draft", "0.3.10"), kind)
 
 
 
@@ -431,7 +437,7 @@ class CommandLine(Tmp):
     def test_check_of_the_directory(self):
         rc, out, err = run("check")
         self.assertEqual((rc, err), (0, ""), err)
-        self.assertTrue(out.startswith("ok: 4 registry files"), out)
+        self.assertTrue(out.startswith("ok: %d registry files" % len(FIRST_KINDS + DRAFT_KINDS)), out)
 
     def test_check_file_and_stdin(self):
         p = os.path.join(KINDS, "qargi-handoff.json")

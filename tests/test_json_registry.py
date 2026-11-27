@@ -10,6 +10,8 @@
   5. a field of the live registry appears in no valid fixture;
   6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag).
 
+A kind whose `status` is draft is held to point 1 only (and to the rules text of point 2): it has no fixtures, no frozen copy and no case file until it is pinned.
+
 The fixtures are plain files: valid.json is the real output of the scenario of tests/fixtures/json/scenario.sh (the machine's own values replaced by
 fixed ones); the other files are made from the valid ones by this file. `--regen` runs the scenario and writes them, `--regen --check` runs it and says
 whether the files in the tree are what it makes now (it needs a checkout outside any run directory), `--freeze` copies the live registry files over the
@@ -481,6 +483,9 @@ class Lint:
         if not os.path.isfile(os.path.join(self.fix, "rules.json")) or read(os.path.join(self.fix, "rules.json")) != expected_rules:
             self.fail(2, "%s/rules.json is not the list of rules of this test (python3 tests/test_json_registry.py --regen)" % FIX)
         for kind, reg in sorted(regs.items()):
+            if reg["status"] == "draft":      # a draft is registered and may change: its fixtures, frozen copy and release check come with the pin
+                self.notes.append("%s is a draft: points 3 to 5 wait for its pin" % kind)
+                continue
             try:
                 self.kind(kind, reg)
             except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
@@ -643,7 +648,9 @@ def regen(root, tool, check, keep=None):
     J = load_module(root, "jsonkind")
     regs = {}
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
-        regs[n], _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        reg, _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        if reg["status"] != "draft":      # a draft has no fixtures yet
+            regs[n] = reg
     KINDS_SEEN[:] = sorted(regs)
     base = os.path.realpath(tempfile.mkdtemp(prefix="j."))
     raw = os.path.join(base, "raw")
@@ -696,6 +703,8 @@ def freeze(root):
     J = load_module(root, "jsonkind")
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
         reg, _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        if reg["status"] == "draft":
+            continue
         shutil.copyfile(os.path.join(root, "lib", "kinds", n + ".json"), os.path.join(root, FIX, n, "v%d" % reg["schema"], "registry.json"))
     print("froze the registry files")
     return 0

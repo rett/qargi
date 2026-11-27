@@ -785,97 +785,7 @@ render_warning() {
 # nothing to look up; quoted text, backquotes and ${ } are not read; only the command words are checked, never the arguments. A SCOPE path that is
 # empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
 TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
-# TB_WORDS_PY: the command words of a DONE line, one per line. A small scanner (a quoted string, a backquoted one, ${ } and $(( )) are one word; ; & | < > ( ) end a
-# word; a redirection operator takes the next word as its target, a number before it is the file descriptor), then the rule: a word is a command word at the start of the
-# line and after a separator or an opening parenthesis, past NAME=value words and the keywords that a command follows (! { if then else elif do while until time). A name
-# the line defines (name() { ...; }) is no command word; the words of a [[ ]] test are not read. What the scanner cannot read it leaves out: at a case, function or select
-# command word, at (( and at an array assignment (NAME=( ) it reports the words found before that point and stops, so the rest of the line is accepted on `bash -n` alone
-# (a case pattern, an arithmetic for header and the elements of an array are not command words). That only lets a line through, it never refuses one.
-TB_WORDS_PY='
-import re, sys
-s = sys.argv[1]
-OPS = ";&|<>"
-KEEP = {"!", "{", "if", "then", "else", "elif", "do", "while", "until", "time"}
-toks = []
-cur, has, i, n = "", False, 0, len(s)
-def flush():
-    global cur, has
-    if has:
-        toks.append(("w", cur))
-    cur, has = "", False
-while i < n:
-    c = s[i]
-    if c in " \t":
-        flush(); i += 1
-    elif c == "#" and not has:
-        break
-    elif c == chr(92):
-        cur += s[i + 1:i + 2]; has = True; i += 2
-    elif c == chr(39):
-        j = s.find(chr(39), i + 1); j = n if j < 0 else j
-        cur += s[i + 1:j]; has = True; i = j + 1
-    elif c == chr(34):
-        j = i + 1
-        while j < n and s[j] != chr(34):
-            j += 2 if s[j] == chr(92) else 1
-        cur += s[i + 1:j]; has = True; i = j + 1
-    elif c == "`":
-        j = s.find("`", i + 1); j = n if j < 0 else j
-        cur += s[i:j + 1]; has = True; i = j + 1
-    elif s.startswith("$((", i) or s.startswith("${", i):
-        e = "))" if s[i + 1] == "(" else "}"
-        j = s.find(e, i); j = n if j < 0 else j + len(e)
-        cur += s[i:j]; has = True; i = j
-    elif c == "$" and s.startswith("(", i + 1):
-        cur += "$"; has = True; flush(); i += 1
-    elif c in OPS:
-        if has and cur.isdigit() and c in "<>":
-            cur, has = "", False
-        flush()
-        j = i
-        while j < n and s[j] in OPS:
-            j += 1
-        run = s[i:j]; i = j
-        toks.append(("redir",) if ("<" in run or ">" in run) else ("sep",))
-    elif c == "(" and (s.startswith("(", i + 1) or cur.endswith("=")):
-        flush(); toks.append(("stop",)); break
-    elif c == "(":
-        flush(); toks.append(("open",)); i += 1
-    elif c == ")":
-        flush(); toks.append(("close",)); i += 1
-    else:
-        cur += c; has = True; i += 1
-flush()
-out, cmd, pend, defined, k = [], True, False, set(), 0
-while k < len(toks):
-    t = toks[k]; k += 1
-    if t[0] == "redir":
-        pend = True
-    elif t[0] == "w":
-        w = t[1]
-        if pend:
-            pend = False
-        elif cmd and not re.match(r"[A-Za-z_][A-Za-z0-9_]*[+]?=", w) and w not in KEEP:
-            if w in ("case", "function", "select"):
-                out.append(w); break
-            if w == "[[":
-                out.append(w)
-                while k < len(toks) and toks[k] != ("w", "]]"):
-                    k += 1
-                cmd = False
-                continue
-            if k + 1 < len(toks) and toks[k][0] == "open" and toks[k + 1][0] == "close":
-                defined.add(w)
-            elif w and w not in defined:
-                out.append(w)
-            cmd = False
-    elif t[0] == "stop":
-        out.append(":"); break
-    else:
-        pend = False
-        cmd = t[0] in ("sep", "open")
-print("\n".join(out))
-'
+# The command words of a DONE line, one per line, come from lib/done_words.py (the scanner and its limits are described there; qargi flow plan check reads a DONE with it too).
 taskblock_check() {
   local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 tw first; shift 5
   [ ! -L "$f" ] || usage_die "--task-file $f is a link: give the file itself"
@@ -887,7 +797,7 @@ taskblock_check() {
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
   bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
-  tw=$(python3 -I -c "$TB_WORDS_PY" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
+  tw=$(python3 -I "$(dirname "$0")/done_words.py" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
   [ -n "$tw" ] || usage_die "--done '$done' is not a command: it has no command word"
   first=1
   while IFS= read -r w0; do
