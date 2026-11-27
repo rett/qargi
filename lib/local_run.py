@@ -72,7 +72,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        refresh token no longer reaches the member. A link may also declare private.refresh ({argv, prompt, timeout_seconds, min_remaining_seconds}): the
                        command that makes the runtime use, and so refresh, the real sign-in (argv[0] is the definition's own command; {model} is its default model, {scratch}
                        the working directory). When a copy's token would not last the run (the bound plus the margin) the runner, before anything is recorded and again once the
-                       locks are held, takes the lock beside the source (the one a plain link uses; not twice when this run holds it already, and bounded by --wait as above), reads
+                       locks are held, takes the lock beside the source (the one a plain link uses; not twice when this run holds it already; --wait bounds the wait for it as for a plain link's, until the run is recorded: a refresh that is needed only after that waits without a bound), reads
                        the source again (another run may have refreshed it while this one waited: when it lasts now the lock is released and the run goes on), and otherwise
                        runs the command once, read-only in a scratch directory of its own, with the environment a member run gets and the variable of dispatch.home naming the
                        source's directory, the prompt on its standard input and its output discarded and never printed (it can carry tokens); it is stopped when it outlives
@@ -598,7 +598,7 @@ def take_flock(fd, d):
 def lock_one(path, home, runtime, sig, kind="run"):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
     that finds it held says so (a note on standard error, with the holder from the lane record and, when several wait, its place in the queue) and waits for it,
-    a signal ending the wait (Interrupted); with home["wait"] (--wait SECONDS) the wait is bounded, from the moment this is called and not again after each file that was
+    a signal ending the wait (Interrupted); with home["wait"] (--wait SECONDS) the wait is bounded (for the lock of a refresh only until the run is recorded, home["recorded"]: lane-busy says that no attempt was recorded), from the moment this is called and not again after each file that was
     replaced, and its end is the refusal lane-busy, 0 meaning no wait at all.
     The file is made when it is missing (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run
     without the lock. The lock is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the
@@ -608,7 +608,7 @@ def lock_one(path, home, runtime, sig, kind="run"):
     keeps the descriptor too (take_lock). Once held, the lane record (lib/lane.py) names this run beside the lock; the caller removes it (lane_clear) before it lets the lock go."""
     shown = lock_name(path, home, runtime)
     d = os.path.dirname(path)
-    wait = home.get("wait")
+    wait = None if kind == "refresh" and home.get("recorded") else home.get("wait")   # once the attempt is recorded lane-busy would be untrue: a refresh then waits without a bound
     waited, waiter = False, None
     end = None if wait is None else time.monotonic() + wait          # once, here: a file replaced under the wait does not start the wait again
     try:
@@ -2790,6 +2790,8 @@ def run_started(plan, run, store, dispatch_state, sig, pre=None):
     clear_stale_finals(run)
     argv = [plan["exe"]] + plan["argv"][1:]
     home = plan["home"]
+    if home:
+        home["recorded"] = True                          # the attempt is begun: a wait for the lock of a refresh that is needed only now has no bound (lock_one)
     head = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
             "command": plan["exe"] if plan["exe_from"] == "on PATH" else None,
             "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"]}

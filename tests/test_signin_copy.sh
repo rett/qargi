@@ -462,6 +462,47 @@ PY
 { grep -qx 'refused:refresh-failed' <<<"$got" && grep -qx 'LOCK-HELD' <<<"$got" && grep -qx 'RECORD member=True reads=1' <<<"$got" && grep -qF 'could not be stopped' <<<"$got"; } \
   && ok "a refresh command that leaves a process that cannot be stopped is a refresh-failed: the result is not read, and the lane stays held with its record while the process lives" || no "refresh survivors: $got"
 
+# --wait bounds the wait for the lock of a refresh too, while the run is not recorded: lane-busy, with no record and no refresh
+setprov fakeref; echo ok > "$T/refmode"; signin 500; rm -f "$T/refresh.count" "$T/refresh.log" "$T/lk-held" "$T/lk-release" "$LOCKF"; prep rw1; task; W1=$RUN
+spawn_bg bash -c 'flock 9; : > "$1/lk-held"; for _ in $(seq 600); do [ -e "$1/lk-release" ] && break; sleep 0.1; done' _ "$T" 9> "$LOCKF"; LKP=$SPAWNED_PID
+wait_until '[ -e "$T/lk-held" ]' 30
+out=$($DA local run "$W1" --wait 1 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'the wait of 1 s ended' <<<"$out" && grep -qF 'no attempt is recorded' <<<"$out" && [ ! -e "$W1/dispatch.json" ] && [ ! -e "$T/refresh.count" ]; } \
+  && ok "--wait bounds the wait for the lock of a refresh: refused as lane-busy before anything is recorded, and the refresh does not run" || no "wait for a refresh lock: rc=$rc $out"
+: > "$T/lk-release"; wait "$LKP" 2>/dev/null; rm -f "$T/lk-held" "$T/lk-release" "$LOCKF"
+# once the run is recorded (home["recorded"]) the wait for the lock of a refresh has no bound, so lane-busy is never raised for a run that has a record (a fake clock)
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+def take(**more):
+    holder = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    clock = [0.0]
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 5.0:                                # the holder lets go five seconds in
+            os.close(holder)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep, time=time.time)
+    home = dict({"declared": [], "runtime": "fakeref", "wait": 0}, **more)
+    try:
+        os.close(L.lock_one(path, home, "fakeref", L.Signals(), "refresh"))
+        return "took it at %.2f" % clock[0]
+    except L.Stop as e:
+        return "refused code=%d" % e.code
+    finally:
+        try:
+            os.close(holder)
+        except OSError:
+            pass
+print("before the record:", take())
+print("after the record:", take(recorded=True))
+PY
+)
+{ grep -qx 'before the record: refused code=1' <<<"$got" && grep -qx 'after the record: took it at 5.00' <<<"$got"; } \
+  && ok "a refresh that is needed only once the run is recorded waits for its lock without a bound (--wait 0 does not refuse it), so lane-busy never says nothing was recorded of a recorded run" || no "recorded refresh lock: $got"
+
 # a home with a plain link beside the private one holds the lock for the whole run: a refresh that is needed after the wait takes no second lock (no deadlock) and goes on
 setprov fakemixr; echo hold > "$T/mode"; echo ok > "$T/refmode"; signin 259200; rm -f "$T/hold-ready" "$T/hold-go" "$T/refresh.count" "$T/refresh.log" "$LOCKF"
 prep mr1; M1=$RUN; task; prep mr2; M2=$RUN; task

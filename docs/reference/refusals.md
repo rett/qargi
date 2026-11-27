@@ -867,7 +867,7 @@ compares them with that page.
 ### lane-busy
 
 - Rule: A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then.
-- Why: the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue, and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again.
+- Why: the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue (for that lock, and for the lock the refresh of a private sign-in takes before the run is recorded), and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again.
 - Exit 1, live.
 - Fields: `name` (label), `lock` (path), `wait` (count), `holder` (name), `age` (count).
 - Message: `the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded`
