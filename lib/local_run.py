@@ -47,7 +47,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        several runs wait, its place among them (the waiters' small files .qargi-lane-wait.PID.START, removed when the wait ends, a stale one ignored: the order they start in, for only the
                        first waiter polls the lock and a run that finds others waiting queues behind them), and
                        waits, with no bound unless --wait SECONDS gives one (a signal ends the wait): at the bound the run is refused as lane-busy (exit 1) before its
-                       attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait. The record and the
+                       attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait at all, and a bound above 0 tries the lock again a few times at its end (a probe of local list --lanes may hold it for a moment). The record and the
                        waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (held or free from /proc/locks, else, where that cannot compare the device, a probe flock let go at once; the holder only when the lock is held).
                        The lock descriptor goes to the member (pass_fds), so a runner killed with SIGKILL leaves the lane held until the member's process group ends (the
                        record then shows the runner gone and the member alive), and after the flock succeeds the descriptor must still be the file at the path (st_dev and
@@ -181,6 +181,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import lane as LN
+import suite_queue as SQ  # noqa: E402  (try_flock, RETRIES: the same short retry for a probe of `local list --lanes` that the whole-suite queue makes)
 import prepared_request as PR
 import refusal
 import refusal as RF
@@ -587,13 +588,17 @@ def foreign_holder(d):
     return not (rec["runner"] and rec["runner"]["pid"] == mine["pid"] and rec["runner"]["start"] == mine["start"])
 
 
-def take_flock(fd, d):
+def take_flock(fd, d, again=0):
     """Try the exclusive flock on the open lock file fd (never waits): True when it is held now, and no other live run is recorded as the holder of the lane in
     directory d; False when another process holds it, or when the file was replaced under a run that still holds the old one (foreign_holder), in which case the flock
-    taken here is let go again so that it holds up nobody."""
+    taken here is let go again so that it holds up nobody. `again` more tries are made, SQ.PAUSE seconds apart, when the flock is refused (SQ.try_flock, the helper of the
+    whole-suite queue): the end of a --wait bound uses SQ.RETRIES of them, for a probe of `qargi local list --lanes` (lib/lane.py held(): a non-blocking flock on a
+    descriptor of its own, let go at once) can hold the lock at that very moment, and a run must not be refused as lane-busy because it came then."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        taken = SQ.try_flock(fd, again)
+    except SQ.QueueError as e:
+        fail("the lock of the lane cannot be taken: %s" % e)
+    if not taken:
         return False
     if foreign_holder(d):
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -654,6 +659,8 @@ def lock_one(path, home, runtime, sig, kind="run"):
                     try:
                         while not (my_turn(d, True, waiter is not None) and take_flock(fd, d)):
                             if end is not None and time.monotonic() >= end:
+                                if my_turn(d, True, waiter is not None) and take_flock(fd, d, SQ.RETRIES):     # the last poll may have met a probe of `local list --lanes`
+                                    break
                                 raise lane_busy(home, runtime, shown, d, wait)
                             time.sleep(LOCK_POLL)
                     finally:

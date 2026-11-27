@@ -610,6 +610,39 @@ PY
 )
 { grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
   && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
+# the end of a bound tries the lock a few more times (the last poll may have met a probe of `local list --lanes`): a lock let go during those tries is taken, one that stays
+# held is refused as lane-busy after exactly RETRIES more tries; no real sleep (the clock and the pauses of both modules are the test's own), --wait 0 tries once
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+def case(release_at, wait=2):
+    """release_at: the number of the pause of try_flock after which the competing holder lets go (None: never)."""
+    path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+    first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(first, fcntl.LOCK_EX)
+    clock, pauses = [0.0], [0]
+    def poll_sleep(seconds):
+        clock[0] += seconds
+    def retry_sleep(seconds):
+        pauses[0] += 1
+        if release_at is not None and pauses[0] == release_at:
+            os.close(first)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=poll_sleep, time=time.time)
+    L.SQ.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=retry_sleep, time=time.time)
+    try:
+        L.lock_one(path, {"declared": [], "runtime": "fakeplain", "wait": wait}, "fakeplain", L.Signals())
+        return "TAKEN pauses=%d" % pauses[0]
+    except L.Stop as e:
+        return "STOP code=%d pauses=%d at=%.1f" % (e.code, pauses[0], clock[0])
+print(case(2))
+print(case(None))
+print(case(1, wait=0))
+PY
+)
+got=$(grep -v '^qargi: note:' <<<"$got")                  # the notes of the waiting run are not the result
+{ [ "$(sed -n 1p <<<"$got")" = "TAKEN pauses=2" ] && [ "$(sed -n 2p <<<"$got")" = "STOP code=1 pauses=3 at=2.0" ] && [ "$(sed -n 3p <<<"$got")" = "STOP code=1 pauses=0 at=0.0" ]; } \
+  && ok "the end of a --wait bound tries the lock three more times (taken when it is let go meanwhile, lane-busy when it is not); --wait 0 tries once" || no "retry at the bound: $got"
 
 # the reader of /proc/locks (synthetic text): the device is compared with stat's as well as the inode; what cannot be compared is unknown, never held
 got=$(python3 -I - "$T/tool/lib" <<'PY' 2>&1
