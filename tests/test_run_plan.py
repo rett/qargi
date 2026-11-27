@@ -296,7 +296,7 @@ class Overlap(unittest.TestCase):
         yes = [("lib", "lib/a.py"), ("lib/a.py", "lib/a.py"), ("lib/*.py", "lib/a.py"), ("lib/a*.py", "lib/*b.py"), ("**", "x/y"), ("docs/**/*.md", "docs/ref/a.md"),
                ("docs/**/*.md", "docs/a.md"), ("tests/**", "tests"), (".", "lib/a.py"), ("./lib/", "lib/a.py"), ("a/*/c", "a/b/c"), ("lib/[ab].py", "lib/a.py"),
                ("lib/{a}.py", "lib/c.py"), ("lib/a.py/", "lib/a.py/x"), ("a/b", "a"), ("*/x", "y/x"), ("*", "lib"), ("**/*.py", "lib/x.sh"), ("lib/a?c.py", "lib/a*.py")]
-        no = [("lib/a.py", "lib/b.py"), ("lib/*.py", "lib/*.sh"), ("lib", "docs"), ("lib/[ab].py", "lib/c.py"), ("a/*/c", "a/b/d"), ("docs/**/*.md", "tests/x.md"),
+        no = [("lib/a.py", "lib/b.py"), ("lib/*.py", "lib/*.sh"), ("lib", "docs"), ("lib/[ab].py", "lib/c.py"), ("lib/[!a].py", "lib/a.py"), ("a/*/c", "a/b/d"), ("docs/**/*.md", "tests/x.md"),
               ("x*", "y*"), ("lib/a?.py", "lib/b?.py"), ("a/b/c", "a/b/d/e"), ("lib/x", "lib/xy"), ("*.py", "*.sh"), ("a*", "b*/x"), ("lib/*.py", "lib/x.sh/y.py")]
         for a, b in yes:
             with self.subTest(a=a, b=b):
@@ -308,7 +308,8 @@ class Overlap(unittest.TestCase):
                 self.assertFalse(RP.scopes_overlap(RP.scope_entry(b), RP.scope_entry(a)))
 
     def test_a_pattern_that_cannot_be_decided_is_an_overlap(self):
-        for a, b in (("lib/\\*.py", "lib/x.py"), ("lib/[!a].py", "lib/{x}.py"), ("lib/*a*", "lib/*b*")):
+        for a, b in (("lib/\\*.py", "lib/x.py"), ("lib/[!a].py", "lib/{x}.py"), ("lib/*a*", "lib/*b*"), ("lib/[^a].py", "lib/b.py"),
+                     ("lib/[[:alpha:]].py", "lib/b.py"), ("lib/[[:digit:]].py", "lib/b.py"), ("lib/[a[.-.]]x", "lib/-x")):
             with self.subTest(a=a, b=b):
                 self.assertTrue(RP.scopes_overlap(RP.scope_entry(a), RP.scope_entry(b)))
 

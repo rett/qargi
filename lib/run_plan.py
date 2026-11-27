@@ -130,8 +130,8 @@ def segment_overlap(a, b):
         return False
     if ga != gb:
         glob, literal = (a, b) if ga else (b, a)
-        if "{" in glob or "\\" in glob:       # not fnmatch's dialect: say overlap
-            return True
+        if "{" in glob or "\\" in glob or "[^" in glob or re.search(r"\[[:.=]", glob):
+            return True                         # not fnmatch's dialect (a brace, a backslash, `[^...]`, `[[:class:]]`): say overlap
         return fnmatch.fnmatchcase(literal, glob)
     # two globs: they cannot overlap when their fixed beginnings or their fixed ends disagree; otherwise they may
     first = [min((s.index(c) for c in GLOB_CHARS if c in s)) for s in (a, b)]
