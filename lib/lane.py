@@ -247,7 +247,7 @@ def holder_line(d, now=None):
         return "holder not recorded (a run of an earlier qargi, or one that has only just started)"
     state = holder_state(rec)
     if state == "gone":
-        return "holder recorded as lead %s, run %s, but its runner and member are not there any more" % (rec["lead"] or "?", rec["run"] or "?")
+        return "the record names lead %s, run %s, but its runner and member are not there any more" % (rec["lead"] or "?", rec["run"] or "?")
     age = age_text((now or time.time()) - rec["started"]) if rec["started"] is not None else "?"
     return "holder is lead %s, run %s, holding it for %s%s" % (rec["lead"] or "?", rec["run"] or "?", age, "" if state == "running" else " (member alive, runner gone)")
 
