@@ -419,7 +419,7 @@ KPID=$(sed -n 's/^PID=//p' "$T/refresh.log"); KRUN=$(jq -r .runner.pid "$KREC")
 kill -KILL "$KRUN"; wait_until '[ -s "$T/k1.rc" ]' 30
 out=$($DA local list --lanes 2>&1)
 { ! kill -0 "$KRUN" 2>/dev/null && kill -0 "$KPID" 2>/dev/null && ! flock -n "$LOCKF" true && [ "$(jq -r .kind "$KREC")" = refresh ] \
-  && grep -qE '^fakeref +~/.fakesi-members/.qargi-run.lock +held, member alive, runner gone +lead .* \(refresh, ' <<<"$out"; } \
+  && grep -qE '^fakeref +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)), member alive, runner gone +lead .* \(refresh, ' <<<"$out"; } \
   && ok "SIGKILL of the runner during a refresh: the lane stays held while the refresh command lives (it holds the lock descriptor), and the lane record and local list --lanes name it" || no "lane after SIGKILL in a refresh: runner $KRUN refresh $KPID $(cat "$KREC" 2>&1) $out"
 : > "$T/refresh-go"; wait_until '! kill -0 "$KPID" 2>/dev/null && flock -n "$LOCKF" true' 30 && ok "when the refresh command ends the lane is free" || no "lane after the refresh: $(ls -lA "$MEM")"
 rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode" "$KREC" "$T/k1.rc"
@@ -610,6 +610,41 @@ PY
 { grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
   && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
 
+# the reader of /proc/locks (synthetic text): the device is compared with stat's as well as the inode; what cannot be compared is unknown, never held
+got=$(python3 -I - "$T/tool/lib" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import lane as LN
+dev = os.makedev(8, 1)
+def line(maj, minr, ino, kind="FLOCK"):
+    return "1: %s  ADVISORY  WRITE 4242 %02x:%02x:%d 0 EOF\n" % (kind, maj, minr, ino)
+cases = [("same device and inode", line(8, 1, 77), dev),
+         ("another device", line(8, 17, 77), dev),
+         ("another inode", line(8, 1, 78), dev),
+         ("a POSIX lock", line(8, 1, 77, "POSIX"), dev),
+         ("a lock that waits", "1: -> FLOCK  ADVISORY  WRITE 4242 08:01:77 0 EOF\n", dev),
+         ("00:00 in the line", line(0, 0, 77), dev),
+         ("an anonymous device for stat", line(8, 1, 77), os.makedev(0, 44)),
+         ("an anonymous device in the line", line(0, 44, 77), dev),
+         ("no device for stat", line(8, 1, 77), None),
+         ("held beside an unknown", line(0, 44, 77) + line(8, 1, 77), dev),
+         ("two other devices", line(8, 17, 77) + line(9, 2, 77), dev)]
+for name, text, st in cases:
+    print("%s: %s" % (name, LN.match_flock(text, st, 77)))
+PY
+)
+want='same device and inode: True
+another device: False
+another inode: False
+a POSIX lock: False
+a lock that waits: False
+00:00 in the line: unknown
+an anonymous device for stat: unknown
+an anonymous device in the line: unknown
+no device for stat: unknown
+held beside an unknown: True
+two other devices: False'
+[ "$got" = "$want" ] && ok "the reader of /proc/locks compares the device with stat's as well as the inode: another device's lock is not held, and what cannot be compared is unknown, never held" || no "match_flock: $got"
 # the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
 got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
 import json, os, sys, tempfile
@@ -663,7 +698,7 @@ echo x > "$MEM/.qargi-lane-wait.1.1"; true & DEADP=$!; wait "$DEADP"; echo '{"pi
 ino=$(stat -c %i "$LOCKF"); before=$(grep -c ":$ino " /proc/locks)
 out=$(timeout 20 $DA local list --lanes 2>&1); rc=$?
 after=$(grep -c ":$ino " /proc/locks)
-{ [ "$rc" = 0 ] && grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held +lead lead-one run ca \(run, [0-9]+s\)$' <<<"$out" \
+{ [ "$rc" = 0 ] && grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)) +lead lead-one run ca \(run, [0-9]+s\)$' <<<"$out" \
   && grep -qE '^  waiting 1: lead lead-one run cb \([0-9]+s\)$' <<<"$out" && grep -qE '^  waiting 2: lead lead-one run cc \([0-9]+s\)$' <<<"$out" && ! grep -q ghost-waiter-never-listed <<<"$out" \
   && [ "$before" = "$after" ] && [ ! -s "$T/ca.rc" ] && [ ! -s "$T/cb.rc" ] && notext "$out"; } \
   && ok "local list --lanes shows the holder and the waiters in the order they began to wait, ignores a waiter of a process that is gone, and does not block or disturb a live run (no lock taken)" || no "lanes: rc=$rc $out before=$before after=$after"
@@ -715,7 +750,7 @@ echo hold > "$T/mode"; prep cs1; task; CS1=$RUN
 wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -n "$(jq -r ".member // empty" "$CS1/dispatch.json")" ]' 30
 kill -KILL "$(jq -r .runner "$CS1/dispatch.json")"; wait_until '[ -s "$T/cs1.rc" ]' 30
 out=$($DA local list --lanes 2>&1)
-grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held, member alive, runner gone +lead lead-one run cs1 ' <<<"$out" \
+grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)), member alive, runner gone +lead lead-one run cs1 ' <<<"$out" \
   && ok "SIGKILL of the runner: the record and local list --lanes say member alive, runner gone" || no "lanes after SIGKILL: $out"
 prep cs2; task; CS2=$RUN
 ( $DA local run "$CS2" > "$T/cs2.out" 2>&1; echo $? > "$T/cs2.rc" ) &
