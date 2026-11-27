@@ -35,6 +35,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fixture `broken/enum-unknown.json` of `qargi-handoff` put its unknown word into `gates[].tier`, an `x-open` enum, where a reader reads a word it does not know as `unknown`: it now breaks `record.status`, a closed enum, and the registry test fails on any fixture that closes an `x-open` enum.
 - The table of what each verb writes in `docs/reference/json-output.md` holds the `writes` sentence of `qargi-history` and of `qargi-history-entry` as their registry files say it, one row each, and `tests/test_json_live.sh` compares a sentence without its backticks, as it does the page.
 
+### Fixed
+- `qargi local list --json --lanes` is accepted, as `--lanes --json` is: the help says `--lanes` combines with `--json`, but only `--lanes` as the first word set the lanes mode, so the other order was refused with `--lanes takes no other option or argument`. The two orders print the same document; `--lanes` with anything else is still refused in either order.
+
 ## [0.3.9] - 2026-11-26
 
 ### Added

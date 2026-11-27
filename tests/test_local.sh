@@ -432,11 +432,21 @@ rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" runni
 ./bin/qargi local list --lanes --json > "$T/lj2.json" 2>&1; rcj=$?
 { [ $rcj = 0 ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj2.json" && [ "$(jq -r '.mode + " " + (.lanes | length | tostring) + " " + (has("runs") | tostring)' "$T/lj2.json")" = "lanes 0 false" ]; } \
   && ok "list --lanes --json: the lanes under their own key of the same kind (none here: no runtime shares a sign-in lock)" || no "list --lanes --json (rc=$rcj): $(cat "$T/lj2.json")"
+./bin/qargi local list --json --lanes > "$T/lj3.json" 2>&1; rcj=$?
+{ [ $rcj = 0 ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj3.json" && cmp -s "$T/lj2.json" "$T/lj3.json"; } \
+  && ok "list --json --lanes: the same document as --lanes --json (the two options in either order)" || no "list --json --lanes (rc=$rcj): $(cat "$T/lj3.json")"
 out=$(./bin/qargi local list --lanes --scratch "$T/ls" --json 2>&1); rcj=$?
 { [ $rcj = 2 ] && grep -qF -e '--lanes takes no other option' <<<"$out"; } && ok "--json with --lanes takes no other option either" || no "lanes with --scratch and --json: rc=$rcj $out"
+bad=''
+for args in "--json --lanes --scratch $T/ls" "--json --lanes extra" "--lanes --lanes" "--lanes extra --json"; do
+  # shellcheck disable=SC2086  # the words are the test's own, none holds a space
+  out=$(./bin/qargi local list $args 2>&1); rcj=$?
+  { [ $rcj = 2 ] && grep -qF -e '--lanes takes no other option' <<<"$out"; } || bad="$bad [$args: rc=$rcj $out]"
+done
+[ -z "$bad" ] && ok "--lanes with anything but --json, in either order, is refused (exit 2)" || no "lanes with other words:$bad"
 out=$(./bin/qargi local list --scratch "$T/nonexistent" --json 2>&1); rcj=$?
 { [ $rcj != 0 ] && ! grep -q '"kind"' <<<"$out"; } && ok "list --json of a directory that does not exist prints no document" || no "json of a missing directory: rc=$rcj $out"
-kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json" "$T/lj.json" "$T/lj2.json" "$T/lj.err"
+kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json" "$T/lj.json" "$T/lj2.json" "$T/lj3.json" "$T/lj.err"
 # --timings: verify and clean print one timings: line only when asked; the seconds of each phase are recorded in the run's registry line either way (it outlives the run directory)
 read -r TMR _ <<<"$(mkc timings)"; echo '{}' > "$TMR/out/manifest.json"
 PH='[0-9]+\.[0-9]{3}s'
