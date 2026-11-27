@@ -509,8 +509,9 @@ class Status(Base):
 
 
 class Probe(Base):
-    """Where /proc/locks cannot decide (a device it names cannot be compared with stat's, as on btrfs; no entry), the lock file is probed with a non-blocking flock
-    on a descriptor of its own: held when another process holds the lock, free otherwise, and the file is left unlocked by the probe."""
+    """Where /proc/locks cannot decide (a device it names cannot be compared with stat's, as on btrfs; /proc/locks unreadable), the lock file is probed with a
+    non-blocking flock on a descriptor of its own: held when another process holds the lock, free otherwise, and the file is left unlocked by the probe. A missing
+    entry does not trigger the probe: where the device can be compared no entry is free, and no lock is taken (test_no_entry_in_the_locks_is_free_and_takes_no_lock)."""
 
     HOLD = ("import fcntl, os, sys\nfd = os.open(sys.argv[1], os.O_RDONLY)\nfcntl.flock(fd, fcntl.LOCK_EX)\nprint('locked', flush=True)\nsys.stdin.readline()\n")
 
