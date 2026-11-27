@@ -163,7 +163,24 @@ if [ "$verb" = check ]; then
       printf 'runtime=%s%s%s\n' "$rt" "$md" "$mc" | LC_ALL=C tr -d '\000-\010\013-\037\177'
     fi
   fi
-  rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
+  # The lead's check of a report-only run of its registry leaves one entry in the history of the project (lib/history.py): the facts of the report come from
+  # review_check.py through a file of the state, the rest from the registry's line of the run. Evidence only: the exit status below is the check's.
+  HFACTS=''
+  if [ -z "${QARGI_MEMBER_RUN:-}" ] && [ -n "${CLASS_RUN:-}" ]; then HFACTS=$(mktemp "$DA_STATE/.review-facts.XXXXXX" 2>/dev/null) || HFACTS=''; fi
+  rc=0; QARGI_REVIEW_FACTS=$HFACTS python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
+  if [ -n "$HFACTS" ]; then
+    if [ -s "$HFACTS" ]; then
+      hproj=$(reg_get "$CLASS_RUN" project)
+      if [ "$(reg_json "$CLASS_RUN" 'has("lifecycle")')" = true ]; then hsha=$(lc_base_sha "$CLASS_RUN" 2>/dev/null) || hsha=''
+      else hsha=$(awk -v b="refs/heads/$(reg_get "$CLASS_RUN" base)" '$1=="local" && $2==b {print $3}' "$CLASS_RUN/refs.before" 2>/dev/null | head -n 1); fi
+      if [ -n "$hproj" ]; then
+        python3 -I "$(dirname "$0")/history.py" write review --project "$hproj" --run "${CLASS_RUN##*/}" --slug "$(reg_get "$CLASS_RUN" slug)" --facts "$HFACTS" \
+          --base="$(reg_get "$CLASS_RUN" base)" --base-sha="$hsha" --role="$(reg_get "$CLASS_RUN" ability)" --class="$RCLASS" --runtime="$(reg_get "$CLASS_RUN" runtime)" \
+          --model="$(reg_get "$CLASS_RUN" model)" || true
+      fi
+    fi
+    rm -f -- "$HFACTS"
+  fi
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
   # that has patches, after the check above; a failing scrub fails the check
   if [ -n "${QARGI_MEMBER_RUN:-}" ]; then

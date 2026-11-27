@@ -26,6 +26,20 @@ out=$($DA local report "$R1" < "$MSG" 2>&1); rc=$?
   && jq -e '.artifacts == [{"path":"report.md","kind":"report"}]' "$R1/out/manifest.json" >/dev/null; } && ok "and a minimal manifest.json that names the report" || no "manifest: $(cat "$R1/out/manifest.json" 2>&1)"
 out=$($DA review check "$R1/out" 2>&1); rc=$?
 { [ $rc = 0 ] && grep -q "report-only run" <<<"$out"; } && ok "review check accepts what local report wrote" || no "check: rc=$rc $out"
+# the lead's check of a registered report-only run leaves one entry in the history of the project (lib/history.py): the verdict word, the hash of the report and what the
+# registry records of the run, never the text of the report
+HF=$T/s/history/app.jsonl
+jq -e --arg id "${R1##*/}" --arg h "$(sha256sum "$R1/out/report.md" | cut -d' ' -f1)" --arg b "$(git -C "$A" rev-parse develop)" \
+  'select(.entry_kind == "review") | .kind == "qargi-history-entry" and .schema == 1 and .project == "app" and .run == $id and .slug == "rep1" and .verdict == "accept" and .report_sha256 == $h
+   and .base == "develop" and .base_sha == $b and .role == "review" and .class == "read-only" and .runtime == null and .vendor == null and .tests_run == null and (.id | test("^[0-9a-f]{16}$"))' "$HF" >/dev/null \
+  && [ "$(wc -l < "$HF")" = 1 ] && ! grep -q 'if n > 0' "$HF" && [ "$(stat -c %a "$HF")" = 600 ] \
+  && ok "review check leaves a review entry: the verdict, the sha256 of the report, the run, role, class and base from the registry, and no report text" || no "review entry: $(cat "$HF" 2>&1)"
+printf '# Findings\n\nnone\n\nverdict: revise\n' | $DA local report "$R1" --force >/dev/null 2>&1
+$DA review check "$R1/out" >/dev/null 2>&1; rc=$?; $DA review check "$R1/out" --lead >/dev/null 2>&1; rc2=$?
+{ [ $rc = 1 ] && [ $rc2 = 0 ] && [ "$(jq -rs 'map(.verdict) | join(",")' "$HF")" = accept,revise,revise ]; } && ok "a revise verdict is recorded each time it is checked (exit 1 without --lead, 0 with it)" || no "revise entries: rc=$rc rc2=$rc2 $(jq -c .verdict "$HF")"
+printf '# Findings\n\nsecond\n' | $DA local report "$R1" --force >/dev/null 2>&1; $DA review check "$R1/out" >/dev/null 2>&1
+[ "$(wc -l < "$HF")" = 3 ] && ok "a report with no verdict line fails the check and leaves no entry" || no "an entry for a failed check: $(wc -l < "$HF")"
+printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\n# Checked\n\nread the diff\n\nverdict: accept\n' | $DA local report "$R1" --force >/dev/null 2>&1
 out=$($DA local report "$R1" < "$MSG" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "exists already" <<<"$out"; } && ok "it does not overwrite a report" || no "overwrite: rc=$rc $out"
 printf '# Findings\n\nsecond\n' | $DA local report "$R1" --force >/dev/null 2>&1

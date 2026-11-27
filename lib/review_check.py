@@ -7,7 +7,7 @@ The DONE line of RUN/task.md is the check the lead set: a manifest whose done.co
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable.
 A run with no patches whose clone (RUN/clone, beside OUT) holds uncommitted changes to tracked files fails unless its manifest says BLOCKED: a change left
 uncommitted is a refusal, never a finished task (untracked files are a warning). The clone is read with lib/local_run.py worktree_changes."""
-import fnmatch, glob, json, os, re, sys
+import fnmatch, glob, hashlib, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -34,6 +34,21 @@ def task_done(out):
         if l.startswith("DONE: ") and k + 2 < len(lines) and lines[k + 1] == "" and (lines[k + 2] == "PROFILE:" or lines[k + 2].startswith("BASE: ")):
             found = l[len("DONE: "):]
     return found
+
+def write_facts(report_path, verdict_line, rman):
+    """The facts of a report-only run that the history of the project keeps (lib/history.py), written only when the lead's `qargi review check` asks for them
+    (QARGI_REVIEW_FACTS names the file) and never in a member's check: the verdict word, the sha256 of the bytes of the report and the manifest's tests_run.
+    The report's text is not copied. A failure to write them is no failure of the check."""
+    dest = os.environ.get("QARGI_REVIEW_FACTS")
+    if not dest or os.environ.get("QARGI_MEMBER_RUN"):
+        return
+    try:
+        with open(report_path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(dest, "w") as f:
+            json.dump({"verdict": verdict_line.split(": ", 1)[1], "report_sha256": digest, "tests_run": rman.get("tests_run") if isinstance(rman, dict) else None}, f)
+    except (OSError, ValueError, TypeError, IndexError):
+        pass
 
 def done_problem(man, out):
     """None, or ("FAIL"|"WARN", text): the manifest's done.command against the DONE line of the task block (nothing to compare when the run has no task block)."""
@@ -116,6 +131,7 @@ if not patches:
             uncommitted(run, rman.get("status") if isinstance(rman, dict) else None)
             if fails:
                 print("\n".join(fails + warns + notes)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+            write_facts(rep, last, rman)
             print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
             if warns or notes: print("\n".join(warns + notes))
             if last == "verdict: revise":
