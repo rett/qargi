@@ -204,6 +204,8 @@ $REL start 0.2.0 --date 2026-01-02 --plan "$t" --approved "go on with 0.2.0" >/d
 [ "$(git -C "$R" log -1 --format=%s release/0.2.0)" = "Bumped version number to 0.2.0" ] && [ "$(git -C "$R" rev-parse release/0.2.0~1)" = "$(git -C "$R" rev-parse develop)" ] && ok "it is one commit on develop's head" || no "bump commit"
 out=$($REL push 0.2.0); t=$(tok <<<"$out")
 ! git -C "$T/origin.git" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the push plan pushes nothing" || no "pushed on plan"
+grep -qx "push: yes, to origin/release/0.2.0 (no other branch is pushed; a plain push, never forced)" <<<"$out" && grep -qx "merge into: master, by the pull request this push opens or updates (finish merges it later)" <<<"$out" \
+  && ok "the push plan says what is pushed (origin/release/0.2.0) and that master is the merge destination" || no "push plan facts: $out"
 $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && git -C "$T/origin.git" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && grep -q "pr create --base master --head release/0.2.0" "$T/gh.log" && ok "push publishes the branch and opens the pull request into master" || no "push: $(cat "$T/gh.log")"
 rb=$(git -C "$R" rev-parse release/0.2.0); w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q --detach "$w" release/0.2.0; echo untested > "$w/untested.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "never seen by CI"; git -C "$R" update-ref refs/heads/release/0.2.0 "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
 t=$($REL finish 0.2.0 | tok); $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && no "finished a head CI never saw" || ok "a head that differs from what was pushed is refused"
@@ -212,6 +214,9 @@ echo fail > "$T/ci"; t=$($REL finish 0.2.0 | tok)
 m0=$(git -C "$R" rev-parse master); $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && no "finished with failing checks" || ok "failing CI checks stop the finish"
 [ "$(git -C "$R" rev-parse master)" = "$m0" ] && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "and nothing was merged or tagged" || no "partial finish"
 rm "$T/ci"
+out=$($REL finish 0.2.0 2>&1)
+grep -qx "merge into: master (tag 0.2.0 on the merge commit), then the tag into develop" <<<"$out" && grep -qx "push: yes, to origin/master, origin/develop and the tag 0.2.0 (all or none)" <<<"$out" \
+  && ok "the finish plan names the merge destinations and the pushes (master, develop and the tag)" || no "finish plan facts: $out"
 $REL finish 0.2.0 --plan 000000000000 --approved go >/dev/null 2>&1 && no "wrong token" || ok "a wrong plan token is refused"
 rs=$(git -C "$R" rev-parse release/0.2.0)
 $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1; rc=$?

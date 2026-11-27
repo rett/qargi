@@ -518,6 +518,7 @@ release_finish_resume() {
   rb0=$(jq -r '.ctx.rb0' "$f"); k1=$(jq -r '.ctx.k1' "$f"); k2=$(jq -r '.ctx.k2' "$f"); PUSHED=''; [ "$(jq -r '.pushed' "$f")" != true ] || PUSHED=1
   tok=$(jq -S -c 'del(.done)' "$f" | plan_token --basis "record:name" --verb "release finish" --target "$PROJ:$VER")
   echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
+  echo "  merge into: master (tag $VER), then the tag into $second; $([ -n "$PUSHED" ] && echo "push: yes, to origin/master, origin/$second and the tag $VER (origin holds them already)" || echo "push: no, master and $second stay local (no origin)")"
   echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
@@ -1029,6 +1030,7 @@ case $verb in
     else echo "$n. push: not in this cut: the repository has no origin remote, so no CI runs; finish then needs a passing local whole-suite run at the head (qargi release verify $VER${HOTFIX:+ --hotfix})"; fi
     n=3
     echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
+    echo "   merge into: master, then the tag into $second; push: $([ -n "$haspush" ] && echo "yes, to origin/master, origin/$second and the tag $VER" || echo "no, master and $second stay local (no origin)")"
     if [ -n "$site" ]; then echo "4. site: build the documentation site of the tag $VER and commit it on $SITE_BR (nothing is pushed)"; fi
     echo "publish is not in this cut: it creates the GitHub release of tag $VER with the changelog section as notes (and the release files, whose hashes exist only after the tag), and has its own plan after finish (qargi release publish $VER); skip it when the tag's release workflow publishes the release"
     echo "recorded in $CUTREC: the approval words, and each step as it runs; qargi release plan $VER${HOTFIX:+ --hotfix} (and release status) shows where the cut is, and a step can be run again after a refusal"
@@ -1217,6 +1219,8 @@ case $verb in
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
     tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha join:label master:sha" --verb "release push" --target "$PROJ:$VER")
+    echo "push: yes, to origin/$BR (no other branch is pushed; a plain push, never forced)"
+    echo "merge into: master, by the pull request this push opens or updates (finish merges it later)"
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
@@ -1327,6 +1331,8 @@ case $verb in
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token --basis "project:name branch:ref head:sha second:ref master:sha second-head:sha keep:label ignore-checks:label" --verb "release finish" --target "$PROJ:$VER")
+    echo "merge into: master (tag $VER on the merge commit), then the tag into $second"
+    if g remote get-url origin >/dev/null 2>&1; then echo "push: yes, to origin/master, origin/$second and the tag $VER (all or none)"; else echo "push: no, master and $second stay local (the repository has no origin)"; fi
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     # the commits the lead made with git on the branch (a fix, the entries of a hotfix), which the deletion takes into the journal (journal_reach): how
     # many, and from where to where. For origin's branch when it is at the head that is released, as the apply requires (a push by hand is counted there)

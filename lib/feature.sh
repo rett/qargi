@@ -252,6 +252,7 @@ feature_finish_resume() {
   h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
   tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record:name" --verb "feature finish" --target "$PROJ:$NAME_ARG")
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
+  echo "  merge into: develop; $([ -n "$pushd" ] && echo "push: yes, to origin/develop (origin holds the merge already)" || echo "push: no, develop stays local ($pushwhy)")"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
@@ -475,7 +476,8 @@ case $verb in
     elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
     else pushd=1; fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha develop:sha keep:label delete-merged:label origin-branch:sha push:label" --verb "feature finish" --target "$PROJ:$NAME_ARG")
-    if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
+    if [ -n "$pushd" ]; then echo "push: yes, to origin/develop"; else echo "push: no, develop stays local ($pushwhy)"; fi
+    echo "merge into: develop"
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     # the commits the lead made with git on the branch, which the deletion takes into the journal (journal_reach): how many, and from where to where
