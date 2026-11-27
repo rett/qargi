@@ -78,7 +78,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        runs the command once, read-only in a scratch directory of its own, with the environment a member run gets and the variable of dispatch.home naming the
                        source's directory, the prompt on its standard input and its output discarded and never printed (it can carry tokens); it is stopped when it outlives
                        timeout_seconds or the runner is signalled; it holds the lock descriptor too (pass_fds), so a runner killed with SIGKILL leaves the lane held until it ends, and the lane record names it as the member. The run prints qargi: refreshing the sign-in of RUNTIME (expires in N s), reads the source again and lets the
-                       lock go. A command that fails or times out, a file it leaves as it was, or a token that still does not last (the run's need, and min_remaining_seconds) is the
+                       lock go. A command that fails or times out, a file it leaves as it was, or a token that still does not last (the larger of the run's need and min_remaining_seconds) is the
                        refusal runtime-signin-expiring with cause refresh-failed, naming the login as before; never a second try in one run. --dry-run prints HOME_REFRESH= and
                        refreshes nothing; local prepare never does. --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
                        [{to, set (the paths), expires_in_seconds (when the run started), refreshed (whether this run refreshed the real sign-in), sha256 (of the copy as written)}].
