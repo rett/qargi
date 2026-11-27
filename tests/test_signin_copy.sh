@@ -506,6 +506,23 @@ rm -f "$LOCKF"; : > "$LOCKF"; chmod 600 "$LOCKF"
   && grep -qF 'is free; the run starts' "$T/q2.out" && [ -s "$Q2/out/transcript" ] && flock -n "$LOCKF" true; } \
   && ok "a lock file replaced under a waiting run is noticed (the descriptor is not the file at the path): the run retries onto the new file, then runs" || no "replaced lock file: $(cat "$T/q1.rc" "$T/q2.rc") $(cat "$T/q2.out")"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF"
+# a lock file replaced while a run HOLDS it is a new file nobody holds: a run that starts then gets its flock, but the lane record beside the lock names the live holder, so it waits (and --wait refuses it
+# as lane-busy) and never runs beside it
+echo hold > "$T/mode"; prep rh1; task; H1=$RUN; prep rh2; task; H2=$RUN; prep rh3; task; H3=$RUN
+( $DA local run "$H1" > "$T/h1.out" 2>&1; echo $? > "$T/h1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+rm -f "$LOCKF"; : > "$LOCKF"; chmod 600 "$LOCKF"
+out=$($DA local run "$H2" --wait 2 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'is held by lead ' <<<"$out" && [ ! -e "$H2/dispatch.json" ] && [ ! -e "$H2/out/transcript" ] && flock -n "$LOCKF" true; } \
+  && ok "a lock file replaced while a run holds it: a second run with --wait is refused (lane-busy), not started beside the holder, and holds nothing" || no "replaced under the holder, --wait: rc=$rc $out"
+( $DA local run "$H3" > "$T/h3.out" 2>&1; echo $? > "$T/h3.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/h3.out"' 30
+{ [ ! -s "$T/h3.rc" ] && [ ! -e "$H3/out/transcript" ] && [ ! -s "$T/h1.rc" ]; } \
+  && ok "and a run without --wait waits for the holder of the replaced file, and starts nothing" || no "replaced under the holder, wait: $(cat "$T/h3.out")"
+: > "$T/hold-go"; wait_until '[ -s "$T/h1.rc" ] && [ -s "$T/h3.rc" ]' 60
+{ [ "$(cat "$T/h1.rc")" = 0 ] && [ "$(cat "$T/h3.rc")" = 0 ] && grep -qF 'is free; the run starts' "$T/h3.out" && [ -s "$H3/out/transcript" ] && flock -n "$LOCKF" true; } \
+  && ok "when the holder ends the waiting run starts and ends ok" || no "after the replaced file's holder: $(cat "$T/h1.rc" "$T/h3.rc") $(cat "$T/h3.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF" "$T"/h?.rc
 # the retries are bounded: a file that is replaced every time refuses the run (exit 2) and holds nothing
 got=$(python3 -I - "$T/tool/lib" "$MEM" <<'PY' 2>&1
 import os, sys

@@ -51,7 +51,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        The lock descriptor goes to the member (pass_fds), so a runner killed with SIGKILL leaves the lane held until the member's process group ends (the
                        record then shows the runner gone and the member alive), and after the flock succeeds the descriptor must still be the file at the path (st_dev and
                        st_ino of fstat against lstat): a lock file removed or replaced while the run waited is closed, noted and opened again, at most six times, then the run is refused
-                       (exit 2). A process of the member that moved to a process group of its own and still holds the descriptor keeps the lane busy after the runner has
+                       (exit 2). A lock file replaced while a run holds it is a new file nobody holds: a run that gets its flock lets it go again and waits (or is refused as lane-busy) when the lane record beside the lock names another holder that is alive. A process of the member that moved to a process group of its own and still holds the descriptor keeps the lane busy after the runner has
                        ended. A directory that cannot be written refuses the run, which is never started without the lock. The wait can be long and the file at the declared path can change in it, so each source is checked again
                        once the lock is held (recheck_source: the same rules, and the same real path as when the run was planned, else exit 2) and
                        the link is made to that checked real path, never to the declared one.
@@ -570,6 +570,31 @@ def lane_busy(home, runtime, shown, d, wait):
     return Refused(plain, buf.getvalue())
 
 
+def foreign_holder(d):
+    """Does the lane record beside the lock in directory d name a holder that is alive and is not this process (its runner, or its member when the runner is gone)? The
+    flock is the authority, but a lock file that was replaced while a run held it is a new file nobody holds: the record, which the holder keeps beside it until it lets go,
+    is the only trace left of that holder."""
+    rec = LN.read_record(d)
+    if rec is None or LN.holder_state(rec) == "gone":
+        return False
+    mine = LN.me()
+    return not (rec["runner"] and rec["runner"]["pid"] == mine["pid"] and rec["runner"]["start"] == mine["start"])
+
+
+def take_flock(fd, d):
+    """Try the exclusive flock on the open lock file fd (never waits): True when it is held now, and no other live run is recorded as the holder of the lane in
+    directory d; False when another process holds it, or when the file was replaced under a run that still holds the old one (foreign_holder), in which case the flock
+    taken here is let go again so that it holds up nobody."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    if foreign_holder(d):
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    return True
+
+
 def lock_one(path, home, runtime, sig, kind="run"):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
     that finds it held says so (a note on standard error, with the holder from the lane record and, when several wait, its place in the queue) and waits for it,
@@ -577,8 +602,9 @@ def lock_one(path, home, runtime, sig, kind="run"):
     The file is made when it is missing (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run
     without the lock. The lock is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the
     one it waited on is then nobody's) is closed and the path opened again, at most LOCK_RETRIES times, with a note, and then the run is refused. A run that opens
-    the path after a holder's file was replaced finds a new, free file: nothing here can see that holder, which is why the member keeps the descriptor too
-    (take_lock). Once held, the lane record (lib/lane.py) names this run beside the lock; the caller removes it (lane_clear) before it lets the lock go."""
+    the path after a holder's file was replaced finds a new, free file: the holder is then seen only by the lane record beside the lock, so a flock that succeeds
+    while the record names another live holder (foreign_holder) is let go again and the run waits, or is refused as lane-busy, as for a held lock; the member
+    keeps the descriptor too (take_lock). Once held, the lane record (lib/lane.py) names this run beside the lock; the caller removes it (lane_clear) before it lets the lock go."""
     shown = lock_name(path, home, runtime)
     d = os.path.dirname(path)
     wait = home.get("wait")
@@ -593,9 +619,8 @@ def lock_one(path, home, runtime, sig, kind="run"):
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
                     fail("the lock file %s is not a regular file; remove it" % shown)
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
+                busy = not take_flock(fd, d)
+                if busy:
                     if wait == 0:
                         raise lane_busy(home, runtime, shown, d, 0)
                     if not waited:
@@ -608,14 +633,10 @@ def lock_one(path, home, runtime, sig, kind="run"):
                     end = None if wait is None else time.monotonic() + wait
                     sig.armed = True
                     try:
-                        while True:
-                            try:
-                                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                break
-                            except BlockingIOError:
-                                if end is not None and time.monotonic() >= end:
-                                    raise lane_busy(home, runtime, shown, d, wait)
-                                time.sleep(LOCK_POLL)
+                        while not take_flock(fd, d):
+                            if end is not None and time.monotonic() >= end:
+                                raise lane_busy(home, runtime, shown, d, wait)
+                            time.sleep(LOCK_POLL)
                     finally:
                         sig.armed = False
                     sig.check()
