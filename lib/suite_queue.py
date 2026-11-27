@@ -33,9 +33,10 @@ directory only their user can write, but every field read from them is cut to pl
   suite_queue.py release --state DIR --owner PID        remove the record of the holder and the waiter file of OWNER (the shell then closes its descriptor)
   suite_queue.py status --state DIR [--json]            the slot, its holder and the waiters in the order of the queue; with --json one document of the draft kind
                                                         qargi-suite-queue. Read-only: no lock is kept, nothing is removed, no process is signalled. Whether the lock is held is read from
-                                                        /proc/locks; where that cannot decide (a device it cannot compare with stat's, as on btrfs; no entry) the lock file is probed for a moment
-                                                        with a non-blocking flock on a descriptor of its own, let go and closed at once (lib/lane.py held()). A run that really takes the slot
-                                                        uses its own descriptor and tries again after a short wait if the probe was there at that moment
+                                                        /proc/locks; where that cannot decide (a device it cannot compare with stat's, as on btrfs; the file unreadable) the lock file is probed for a
+                                                        moment with a non-blocking flock on a descriptor of its own, let go and closed at once (lib/lane.py held()). A run that really takes
+                                                        the slot uses its own descriptor and, when the probe was there at that moment, tries again at once (RETRIES, PAUSE), also at the
+                                                        end of its bound
   suite_queue.py pids --state DIR                       the pids of the holder and of the waiters that are alive, one line, space separated (for the warning of other runs)
   suite_queue.py project                                the project in effect here (QARGI_PROJECT, else the one whose repository holds the current directory), or nothing
 
@@ -67,6 +68,8 @@ POLL = 0.2
 EX_BUSY = 4
 EX_GONE = 3
 EX_REENTRY = 5
+RETRIES = 3         # more tries of the flock, PAUSE apart, before a run whose bound has run out is refused: a probe of `suite status` holds the lock for a moment only
+PAUSE = 0.02
 TEXT = re.compile(r"[^A-Za-z0-9._:@+/ -]")
 HEAD = re.compile(r"^[0-9a-f]{7,64}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9]{0,23}$")
@@ -240,13 +243,29 @@ def describe(d, ahead, now=None):
         who_ = "holder is %s (running %s)" % (holder_text(rec), age_text(now - rec["started"]))
     elif rec:
         who_ = "holder is %s" % holder_text(rec)
-    elif lock_held(d) and gone:
+    elif (held := lock_held(d)) and gone:
         who_ = "holder is %s, whose verb is gone (its suite still holds the slot)" % holder_text(gone)
-    elif lock_held(d):
+    elif held:
         who_ = "holder is not recorded"
     else:
         who_ = "no holder, the run ahead takes the slot"
     return "qargi: suite queue: position %d, %s" % (ahead + 1, who_)
+
+
+def try_flock(fd, again=0, pause=PAUSE):
+    """True when the exclusive flock on fd was taken without waiting, False when another open file description holds it. `again` more tries, `pause` seconds
+    apart, are made when it is refused: a probe (lib/lane.py probe(), run by `suite status` or by another waiter's line) holds the lock for a moment only, and a
+    run must not be told the slot is busy because it came at that moment."""
+    for i in range(again + 1):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError as e:
+            if e.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                raise QueueError("cannot take the lock: %s" % (e.strerror or e))
+        if i < again:
+            time.sleep(pause)
+    return False
 
 
 def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monotonic, parents=None):
@@ -267,6 +286,16 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
         except OSError as e:
             raise QueueError("cannot write %s: %s" % (path, e.strerror or e))
 
+    def take(again=0):
+        """The flock, then the record of the holder; False when the slot is held by another open file description (after `again` more tries)."""
+        if not try_flock(fd, again):
+            return False
+        try:
+            _write(os.path.join(d, RECORD), dict(inf, schema=SCHEMA, pid=me["pid"], start=me["start"], started=int(time.time())))
+        except OSError:
+            pass                                        # the record is advisory: a slot that is held is held
+        return True
+
     put()
     t0, shown, had_to_wait = clock(), None, False
     try:
@@ -278,18 +307,8 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
             if ahead is None:                           # the file was removed under us: it stands again, with the time it always had
                 put()
                 continue
-            if ahead == 0:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except OSError as e:
-                    if e.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
-                        raise QueueError("cannot take the lock: %s" % (e.strerror or e))
-                else:
-                    try:
-                        _write(os.path.join(d, RECORD), dict(inf, schema=SCHEMA, pid=me["pid"], start=me["start"], started=int(time.time())))
-                    except OSError:
-                        pass                            # the record is advisory: a slot that is held is held
-                    return "ok", int(math.ceil(clock() - t0)) if had_to_wait else 0, ""
+            if ahead == 0 and take():
+                return "ok", int(math.ceil(clock() - t0)) if had_to_wait else 0, ""
             had_to_wait = True
             rec = live_holder(d)
             if rec and rec["pid"] in parents:
@@ -301,6 +320,8 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
                 shown = key
             elapsed = clock() - t0
             if bound is not None and elapsed >= bound:
+                if ahead == 0 and take(RETRIES):        # the bound is no reason to give up on a slot that was free a few milliseconds ago: a probe of `suite status` holds it for a moment
+                    return "ok", int(math.ceil(clock() - t0)), ""
                 return "busy", int(elapsed), holder_text(rec) if rec else "unknown"      # whole seconds waited, rounded down: never less than the bound
             time.sleep(poll if bound is None else max(min(poll, bound - elapsed), 0.005))
     finally:

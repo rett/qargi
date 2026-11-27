@@ -301,6 +301,66 @@ class Bound(Base):
         self.assertIn("position 2", r.stderr)
 
 
+class ProbeRace(Base):
+    """A probe of the lock (`suite status`, the line of another waiter) holds it for a moment. A run that comes at that moment, with a bound that is out (--queue-wait 0, or
+    the end of the bound), is not told the slot is busy: it tries again. The probe is a real flock on a descriptor of its own, let go by the test at the first pause."""
+
+    def setUp(self):
+        super().setUp()
+        self.d = Q.prepare(self.state)
+        self.fd = os.open(os.path.join(self.d, "lock"), os.O_RDONLY)
+        self.addCleanup(lambda: os.close(self.fd))
+        self.probe = os.open(os.path.join(self.d, "lock"), os.O_RDONLY)
+        fcntl.flock(self.probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.open = True
+        self.addCleanup(self.drop)
+        self.pauses = 0
+        real = time.sleep
+
+        def pause(seconds):
+            self.pauses += 1
+            if self.pauses >= self.after:
+                self.drop()
+            real(0)
+        self.after = 1
+        p = mock.patch.object(Q.time, "sleep", pause)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def drop(self):
+        if self.open:
+            self.open = False
+            os.close(self.probe)
+
+    def run_acquire(self, bound):
+        return Q.acquire(self.d, self.fd, os.getpid(), Q.info("app", "feature verify", "racer", ""), bound=bound, err=io.StringIO(), poll=0.01, parents=[])
+
+    def test_a_bound_of_zero_is_not_refused_by_a_probe_that_is_there_at_that_moment(self):
+        status, waited, holder = self.run_acquire(0)
+        self.assertEqual((status, holder), ("ok", ""))
+        self.assertEqual(self.status()["holder"]["name"], "racer")
+        self.assertEqual([n for n in os.listdir(self.d) if n.startswith("wait.")], [])
+
+    def test_the_end_of_a_bound_is_not_refused_by_a_probe_either(self):
+        ticks = iter([0.0] + [30.0] * 50)                   # the run came at 0; at its first look the bound of 5 seconds is long out
+        status, waited, holder = Q.acquire(self.d, self.fd, os.getpid(), Q.info("app", "feature verify", "racer", ""), bound=5, err=io.StringIO(), poll=0.01,
+                                           parents=[], clock=lambda: next(ticks))
+        self.assertEqual((status, waited), ("ok", 30))
+        self.assertEqual(self.pauses, 1, "it took the slot at the first try after the pause, not by polling on")
+
+    def test_a_lock_that_stays_held_is_still_busy_after_the_tries(self):
+        self.after = 10 ** 6                                # the probe is never let go: another holder
+        status, waited, holder = self.run_acquire(0)
+        self.assertEqual(status, "busy")
+        self.assertEqual(self.pauses, Q.RETRIES, "the tries are the ones named, and no more")
+
+    def test_describe_asks_the_lock_once(self):
+        calls = []
+        with mock.patch.object(Q, "lock_held", side_effect=lambda d: calls.append(d) or True):
+            Q.describe(self.d, 1)
+        self.assertEqual(len(calls), 1, "each call of lock_held may take a probe lock")
+
+
 class Reentry(Base):
     """A whole-suite run started from inside the suite that holds the slot would wait for itself: it is refused at once, with no bound given."""
 
@@ -506,12 +566,28 @@ class Probe(Base):
         self.assertIs(Q.L.held(self.lock), False)
         self.assertTrue(self.unlocked())
 
-    def test_no_entry_in_the_locks_is_probed_as_well(self):
-        with open(self.proc, "w"):
-            pass
-        self.assertIs(Q.L.held(self.lock), False)
-        self.child()
-        self.assertIs(Q.L.held(self.lock), True)
+    def test_no_entry_in_the_locks_is_free_and_takes_no_lock(self):
+        """A device that can be compared and no entry of the file: the kernel lists every flock (a holder outside the pid namespace with the pid 0), so it is free."""
+        with open(self.proc, "w") as f:
+            f.write("1: FLOCK  ADVISORY  WRITE 4242 %02x:%02x:%d 0 EOF\n" % (os.major(os.stat(self.lock).st_dev), os.minor(os.stat(self.lock).st_dev), os.stat(self.lock).st_ino + 1))
+        with mock.patch.object(Q.L, "probe", side_effect=AssertionError("a lock was taken where /proc/locks decided")):
+            self.assertIs(Q.L.held(self.lock), False)
+            with open(self.proc, "w"):
+                pass
+            self.assertIs(Q.L.held(self.lock), False)
+            with open(self.proc, "w") as f:
+                f.write("1: FLOCK  ADVISORY  WRITE 4242 %02x:%02x:%d 0 EOF\n" % (os.major(os.stat(self.lock).st_dev), os.minor(os.stat(self.lock).st_dev), os.stat(self.lock).st_ino))
+            if os.major(os.stat(self.lock).st_dev):
+                self.assertIs(Q.L.held(self.lock), True)
+
+    def test_the_probe_does_not_open_a_fifo_or_a_link(self):
+        """The directory of a lock file can be written by other processes of the user: a FIFO in its place must not hang a listing, a link is not followed."""
+        fifo, link = os.path.join(self.tmp, "fifo"), os.path.join(self.tmp, "link")
+        os.mkfifo(fifo)
+        os.symlink(self.lock, link)
+        code = "import sys; sys.path.insert(0, %r); import lane; print(lane.probe(%r), lane.probe(%r))" % (LIB, fifo, link)
+        r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=30)        # a probe that blocks ends here, not the run
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "None None"), r.stderr)
 
     def test_a_locks_file_that_cannot_be_read_is_probed_and_a_lock_file_that_cannot_be_opened_stays_unknown(self):
         os.unlink(self.proc)

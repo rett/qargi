@@ -3,7 +3,7 @@
 
   lane.py list            one block for each lock file of the runtimes the stored projects declare (the plain links of dispatch.home, and the private
                           links that declare a refresh): the lock, its state, the holder and the waiters. Nothing is written and no lock is kept: the state is read
-                          from /proc/locks, and where that cannot decide (a device it names cannot be compared with stat's, as on btrfs; no entry) the lock
+                          from /proc/locks, and where that cannot decide (a device it names cannot be compared with stat's, as on btrfs; the file unreadable) the lock
                           file is probed for a moment (see held()). The holder is read from the record only when the lock file is held.
 
 The lane is the flock of lib/local_run.py (LOCK_NAME). Beside it two kinds of small files, all mode 600, advisory only (the flock stays the authority):
@@ -298,14 +298,17 @@ def match_flock(text, st_dev, ino):
 def probe(path):
     """Is the flock on the lock file at path held? Asked of the kernel with a non-blocking exclusive flock on a descriptor of its own (O_RDONLY, close-on-exec): it
     is refused (EWOULDBLOCK) when another open file description holds the lock, so True; granted, the probe lock is let go and the descriptor closed on the spot
-    (it is never kept, so it holds nothing past this call), so False. None when the file cannot be opened or the kernel gives another answer. For that moment a
+    (it is never kept, so it holds nothing past this call), so False. None when the file cannot be opened (it is opened without following a link and without
+    blocking, and refused when it is not a regular file: the directory is one other processes of the user can write, so a FIFO put there must not hang a listing) or the kernel gives another answer. For that moment a
     run that tries the lock without waiting is refused as it would be by a holder: the one that really takes it uses a descriptor of its own, and a run that waits
     or polls (the queue of the whole-suite runs does) tries again."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOCTTY)
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOCTTY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return None
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):      # a FIFO or a device put in the place of the file by another process of the user is no lock file
+            return None
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as e:
@@ -325,9 +328,11 @@ PROC_LOCKS = "/proc/locks"
 def held(path, proc=None):
     """Is the flock on the lock file at path held by some process? True, False, UNKNOWN (the lock file cannot be opened, and /proc/locks could not compare the
     device) or None (the same, and /proc/locks cannot be read); False when the file is not there. First /proc/locks is read by the device and the inode number
-    (match_flock): an entry of that file is held, and nothing is taken. When it cannot decide (the device cannot be compared with stat's, as on btrfs; no entry;
-    unreadable) the lock file is probed with a non-blocking flock on a descriptor of its own (probe), which decides held or free. `proc` names the file of the
-    kernel's locks (PROC_LOCKS; a test gives a synthetic one)."""
+    (match_flock): an entry of that file is held, and a comparable device with no entry of it is free, both without taking any lock (the kernel lists a lock of
+    a process outside the pid namespace too, with the pid 0, so no entry is no lock). Only when it cannot decide (the device cannot be compared with stat's, as
+    on btrfs; /proc/locks unreadable) is the lock file probed with a non-blocking flock on a descriptor of its own (probe), which decides held or free. So on
+    a file system whose device can be compared (ext4, tmpfs) no lock is ever taken. `proc` names the file of the kernel's locks (PROC_LOCKS; a test gives a
+    synthetic one)."""
     try:
         st = os.stat(path)
     except OSError:
@@ -337,8 +342,8 @@ def held(path, proc=None):
             found = match_flock(f.read(), st.st_dev, st.st_ino)
     except OSError:
         found = None
-    if found is True:
-        return True
+    if found is True or found is False:
+        return found
     p = probe(path)
     return found if p is None else p
 
