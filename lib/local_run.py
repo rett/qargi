@@ -598,7 +598,8 @@ def take_flock(fd, d):
 def lock_one(path, home, runtime, sig, kind="run"):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
     that finds it held says so (a note on standard error, with the holder from the lane record and, when several wait, its place in the queue) and waits for it,
-    a signal ending the wait (Interrupted); with home["wait"] (--wait SECONDS) the wait is bounded and its end is the refusal lane-busy, 0 meaning no wait at all.
+    a signal ending the wait (Interrupted); with home["wait"] (--wait SECONDS) the wait is bounded, from the moment this is called and not again after each file that was
+    replaced, and its end is the refusal lane-busy, 0 meaning no wait at all.
     The file is made when it is missing (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run
     without the lock. The lock is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the
     one it waited on is then nobody's) is closed and the path opened again, at most LOCK_RETRIES times, with a note, and then the run is refused. A run that opens
@@ -609,6 +610,7 @@ def lock_one(path, home, runtime, sig, kind="run"):
     d = os.path.dirname(path)
     wait = home.get("wait")
     waited, waiter = False, None
+    end = None if wait is None else time.monotonic() + wait          # once, here: a file replaced under the wait does not start the wait again
     try:
         for _ in range(LOCK_RETRIES + 1):
             try:
@@ -630,7 +632,6 @@ def lock_one(path, home, runtime, sig, kind="run"):
                               file=sys.stderr, flush=True)
                         ahead, total = LN.position(d)
                         print("qargi: note: %s%s" % (LN.holder_line(d), "; you are number %d of %d waiting" % (ahead + 1, total) if total > 1 else ""), file=sys.stderr, flush=True)
-                    end = None if wait is None else time.monotonic() + wait
                     sig.armed = True
                     try:
                         while not take_flock(fd, d):

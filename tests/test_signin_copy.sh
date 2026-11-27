@@ -542,6 +542,32 @@ PY
 { grep -q '^STOP code=2 tries=6 True$' <<<"$got" && [ "$(grep -c 'was replaced or removed' <<<"$got")" = 6 ] && flock -n "$LOCKF" true; } \
   && ok "a lock file that is replaced every time is tried six times, then the run is refused (exit 2), and no descriptor is left holding the lock" || no "replace bound: $got"
 rm -f "$LOCKF"
+# a bounded wait is counted once: a file replaced one second into a wait of two seconds does not start the two seconds again (a fake clock, advanced by the polling)
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(first, fcntl.LOCK_EX)
+clock, second = [0.0], []
+def sleep(seconds):
+    clock[0] += seconds
+    if clock[0] >= 1.0 and not second:                 # the file is replaced and the first holder lets go; another run holds the new file
+        os.unlink(path)
+        second.append(os.open(path, os.O_RDWR | os.O_CREAT, 0o600))
+        fcntl.flock(second[0], fcntl.LOCK_EX)
+        os.close(first)
+L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep, time=time.time)
+try:
+    L.lock_one(path, {"declared": [], "runtime": "fakeplain", "wait": 2}, "fakeplain", L.Signals())
+    print("NOEXC")
+except L.Stop as e:
+    print("STOP code=%d at=%.2f replaced=%s %s" % (e.code, clock[0], bool(second), "the wait of 2 s ended" in str(e)))
+PY
+)
+{ grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
+  && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
 
 # --- coordination: the lane record, the holder line and the queue, --wait, local list --lanes ------------------------------------------------------
 export QARGI_LEAD=lead-one
