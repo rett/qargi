@@ -1179,29 +1179,30 @@ case $verb in
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     suite_env_prepare "qargi release verify $VER${HOTFIX:+ --hotfix}" "$on" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin release-verify "$VER"   # from here to the end of the verb, the wait for the slot included: a second verify of this version sees it (busy_same_refuse)
     worktree "$h"
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
     [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
     other_runs_warning
-    squeue_acquire "release verify" "$VER" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended; at the --queue-wait bound the run is refused here, and nothing is spent
+    squeue_acquire "release verify" "$VER" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
     suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict or a --queue-wait refusal above spends nothing)
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    busy_begin release-verify "$VER"
     t0=$SECONDS   # after the wait: the seconds of the record are the suite's
     history_prepare "release verify" "$VER" "$on" "$h"
     if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
-    squeue_release
-    busy_end
     suite_env_settle
     history_end "$res"
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")$(suite_env_note "$on")"
+    frep=''; [ "$res" = pass ] || frep=$(suite_failure_report)   # read now, printed below: the log is the next run's as soon as the slot is let go
+    squeue_release   # after the readers of the log, the gate list and the reports of the launcher (named by the version: the next run of this name rewrites them once it has the slot), before the checks that ask GitHub
+    busy_end
     if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
-    [ "$res" = pass ] || suite_failure_report
+    [ -z "$frep" ] || printf '%s\n' "$frep"
     [ "$res" = pass ];;
   fix)
     # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change

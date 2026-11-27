@@ -363,11 +363,15 @@ bump_cleanup() {
 # `qargi lead compact-check` reads (a live pid: not now); busy_end and the EXIT trap remove it, and a file whose pid is gone is ignored.
 BUSY=''
 busy_begin() { mkdir -p "$DA_STATE/busy" 2>/dev/null; BUSY=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid; echo "$$" > "$BUSY" 2>/dev/null || BUSY=''; }
-busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
+busy_end() { # the mark is removed when it is this run's own: a second run of the same name (verify.environment off) writes its pid over it while the first still runs
+  [ -z "$BUSY" ] || { [ "$(cat "$BUSY" 2>/dev/null)" != "$$" ] || rm -f "$BUSY"; }
+  BUSY=''
+}
 # busy_same_refuse KIND NAME: with verify.environment on, a second whole-suite run of the same KIND and NAME while the first is alive is refused, before anything is made
 # or claimed: the two would share one directory for the reports of the launcher (run_suite_logged), and the second would delete the first's reports, so the first could
-# end on a refusal code that is not its own. It reads the pid file busy_begin writes, and busy_begin runs only after the launcher's attempt, the worktree, the claim and
-# the warning of the other runs: a second verify started while the first is still preparing (seconds) is not refused, and this window is not closed. A mark whose pid is
+# end on a refusal code that is not its own. It reads the pid file busy_begin writes, which the verbs write right after the launcher's attempt (before the worktree, the
+# warning of the other runs and the wait in the queue of the whole-suite runs, so a verify that waits for the slot is covered) and remove when they end: a second verify started
+# during the launcher's attempt (a moment) is not refused, and this window is not closed. A mark whose pid is
 # alive but is no verify (a pid reused after a verify died without its EXIT trap) refuses too, so the message names the file to remove. With the setting off nothing changes (the two runs share the log, as they always did, and other_runs_warning says so).
 busy_same_refuse() {
   local f=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid pid
@@ -936,6 +940,7 @@ other_runs_warning() {
     pid=$(cat "$f" 2>/dev/null) || continue
     case $pid in ''|*[!0-9]*) continue;; esac
     kill -0 "$pid" 2>/dev/null || continue
+    [ "$pid" != "$$" ] || continue   # this run's own mark
     case $qp in *" $pid "*) continue;; esac   # named by the queue
     b=${f##*/}; b=${b#"$PROJ".}; b=${b%.pid}
     echo "qargi: warning: another whole-suite run of $PROJ is in progress ($b, pid $pid): two suites at once slow both and can fail on timeouts; going on" >&2

@@ -3,14 +3,15 @@
 # The shell side of the queue of the whole-suite runs (lib/suite_queue.py; docs/reference/suite-queue.md), sourced by lib/gitflow.sh (feature verify, release verify)
 # and lib/suite.sh (qargi suite run). The caller has sourced lib.sh (DA_STATE, QARGI_TOOL).
 #
-# The slot is a flock on $DA_STATE/suite-queue/lock. The descriptor is opened by THIS shell and kept only while the suite runs: python takes the lock on it (an
+# The slot is a flock on $DA_STATE/suite-queue/lock. The descriptor is opened by THIS shell and kept only while the suite runs and the verb reads what it left (history_end, record_suite, the failure report; the next run of the same name rewrites those files as soon as it has the slot): python takes the lock on it (an
 # inherited descriptor: the lock belongs to the open file description, so it stays with this shell when python exits). The lock is the kernel's, so it cannot be left
 # held: it is freed when the last process that has the descriptor ends, whatever way it ends. Those are this shell and the subshell that waits for the suite (a fork
 # keeps the descriptor). What the suite starts never has it (squeue_closed closes it, and a program that is exec'd would not keep a copy), so a daemon a test leaves
 # behind cannot keep the slot. A verb that is killed while its suite runs therefore leaves the slot taken until that suite ends, and not a moment longer.
 #
 #   squeue_acquire VERB NAME HEAD [BOUND]   wait in line (BOUND seconds at most, none: for ever), take the slot and set SQ_WAIT to the whole seconds waited; at the
-#                                           bound the verb is refused as suite-queue-busy (exit 1, nothing taken, nothing left behind)
+#                                           bound the verb is refused as suite-queue-busy (exit 1, nothing taken, nothing left behind); a run that was started from inside the
+#                                           suite that holds the slot (the holder is a parent of this shell) is refused at once, as it would wait for itself for ever
 #   squeue_release                          let the slot go (the record of the holder, then the descriptor); safe to call again and from an exit trap
 #   squeue_closed COMMAND...                run COMMAND (in this shell) with the descriptor of the slot closed, so that what it starts has no copy
 #   squeue_sub COMMAND...                   run COMMAND in a subshell that waits for it and returns its status: with squeue_closed, the one process besides this shell
@@ -45,6 +46,8 @@ squeue_acquire() {
             # shellcheck disable=SC2034  # QARGI_VERB is read by refuse (lib/lib.sh): the verb of the contract line (release.sh sets none of its own)
             QARGI_VERB=$verb
             refuse suite-queue-busy verb="$verb" holder="${holder:-unknown}" waited="$waited";;
+    5:reentry) squeue_release
+            fail "this whole-suite run was started from inside the suite of ${holder:-another run}, which holds the slot of the suite queue: it would wait for itself for ever. Nothing was run (a suite that runs in the queue does not start another; run the command beside it, not in it)";;
     *) squeue_release; fail "could not take the slot of the suite queue (status $rc); nothing was run";;
   esac
 }

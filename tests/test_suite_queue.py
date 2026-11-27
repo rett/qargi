@@ -301,6 +301,44 @@ class Bound(Base):
         self.assertIn("position 2", r.stderr)
 
 
+class Reentry(Base):
+    """A whole-suite run started from inside the suite that holds the slot would wait for itself: it is refused at once, with no bound given."""
+
+    def test_the_holder_is_a_parent_of_the_run_that_waits(self):
+        d = Q.prepare(self.state)
+        held = os.open(os.path.join(d, "lock"), os.O_RDONLY)             # the slot is held, by a descriptor of its own
+        fcntl.flock(held, fcntl.LOCK_EX)
+        me = Q.who(os.getppid())                                         # the holder is a parent of this test, which is the owner of the run that waits
+        Q._write(os.path.join(d, Q.RECORD), dict(Q.info("app", "feature verify", "outer", "a" * 40), schema=1, pid=me["pid"], start=me["start"], started=int(time.time())))
+        fd = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        result = os.path.join(self.tmp, "result")
+        try:
+            r = self.run_cli("acquire", "--state", self.state, "--fd", str(fd), "--owner", str(os.getpid()), "--verb", "suite run", "--name", "inner", "--result", result,
+                             pass_fds=[fd], timeout=30)
+        finally:
+            os.close(fd)
+            os.close(held)
+        self.assertEqual(r.returncode, Q.EX_REENTRY, r.stderr)
+        with open(result) as f:
+            text = f.read().splitlines()
+        self.assertIn("status=reentry", text)
+        self.assertIn("holder=app feature verify outer", text)
+        self.assertEqual([n for n in os.listdir(d) if n.startswith("wait.")], [], "a refused run left its waiter file")
+
+    def test_a_holder_that_is_no_parent_is_waited_for(self):
+        self.assertNotIn(os.getpid(), Q.ancestors(os.getpid()))
+        self.assertIn(os.getppid(), Q.ancestors(os.getpid()))
+        a = self.helper("unrelated")
+        a.taken()
+        d = Q.prepare(self.state)
+        fd = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        try:
+            r = self.run_cli("acquire", "--state", self.state, "--fd", str(fd), "--owner", str(os.getpid()), "--verb", "suite run", "--name", "inner", "--bound", "0", pass_fds=[fd])
+        finally:
+            os.close(fd)
+        self.assertEqual(r.returncode, Q.EX_BUSY, r.stderr)
+
+
 class Line(Base):
     """The one line of the wait, with a clock and a sleep that are the test's own."""
 
@@ -491,6 +529,16 @@ class Verbs(Base):
         self.assertEqual((doc["state"], doc["holder"]), ("held", None), "the command is still running, so the slot stays taken")
         open(base + ".go", "w").close()
         until(lambda: self.status()["state"] == "free", "the slot to be free once the command ended")
+
+    def test_a_suite_run_started_from_inside_a_suite_run_is_refused_not_waited_for(self):
+        r = subprocess.run([BIN, "suite", "run", "--", "sh", "-c", '"$0" suite run -- echo inner; echo "inner status $?"', BIN], capture_output=True, text=True, env=self.env(),
+                           stdin=subprocess.DEVNULL, timeout=60)        # the bound of a hang is the test's own timeout
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("inner status 1", r.stdout)
+        self.assertNotIn("inner\n", r.stdout.replace("inner status", ""), "the inner command ran")
+        self.assertIn("would wait for itself for ever", r.stderr)
+        self.assertIn("suite run sh", r.stderr, "the message names the holder")
+        self.assertEqual(os.listdir(self.dir), ["lock"], "a run left a file in the queue")
 
 
 if __name__ == "__main__":

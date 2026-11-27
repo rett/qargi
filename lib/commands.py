@@ -107,9 +107,9 @@ SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.
                    "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
                    "A command that prints none shows its last lines instead.")
 QUEUE_WAIT_OPT = opt("--queue-wait", "wait at most SECONDS in the queue of the whole-suite runs (a whole number; without the option the wait has no bound; 0 refuses at once when the slot is not free): at the bound the run is refused as suite-queue-busy, exit 1, naming the holder, with nothing run, recorded or counted as an attempt", "SECONDS", "seconds")
-QUEUE_NOTE = ("Whole-suite runs of one user never overlap on a host: before its suite starts the run waits in a queue, first in, first out (a run of qargi feature verify, qargi release verify or qargi suite run takes the one slot while its suite runs and not "
+QUEUE_NOTE = ("Whole-suite runs of one user never overlap on a host: before its suite starts the run waits in a queue, first in, first out (a run of qargi feature verify, qargi release verify or qargi suite run takes the one slot while its suite runs (and for the moment the verb reads its log) and not "
               "for the rest of the verb; qargi suite status lists them), and prints one line on standard error naming the holder (project, verb, name, how long) and its own place, again only when one of them changes. The seconds it waited are not in the seconds of the suite; "
-              "they are the queue_wait_s of its entry in the history. --queue-wait SECONDS bounds the wait. A run whose verb is killed frees the slot at once.")
+              "they are the queue_wait_s of its entry in the history. --queue-wait SECONDS bounds the wait. A run whose verb is killed while its suite still runs leaves the slot to that suite until it ends (two suites never overlap); a verb that waits and is killed leaves the line at once. A run started from inside the suite that holds the slot (its parent) stops at once with an error naming the holder instead of waiting for itself.")
 WAIVE_ENV_OPT = opt("--waive-environment", "run once without these parts of verify.environment, which a refusal named (comma separated: signals, fds, tty, cpu; never env); needs --plan and --approved", "PARTS")
 VERIFY_ENV_ANSWER = ("verify.environment (an object, or null for off) is the environment the whole-suite runs of feature verify and release verify start under: "
                      "fds (close or ci-like), ci_fds, cpu_quota (null, max or N%), env_pass (names taken from the caller) and env_set (names and values); an invalid declaration refuses with verify-env-invalid and the line that is wrong. "
@@ -743,8 +743,8 @@ COMMANDS = {
     },
     "suite": {
         "summary": "The queue of the whole-suite runs of this user: take the slot, see who holds it",
-        "desc": ("Two whole-suite runs of one user never overlap on a host: qargi feature verify and qargi release verify take the one slot of a queue before their suite starts and give it back when it ends, "
-                 "and the waiting is first in, first out. The slot is a kernel lock (flock) on a file of STATE/suite-queue/ (mode 700) that the shell of the run holds only while the suite runs, so a verb that is killed "
+        "desc": ("Two whole-suite runs of one user never overlap on a host: qargi feature verify and qargi release verify take the one slot of a queue before their suite starts and give it back when it ends and the verb has read the log, "
+                 "and the waiting is first in, first out. The slot is a kernel lock (flock) on a file of STATE/suite-queue/ (mode 700) that the shell of the run holds only while the suite runs and the verb reads its log, so a verb that is killed "
                  "leaves nothing stale (its suite, if it still runs, keeps the slot until it ends). Beside the lock there is a record of the holder (the pid and its start token, the project, the verb, the name, the commit, when it started) "
                  "and one file for each run that waits, all mode 600; a file of a process that is gone is ignored. A run that waits prints one line on standard error naming the holder and its place, again only when one of them changes. "
                  "Moving a run forward in the queue is not offered. Lead only under the current member guard, as qargi backlog graph is: a member's own checks run in its clone and never wait here. "

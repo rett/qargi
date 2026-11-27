@@ -225,7 +225,8 @@ wait_until 'started 1' 30 && ok "the first verify's suite is running" || no "the
 FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qb > "$T/qb.out" 2>&1 & pb=$!
 on_line() { grep -q '^qargi: suite queue: position 1, holder is app feature verify qa (running ' "$T/qb.out"; }
 wait_until on_line 30 && ok "a second verify, started while the first's suite runs, waits and prints the holder and its place" || no "no queue line: $(cat "$T/qb.out")"
-wait_until 'waited_for 2' 30 && ok "it has waited two seconds by the queue's clock" || no "no waiter: $(qstatus)"
+wait_until 'waited_for 4' 30 && ok "it has waited four seconds by the queue's clock" || no "no waiter: $(qstatus)"
+[ "$(cat "$T/s/busy/app.verify.qb.pid" 2>/dev/null)" = "$pb" ] && ok "its busy mark stands while it waits (a second verify of this name is seen, a compact is not safe)" || no "no busy mark of the waiting verify: $(ls "$T/s/busy" 2>&1)"
 doc=$(qstatus)
 { [ "$(nstarts)" = 1 ] && jq -e --argjson p "$pa" '.state == "held" and .holder.pid == $p and .holder.project == "app" and .holder.verb == "feature verify" and .holder.name == "qa" and (.waiting | length) == 1
     and .waiting[0].position == 1 and .waiting[0].name == "qb" and .waiting[0].verb == "feature verify"' <<<"$doc" >/dev/null; } \
@@ -239,7 +240,7 @@ reap "$pa"; ra=$rc_; reap "$pb"; rb=$rc_
 { [ "$(hq '[.[] | select(.name == "qa")] | length')" = 1 ] && [ "$(hq '[.[] | select(.name == "qb")] | length')" = 1 ] && [ "$(hq '.[] | select(.name == "qa") | .queue_wait_s')" = 0 ]; } \
   && ok "both runs are in the history, the first with queue_wait_s 0" || no "history: $(tail -n 2 "$HF")"
 qw=$(hq '.[] | select(.name == "qb") | .queue_wait_s'); sec=$(hq '.[] | select(.name == "qb") | .seconds'); rsec=$(jq -r .seconds "$T/s/releases/app-feature_qb.json")
-{ [ "$qw" -ge 2 ] && [ "$sec" -lt "$qw" ] && [ "$rsec" -lt "$qw" ]; } \
+{ [ "$qw" -ge 4 ] && [ "$((sec + 2))" -le "$qw" ] && [ "$((rsec + 2))" -le "$qw" ]; } \
   && ok "the second records queue_wait_s $qw, which is not in its seconds ($sec in the history, $rsec in the record of the branch)" || no "queue_wait_s=$qw seconds=$sec record=$rsec"
 jq -e '.queue_wait_s | type == "number"' <<<"$(hq '.[] | select(.name == "qb")')" >/dev/null && ok "queue_wait_s is a JSON integer of the entry" || no "queue_wait_s type"
 { [ "$(stat -c %a "$T/s/suite-queue")" = 700 ] && [ "$(ls "$T/s/suite-queue")" = lock ] && [ "$(stat -c %a "$T/s/suite-queue/lock")" = 600 ]; } \
@@ -282,6 +283,34 @@ touch "$T/go"; reap "$pc"
 { [ "$rc_" = 0 ] && [ "$(nstarts)" = 2 ] && grep -q '^full suite: pass' "$T/qc.out"; } && ok "the slot is free when the orphaned suite has ended, and the waiter then runs and passes" || no "qc rc=$rc_ starts=$(nstarts): $(cat "$T/qc.out")"
 fake_alive() { local p; while read -r p; do kill -0 "$p" 2>/dev/null && return 0; done < "$T/starts"; return 1; }
 wait_until '! fake_alive' 30 && ok "no fake suite is left running" || no "a fake suite is still running"
+# two verifies of one name: the second waits for the slot, and the first has read the log, the gate list and the reports of its suite (history entry, record of the branch) before the
+# slot is let go, because the second rewrites them as soon as it holds it. The suite of the second says, when it starts, what it finds: the entries of the history of this name, and
+# whether the record of the branch is there.
+$F start qe >/dev/null 2>&1; task iqe; $F merge qe agent/iqe >/dev/null 2>&1
+{
+  echo '#!/bin/bash'
+  echo 'echo "$$" >> "$FAKE_STARTS"'
+  echo '{ jq -s "[.[] | select(.name == \"qe\")] | length" "$FAKE_HIST"; [ ! -f "$FAKE_REC" ] || echo record; } >> "$FAKE_SEEN"'
+  echo 'echo "FAIL the check of qe"'
+  echo 'for _ in $(seq 1500); do [ -e "$FAKE_GO" ] && break; sleep 0.02; done'
+  echo 'exit 1'
+} > "$T/fake2.sh"
+setcmd "bash $T/fake2.sh"
+rm -f "$T/starts" "$T/go" "$T/seen"
+export FAKE_STARTS=$T/starts FAKE_GO=$T/go FAKE_HIST=$HF FAKE_SEEN=$T/seen FAKE_REC=$T/s/releases/app-feature_qe.json
+$F verify qe > "$T/qe1.out" 2>&1 & pe1=$!
+wait_until 'started 1' 30 || no "the first verify of qe did not start: $(cat "$T/qe1.out")"
+$F verify qe > "$T/qe2.out" 2>&1 & pe2=$!
+on_line_qe() { grep -q '^qargi: suite queue: position 1, holder is app feature verify qe (running ' "$T/qe2.out"; }
+wait_until on_line_qe 30 || no "the second verify of qe did not wait: $(cat "$T/qe2.out")"
+touch "$T/go"
+reap "$pe1"; r1=$rc_; reap "$pe2"; r2=$rc_
+unset FAKE_STARTS FAKE_GO FAKE_HIST FAKE_SEEN FAKE_REC
+{ [ "$r1" = 1 ] && [ "$r2" = 1 ] && [ "$(nstarts)" = 2 ] && [ "$(tr '\n' ' ' < "$T/seen")" = "0 1 record " ]; } \
+  && ok "the second verify of a name starts its suite only after the first has written its history entry and its record" || no "same name: r1=$r1 r2=$r2 starts=$(nstarts) seen=$(tr '\n' ' ' < "$T/seen")"
+grep -q 'the check of qe' "$T/qe1.out" && grep -q '^failing tests:' "$T/qe1.out" && ok "and the first's report of its failure names its test" || no "report of the first: $(cat "$T/qe1.out")"
+{ [ "$(hq '[.[] | select(.name == "qe")] | length')" = 2 ] && [ ! -e "$T/s/busy/app.verify.qe.pid" ]; } && ok "both are in the history, and no busy mark is left" || no "after the two: $(hq '[.[] | select(.name == "qe")] | length') $(ls "$T/s/busy")"
+setcmd "bash $T/fake.sh"
 # a tests/run.sh below a run of the queue (qargi suite run -- ...) is named by the queue, not warned about as another suite in the repository (the one that no queue holds is, above)
 if [ -d /proc/$$ ]; then
   mkdir -p "$R/sleeper2/tests"

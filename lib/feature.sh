@@ -400,25 +400,25 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     suite_env_prepare "qargi feature verify $NAME_ARG" "$BR" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin verify "$NAME_ARG"   # from here to the end of the verb, the wait for the slot included: a second verify of this name sees it (busy_same_refuse)
     worktree "$h"
     hold_begin "$NAME_ARG"   # the lease is kept while the run waits its turn, too
     other_runs_warning
-    squeue_acquire "feature verify" "$NAME_ARG" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended; at the --queue-wait bound the run is refused here, and nothing is spent
+    squeue_acquire "feature verify" "$NAME_ARG" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
     suite_env_claim_now   # the waiver is used here, after the worktree and the slot and before the log (a refusal above spends nothing)
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    busy_begin verify "$NAME_ARG"
     t0=$SECONDS   # after the wait: the seconds of the record are the suite's
     history_prepare "feature verify" "$NAME_ARG" "$BR" "$h"
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
-    squeue_release
-    busy_end; hold_end
     suite_env_settle
     history_end "$res"
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$BR")$(suite_env_note "$BR")"
     [ "$res" = pass ] || suite_failure_report
+    squeue_release   # last: the log, the gate list and the reports of the launcher are named by the feature, and the next run of this name rewrites them as soon as it has the slot
+    busy_end; hold_end
     [ "$res" = pass ];;
   finish)
     if [ -z "$DRY_RUN" ]; then marshal_gate "$NAME_ARG"

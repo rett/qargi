@@ -26,9 +26,10 @@ directory only their user can write, but every field read from them is cut to pl
                                                         one exits), then write the record of the holder. OWNER is the pid of that process: the waiter file and the record
                                                         carry it, and this command stops when it is gone. While it waits it prints one line on standard error naming
                                                         the holder and the position, again only when one of them changes. Exit 0 (taken), 4 (the bound ran out;
-                                                        nothing was taken or left behind), 3 (the owner is gone), 1 (an error), 2 (a wrong call). RESULT gets
-                                                        `status=ok|busy`, `waited=SECONDS` (whole seconds, rounded up, 0 when it did not have to wait; rounded down for busy) and, for busy,
-                                                        `holder=TEXT`.
+                                                        nothing was taken or left behind), 3 (the owner is gone), 5 (the holder is a parent of the owner: the run was
+                                                        started from inside the suite that holds the slot, and would wait for itself for ever; nothing was taken or left behind),
+                                                        1 (an error), 2 (a wrong call). RESULT gets `status=ok|busy|reentry`, `waited=SECONDS` (whole seconds, rounded up, 0 when
+                                                        it did not have to wait; rounded down for busy) and, for busy and reentry, `holder=TEXT`.
   suite_queue.py release --state DIR --owner PID        remove the record of the holder and the waiter file of OWNER (the shell then closes its descriptor)
   suite_queue.py status --state DIR [--json]            the slot, its holder and the waiters in the order of the queue; with --json one document of the draft kind
                                                         qargi-suite-queue. Read-only: no lock is taken, nothing is removed, no process is signalled (/proc/locks says
@@ -63,6 +64,7 @@ WAIT = "wait."
 POLL = 0.2
 EX_BUSY = 4
 EX_GONE = 3
+EX_REENTRY = 5
 TEXT = re.compile(r"[^A-Za-z0-9._:@+/ -]")
 HEAD = re.compile(r"^[0-9a-f]{7,64}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9]{0,23}$")
@@ -119,6 +121,21 @@ def who(pid):
     """{pid, start} of the process pid, or None when it is not alive."""
     start = L.token(pid)
     return None if start is None else {"pid": pid, "start": start}
+
+
+def ancestors(pid):
+    """The pids of the parents of pid, nearest first, read from /proc (empty where there is no /proc)."""
+    out = []
+    while pid > 1:
+        try:
+            with open("/proc/%d/status" % pid) as f:
+                pid = next((int(l.split()[1]) for l in f if l.startswith("PPid:")), 0)
+        except (OSError, ValueError, IndexError):
+            break
+        if pid <= 1 or pid in out:
+            break
+        out.append(pid)
+    return out
 
 
 def info(project, verb, name, head):
@@ -229,13 +246,15 @@ def describe(d, ahead, now=None):
     return "qargi: suite queue: position %d, %s" % (ahead + 1, who_)
 
 
-def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monotonic):
-    """Waits in line and takes the flock on fd for the process `owner`. Returns (status, waited seconds, holder text): status is ok, busy (the bound ran out) or
-    gone (the owner died). The waiter file is removed whatever way this ends."""
+def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monotonic, parents=None):
+    """Waits in line and takes the flock on fd for the process `owner`. Returns (status, waited seconds, holder text): status is ok, busy (the bound ran out),
+    gone (the owner died) or reentry (the holder is a parent of the owner: a whole-suite run started from inside the suite that holds the slot would wait for
+    itself for ever; `parents` are the pids to look for, by default the ancestors of the owner). The waiter file is removed whatever way this ends."""
     err = err if err is not None else sys.stderr
     me = who(owner)
     if me is None:
         return "gone", 0, ""
+    parents = set(ancestors(owner) if parents is None else parents)
     path = waiter_path(d, me)
     doc = dict(inf, schema=SCHEMA, pid=me["pid"], start=me["start"], enqueued=time.time_ns())
 
@@ -270,6 +289,8 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
                     return "ok", int(math.ceil(clock() - t0)) if had_to_wait else 0, ""
             had_to_wait = True
             rec = live_holder(d)
+            if rec and rec["pid"] in parents:
+                return "reentry", 0, holder_text(rec)
             key = (ahead, rec["pid"] if rec else None, rec["start"] if rec else None)
             if key != shown:
                 print(describe(d, ahead), file=err)
@@ -386,8 +407,8 @@ def acquire_main(a):
     except (QueueError, OSError) as e:
         print("qargi: suite queue: %s" % (getattr(e, "strerror", None) or e), file=sys.stderr)
         return 1
-    lines = ["status=%s" % ("ok" if status == "ok" else "busy" if status == "busy" else "gone"), "waited=%d" % waited]
-    if status == "busy":
+    lines = ["status=%s" % status, "waited=%d" % waited]
+    if status in ("busy", "reentry"):
         lines.append("holder=%s" % holder)
     if a.result:
         try:
@@ -395,7 +416,7 @@ def acquire_main(a):
         except OSError as e:
             print("qargi: suite queue: cannot write %s: %s" % (a.result, e.strerror or e), file=sys.stderr)
             return 1
-    return {"ok": 0, "busy": EX_BUSY, "gone": EX_GONE}[status]
+    return {"ok": 0, "busy": EX_BUSY, "gone": EX_GONE, "reentry": EX_REENTRY}[status]
 
 
 def main(argv):

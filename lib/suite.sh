@@ -4,7 +4,7 @@
 #   suite.sh run -- COMMAND [ARGS...]     take a slot of the queue (waiting its turn, first in, first out, as feature verify and release verify do), run COMMAND with its
 #                                         standard input, output and error as they are, let the slot go and exit with the status of COMMAND. For a suite that is run by
 #                                         hand, or by a supervisor to verify a run. It records nothing in the history of the whole-suite runs: that is for feature
-#                                         verify and release verify, which say what was verified. The slot is held while COMMAND runs and not a moment longer.
+#                                         verify and release verify, which say what was verified. The slot is held while COMMAND runs and not a moment longer (the verify verbs keep it a moment more, to read the log of their suite).
 #   suite.sh status [--json]              the holder and the waiters (position, project, verb, name, age); with --json one document of the draft kind qargi-suite-queue
 #
 # Moving a run forward in the queue is not offered: the order is the order of arrival.
