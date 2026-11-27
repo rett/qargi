@@ -133,13 +133,13 @@ doc() { [ "$RC" = 0 ] || { echo "$2: exit $RC: $(head -c 300 "$T/e")"; return 1;
 L marshal claim f1 --as alice --goal "the goal" && [ "$RC" = 0 ] || no "setup: claim f1 ($RC): $(cat "$T/e")"
 NOW=$((NOW + 600))
 L marshal status --all --json
-msg=$(doc qargi-marshal-status "status --all --json") && jq -e '.kind == "qargi-marshal-status" and .backend == "local" and .remote == "none" and (.features | length) == 3' "$T/o" >/dev/null \
-  && ok "local: status --all --json is one valid document, three rows, backend local, remote none" || no "local status --all: ${msg:-$(head -c 300 "$T/o")}"
+msg=$(doc qargi-marshal-status "status --all --json") && jq -e '.kind == "qargi-marshal-status" and .schema == 2 and .integrity == "off" and .backend == "local" and .remote == "none" and (.features | length) == 3' "$T/o" >/dev/null \
+  && ok "local: status --all --json is one valid document, three rows, integrity off, backend local, remote none" || no "local status --all: ${msg:-$(head -c 300 "$T/o")}"
 L marshal status f1 --json
 msg=$(doc qargi-marshal-status "status f1 --json") && jq -e '(.features | length) == 1 and .features[0].lease_clock == "wall" and (.features[0].minutes_since_renewal | . == 10)' "$T/o" >/dev/null \
   && ok "local: status NAME --json is the same shape with one row; minutes_since_renewal is the integer 10 on the wall clock" || no "local status f1: ${msg:-$(head -c 300 "$T/o")}"
 L marshal check f1 --as alice --json
-msg=$(doc qargi-marshal-check "check f1 --json") && jq -e '.kind == "qargi-marshal-check" and .answer == "yours" and (has("verb") | not)' "$T/o" >/dev/null \
+msg=$(doc qargi-marshal-check "check f1 --json") && jq -e '.kind == "qargi-marshal-check" and .schema == 2 and .integrity == "off" and .answer == "yours" and (has("verb") | not)' "$T/o" >/dev/null \
   && ok "local: check NAME --json is a qargi-marshal-check document (the command table leaves --json alone), answer yours" || no "local check f1: ${msg:-$(head -c 300 "$T/o")}"
 L marshal check --json
 msg=$(doc qargi-marshal-check "check --json") && jq -e '.answer == null and (.features | length) == 3' "$T/o" >/dev/null && ok "local: check --json (no NAME) has one row for each open feature" || no "local check all: ${msg:-$(head -c 300 "$T/o")}"

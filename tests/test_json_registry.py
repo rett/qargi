@@ -802,8 +802,11 @@ def self_test():
         fn(reg)
         write(p, json.dumps(reg, indent=2) + "\n")
 
+    def vdir(root, kind):
+        return os.path.join(root, FIX, kind, "v%d" % read_json(os.path.join(root, "lib", "kinds", kind + ".json"))["schema"])
+
     def fixture(root, kind, name):
-        return os.path.join(root, FIX, kind, "v1", name)
+        return os.path.join(vdir(root, kind), name)
 
     try:
         expect("the tree as it is passes", copy_tree(), [])
@@ -858,11 +861,11 @@ def self_test():
         os.remove(fixture(r, "qargi-marshal-status", "broken/schema-missing.json"))
         expect("a rule with no broken file fails point 3", r, [3], "schema-missing")
         r = copy_tree()
-        shutil.rmtree(os.path.join(r, FIX, "qargi-refusal", "v1"))
+        shutil.rmtree(vdir(r, "qargi-refusal"))
         expect("a kind with no v directory fails point 3", r, [3], "has no directory")
         r = copy_tree()
         for kind in os.listdir(os.path.join(r, FIX)):
-            v = os.path.join(r, FIX, kind, "v1")
+            v = vdir(r, kind) if os.path.isfile(os.path.join(r, "lib", "kinds", kind + ".json")) else ""
             for n in (os.listdir(v) if os.path.isdir(v) else []):
                 if n.startswith("valid") and n.endswith(".json") and '"signer"' in read(os.path.join(v, n)):
                     d = json.loads(read(os.path.join(v, n)))
@@ -876,7 +879,7 @@ def self_test():
         expect("a frozen registry equal to the one at the tag passes point 6", r, [], "equal the ones at the release 0.0.1")
         change = lambda g: g["document"]["properties"].update(added_after_the_pin={"type": "string", "x-since": "0.3.10"})
         edit(r, "qargi-marshal-check", change)
-        fp = os.path.join(r, FIX, "qargi-marshal-check", "v1", "registry.json")
+        fp = fixture(r, "qargi-marshal-check", "registry.json")
         frozen = read_json(fp)
         change(frozen)
         write(fp, json.dumps(frozen, indent=2) + "\n")

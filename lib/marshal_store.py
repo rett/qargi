@@ -65,7 +65,7 @@ above: marshal-feature-unknown, marshal-feature-held, marshal-remote-unreachable
 exception's, whatever the rendering does: when it fails for any reason only the sentence is printed (report_refusal), so a refusal is never taken for a defect.
 status and check take --json: one document of the kind qargi-marshal-status or qargi-marshal-check (lib/kinds), built in memory, dumped without NaN and checked against
 its registry file before anything is printed; a record that holds a value the shape does not allow is exit 70 with one line (never a document), and a stdout that
-cannot take the document is exit 1 with one plain line. `remote` says whether the answer was checked against the remote of the shared records (none, checked,
+cannot take the document is exit 1 with one plain line. `integrity` is the integrity setting of the project (off, advisory, strict); `remote` says whether the answer was checked against the remote of the shared records (none, checked,
 unchecked, not-asked). status and check also take --no-write: the call writes nothing (a record whose branch is gone is not marked abandoned, no audit line, no cache of
 the remote records, no lock file) and fetches nothing (it implies --no-fetch), so `remote` is not-asked. A lease age is a whole number of minutes on every backend.
 Run through lib/marshal.sh; python3 -I, standard library only."""
@@ -1431,7 +1431,7 @@ def v_status(ctx, a):
     # the agent branches of no open feature are said once, after the features, never under each of them
     ua = [] if a.brief else [{"branch": b, "base": base} for b, base in unattributed_agents(ctx)]
     if a.json:
-        write_stdout(json_document("qargi-marshal-status", {"schema": 1, "kind": "qargi-marshal-status", "project": ctx.project, "backend": backend_of(ctx),
+        write_stdout(json_document("qargi-marshal-status", {"schema": 2, "kind": "qargi-marshal-status", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                            "remote": remote_of(ctx), "features": [d for _, d, _ in items], "agent_unattributed": ua}))
         return
     if not items:
@@ -1761,7 +1761,7 @@ def v_check(ctx, a):
             print("qargi: warning: " + w, file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
         answer = "yours" if ld and ld["id"] == ctx.id else ("free-stale" if ld else "free")
         if a.json:
-            write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+            write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                               "remote": remote_of(ctx), "feature": a.name, "answer": answer,
                                                               "lead": d["lead"] if answer == "free-stale" else None, "warnings": warns}))
             return
@@ -1777,7 +1777,7 @@ def v_check(ctx, a):
             print("qargi: warning: " + w, file=sys.stderr)
         rows.append(dict({k: v for k, v in d.items() if k not in DERIVED}, warnings=warns))
     if a.json:
-        write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+        write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                           "remote": remote_of(ctx), "feature": None, "answer": None, "lead": None, "warnings": [], "features": rows}))
     elif not items:
         print("no open features")

@@ -1,0 +1,14 @@
+{
+ "schema": 2,
+ "kind": "qargi-marshal-check",
+ "project": "app",
+ "integrity": "off",
+ "backend": "local",
+ "remote": "none",
+ "feature": "f1",
+ "answer": "yours",
+ "lead": null,
+ "warnings": [
+  "feature f1 changes files that feature/f3 also changes: shared.txt"
+ ]
+}

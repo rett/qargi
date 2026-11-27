@@ -25,10 +25,12 @@ A **document** is one JSON object that a verb prints for a program to read. A **
 
 | Kind | Schema | Verbs | Stream |
 | --- | --- | --- | --- |
-| `qargi-marshal-status` | 1 | `marshal status [NAME] [--all] --json` | standard output |
-| `qargi-marshal-check` | 1 | `marshal check [NAME] --json` | standard output |
+| `qargi-marshal-status` | 2 | `marshal status [NAME] [--all] --json` | standard output |
+| `qargi-marshal-check` | 2 | `marshal check [NAME] --json` | standard output |
 | `qargi-handoff` | 1 | `marshal handoff [NAME] --json` | standard output |
 | `qargi-refusal` | 1 | every verb that stops on a rule of the catalogue | standard error, one line |
+
+Schema 2 of `qargi-marshal-status` and `qargi-marshal-check` (0.3.10) adds the required `integrity` above. A new required field raises the integer, so a reader of schema 1 stops on a document of schema 2, as the reader rule says, and `tests/fixtures/json/KIND/v1/` stays for it.
 
 What each verb writes. This is the `writes` field of the registry file, and a program that decides whether it may call a verb (a freeze allow-list, say) reads that field, not the word "read only" in a help text. `--no-write` is an option of `marshal status` and `marshal check`: with it the call writes nothing (no record, no audit line, no cache, and not even the directories that the first load of qargi makes) and fetches nothing, it answers as the call that writes would (a record whose branch is gone is shown abandoned, with no lead, and is not stored), and `remote` says `not-asked` on the shared refs backend.
 
@@ -41,8 +43,9 @@ What each verb writes. This is the `writes` field of the registry file, and a pr
 
 The text form of each verb is not changed by any of this. `qargi marshal handoff --json --write FILE` prints the document first and flushes it, then creates the file, then says on standard error that it wrote the file: a standard output that cannot take the document leaves no file, and a failure after the document was written is a non-zero exit, which a reader answers by not reading standard output.
 
-Four fields tell a reader how far to trust an answer, and a program that builds on a status or a check (a lease it shows, a lock it takes) reads them first:
+Five fields tell a reader how far to trust an answer, and a program that builds on a status or a check (a lease it shows, a lock it takes) reads them first:
 
+- `integrity` is `off`, `advisory` or `strict`: the integrity setting of the project (a closed enum, a required top-level field of a status, a check and a handoff). With `off` the records are unsigned by design: no row has the fields `integrity`, `integrity_note` or `signer`, and their absence says nothing about a signature. With `advisory` or `strict` every row has them, and a record without a signature says `unsigned`. Read the setting before you read a field about a signature that is not there.
 - `backend` is `local` or `refs`: where the records are.
 - `remote` is `none` (the local backend has no remote), `checked` (the fetch ran and worked), `unchecked` (the fetch was tried and failed: the answer is from the cache this machine fetched last, and exit 0) or `not-asked` (nothing was fetched: `--no-fetch`, `--no-write` or a member run). A handoff never fetches, so it says `not-asked` on the shared refs backend and `none` on the local one.
 - `lease_clock` is `wall` (local records: the wall clock, whole minutes since `renewed_at`) or `observed-here` (shared records: how long this machine saw the record's commit unchanged on its own monotonic clock; two hosts can give different answers for one record, and a first read on a machine says 0). `lease` and `minutes_since_renewal` mean what it says. `minutes_since_renewal` is a whole number of minutes on both backends.

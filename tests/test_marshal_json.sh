@@ -185,8 +185,8 @@ mv "$ORIGIN.gone" "$ORIGIN"
 NOW=$((1000000 + 20))
 call L marshal status --all --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && ok "status --all --json (local): a valid document" || no "status --all --json: rc=$RC $(cat "$T/v"; head -c 400 "$T/e")"
-jq -e '.kind == "qargi-marshal-status" and .schema == 1 and .backend == "local" and .remote == "none" and (.features | length) == 6 and (.agent_unattributed | type) == "array"' "$T/o" >/dev/null \
-  && ok "status --all --json (local): backend local, remote none, one row for each open feature" || no "status --all --json fields: $(head -c 600 "$T/o")"
+jq -e '.kind == "qargi-marshal-status" and .schema == 2 and .integrity == "off" and .backend == "local" and .remote == "none" and (.features | length) == 6 and (.agent_unattributed | type) == "array"' "$T/o" >/dev/null \
+  && ok "status --all --json (local): schema 2, integrity off, backend local, remote none, one row for each open feature" || no "status --all --json fields: $(head -c 600 "$T/o")"
 jq -e '[.features[] | select(.feature == "f1")] | .[0] | .lease == "live" and .lease_clock == "wall" and .minutes_since_renewal == 0 and .lead.id == "alice" and (.tasks | type) == "array" and (.overlap | type) == "object"' "$T/o" >/dev/null \
   && ok "status --all --json (local): a row has the lead, a live lease on the wall clock and the derived lists" || no "status row f1: $(jq -c '.features[] | select(.feature == "f1")' "$T/o")"
 call L marshal status f1 --json
@@ -256,7 +256,7 @@ env HOME="$L0/home" QARGI_CONF="$L0/c" QARGI_STATE="$L0/s" QARGI_MARSHAL_NOW="$N
 # ================================================================ (6) check --json: the answer, the lead and the warnings; one row each without NAME
 NOW=$((1000000 + 30))
 call L marshal check f1 --as alice --json
-[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.kind == "qargi-marshal-check" and .backend == "local" and .remote == "none" and .feature == "f1" and .answer == "yours" and .lead == null and .warnings == [] and (has("features") | not)' "$T/o" >/dev/null \
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.kind == "qargi-marshal-check" and .schema == 2 and .integrity == "off" and .backend == "local" and .remote == "none" and .feature == "f1" and .answer == "yours" and .lead == null and .warnings == [] and (has("features") | not)' "$T/o" >/dev/null \
   && ok "check NAME --json: the caller leads the feature (answer yours, no lead, no warnings)" || no "check yours: rc=$RC $(cat "$T/v"; head -c 400 "$T/o")"
 call L marshal check f1 --as alice
 [ "$RC" = 0 ] && [ "$(cat "$T/o")" = yours ] && ok "check NAME (text): still the one word on stdout" || no "check text yours: rc=$RC $(out)"

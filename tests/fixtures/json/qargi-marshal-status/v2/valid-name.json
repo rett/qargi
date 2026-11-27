@@ -1,0 +1,98 @@
+{
+ "schema": 2,
+ "kind": "qargi-marshal-status",
+ "project": "app",
+ "integrity": "off",
+ "backend": "local",
+ "remote": "none",
+ "features": [
+  {
+   "feature": "f1",
+   "project": "app",
+   "status": "active",
+   "lead": {
+    "id": "alice",
+    "user": "user",
+    "host": "host",
+    "since": "1970-01-12T13:46:40Z",
+    "worktree": "0123456789abcdef"
+   },
+   "lease": "stale",
+   "lease_clock": "wall",
+   "minutes_since_renewal": 107,
+   "ttl_minutes": 15,
+   "renewed_at": "1970-01-12T13:46:40Z",
+   "rev": 2,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "alice",
+   "purpose": "",
+   "goal": "the first goal",
+   "plan": "step one, step two",
+   "note": "a note",
+   "finished_at": null,
+   "tasks": [
+    {
+     "verified": false,
+     "applied": false,
+     "cleaned": false,
+     "closed": false,
+     "directory_gone": false,
+     "state": "not verified",
+     "run": "/work/rundir",
+     "slug": "t1",
+     "role": "build",
+     "started": "2026-01-01T00:00:00Z"
+    },
+    {
+     "verified": false,
+     "applied": false,
+     "cleaned": false,
+     "closed": false,
+     "directory_gone": true,
+     "state": "not verified, directory gone",
+     "run": "/work/gone",
+     "slug": "t2",
+     "role": "review",
+     "started": "2026-01-02T00:00:00Z"
+    },
+    {
+     "verified": false,
+     "applied": false,
+     "cleaned": false,
+     "closed": false,
+     "directory_gone": true,
+     "state": "not verified, directory gone",
+     "run": "/work/gone2",
+     "slug": "u1",
+     "role": "build",
+     "started": "2026-01-03T00:00:00Z"
+    }
+   ],
+   "agent_branches": [
+    "agent/u1"
+   ],
+   "worktrees": [
+    {
+     "path": "/work/l/wt-f1",
+     "branch": "feature/f1"
+    },
+    {
+     "path": "/work/l/wt-u1",
+     "branch": "agent/u1"
+    }
+   ],
+   "overlap": {
+    "f3": [
+     "shared.txt"
+    ]
+   }
+  }
+ ],
+ "agent_unattributed": [
+  {
+   "branch": "agent/x1",
+   "base": "feature/none"
+  }
+ ]
+}
