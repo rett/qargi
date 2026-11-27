@@ -152,8 +152,17 @@ printf '# Findings\n\nnone\n\nverdict: accept\n\n# Checked\n\nbuild\n' > "$T/rep
 $DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict line that is not the last line is refused" || no "verdict not last"
 printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n\nverdict: ready\n' > "$T/rep/report.md"
 $DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict other than accept or revise is refused" || no "verdict ready"
-printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+printf '# Findings\n\nnone\n\nverdict: accept\n' > "$T/rep/report.md"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "WARN.*Checked" && ok "a report without a Checked section passes with a warning" || no "no Checked: $out"
+# a revise verdict is exit 1 (a reviewer asking for changes is not a pass) unless the lead reads it on purpose with --lead
+printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); rc=$?
+{ [ $rc = 1 ] && echo "$out" | grep -q "verdict: revise" && echo "$out" | grep -q "exit 1"; } && ok "a report with verdict: revise is exit 1 and the message names the verdict" || no "revise: rc=$rc $out"
+out=$($DA review check "$T/rep" --lead 2>&1); rc=$?
+{ [ $rc = 0 ] && echo "$out" | grep -q "^OK report-only" && echo "$out" | grep -qx "verdict: revise"; } && ok "review check --lead keeps exit 0 for a revise verdict and prints the verdict line" || no "revise --lead: rc=$rc $out"
+printf '# Findings\n\nnone\n\nverdict: accept\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" --lead 2>&1); rc=$?
+{ [ $rc = 0 ] && ! echo "$out" | grep -qx "verdict: revise"; } && ok "--lead with an accept verdict changes nothing" || no "accept --lead: rc=$rc $out"
 printf "$GOOD_REP" > "$T/rep/report.md"; mv "$T/rep/manifest.json" "$T/rep/m.json"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "manifest.json missing" && ok "a report-only run without manifest.json is refused" || no "no manifest: $out"
 mv "$T/rep/m.json" "$T/rep/manifest.json"

@@ -56,7 +56,7 @@ bad=$(grep -rlE 'CONFIRMED|PLAUSIBLE|not ready|ready with changes|High, Medium|\
 
 # P6: the advisor sign-off is a run: prepared, given a full task block, taken in with review check, closed with local clean
 FL=skills/qargi-flow/SKILL.md
-has $FL 'qargi local prepare --role review --profile advisor' && has $FL 'full task block' && has $FL "--done 'qargi review check ../out'" && has $FL 'qargi review check OUT' && has $FL 'qargi local clean' && ok "the advisor sign-off prepares a review run, gives it a full task block, checks and closes it" || no "the advisor sign-off step of qargi-flow"
+has $FL 'qargi local prepare --role review --profile advisor' && has $FL 'full task block' && has $FL "--done 'qargi review check ../out --lead'" && has $FL 'qargi review check OUT' && has $FL 'qargi local clean' && ok "the advisor sign-off prepares a review run, gives it a full task block, checks and closes it" || no "the advisor sign-off step of qargi-flow"
 ! has $FL 'spawn it on that file' && ok "the advisor is not spawned on a bare file" || no "qargi-flow still spawns the advisor on a file with no run"
 
 # P7: a local member has no reference store: the roles name it only under a MEMORY section; the five steps are the contract's

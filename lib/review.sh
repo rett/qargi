@@ -2,7 +2,7 @@
 # `qargi review check OUT` checks a collected series; `qargi review apply` is the step between it and `qargi feature merge NAME BRANCH`: put a collected,
 # verified series on a task branch of the real repository.
 #
-#   review.sh check OUT [--allow-empty]                       checks a member's output (RUN_DIR/out, or the run directory) with review_check.py; the
+#   review.sh check OUT [--allow-empty] [--lead]                     checks a member's output (RUN_DIR/out, or the run directory) with review_check.py; the
 #       registered run's class is validated before the lead's lease is renewed
 #   review.sh apply RUN_DIR [--branch BRANCH] [--project P]   agent/<slug> at the run's base with the patches applied
 #   review.sh apply --from-saved ID [--branch BRANCH] [--project P]
@@ -126,7 +126,7 @@ scrub_ok_has() { # RUN OUT -> 0 when the record names this series
 
 verb=${1:-}; shift || true
 if [ "$verb" = check ]; then
-  # qargi review check OUT [--allow-empty]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
+  # qargi review check OUT [--allow-empty] [--lead]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
   # A registered run's class is validated before its feature lease is renewed (no project is needed, none is loaded).
   . "$(dirname "$0")/marshal.sh"
   # the argument is a run's OUT (the run is its parent directory) or the run directory itself, which review_check.py also takes (RUN/out)
@@ -491,5 +491,5 @@ case $verb in
     json_update "$amark" '.status = "built" | .tip = $t | .auth_line = $a | .npatch = ($n | tonumber)' --arg t "$tip" --arg a "$AUTH_LINE" --arg n "${#patches[@]}"
     npatch=${#patches[@]}
     apply_record;;
-  *) usage_die "usage: qargi review check OUT [--allow-empty] | qargi review save RUN [--force] < MESSAGE | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
+  *) usage_die "usage: qargi review check OUT [--allow-empty] [--lead] | qargi review save RUN [--force] < MESSAGE | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
 esac

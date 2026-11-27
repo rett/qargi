@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi review check` of a report-only run whose last line is `verdict: revise` (a reviewer asking for changes) exits 1 with a plain line on standard error that names the verdict, where it exited 0 as for an accept, so a script or a DONE check no longer takes a request for changes for a pass. `--lead` is the lead reading that verdict on purpose: it keeps exit 0 and prints the verdict line. Every other verdict word behaves as before. `qargi team check` reads the review member's report with `--lead`, and the advisor sign-off of `qargi-flow` gives the reviewer's DONE (`qargi review check ../out --lead`) and the lead's check the flag, so a reviewer that finds something to change does not fail its own check.
+
 ## [0.3.9] - 2026-11-26
 
 ### Added

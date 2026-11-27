@@ -66,7 +66,7 @@ check() {
     r=$(basename "$d")
     [ "$r" != lead ] || continue
     echo "== $r"
-    python3 -I "$here/review_check.py" "$d" --allow-empty || rc=1
+    python3 -I "$here/review_check.py" "$d" --allow-empty --lead || rc=1
   done
   if [ -f "$dir/lead/team.json" ]; then
     tj=$dir/lead/team.json

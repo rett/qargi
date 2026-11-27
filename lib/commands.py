@@ -1678,7 +1678,8 @@ COMMANDS = {
         "scripts": ["review_check.py", "review.sh"],
         "verbs": {
             "check": verb("Check what a run returned: numbered patches, messages, manifest, groups", [("OUT", "dir")],
-                          [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
+                          [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)"),
+                           opt("--lead", "read a report whose verdict is revise on purpose (the lead taking in a review): exit 0 and the verdict line printed; without it that verdict is exit 1")],
                           desc=("Structural inspection of unsuccessful-attempt output is diagnostic, not acceptance; verify and apply refuse it. Verify, check and apply refuse OUT changed since acceptance; re-prepare for revised external output. "
                                 "Save staging uses a private directory with recorded device, inode and prepared identity. Reconciliation recovers only that owned stage; unowned or replaced stages are preserved and refused, and historical .save.* paths are never adopted. Retention bounds count copies, not bytes. "
                                 "An unfinished apply marked started refuses resume, clean and discard even after its shell dies: Git or a hook may still be alive. Preserve the worktree and record. An apply marked built can finish bookkeeping after its owner exits. Apply scrubs the private patch copy; a previous check cannot authorize replacement bytes. "
@@ -1691,6 +1692,8 @@ COMMANDS = {
                                 "Source acceptance requires independent review of concrete changes and dependencies. Reject semantically mixed work with concrete evidence. Keep one patch per actual commit and meaningful buildable commit boundaries. "
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
                                 "`verdict: accept` or `verdict: revise`, and the manifest.json (PREFIXmanifest.json) beside it; a missing manifest or verdict line fails, a missing Checked section warns. "
+                                "A report whose verdict is revise (the reviewer asks for changes) is exit 1 with a plain line on standard error that names the verdict, so a script or a DONE check never takes it for a pass; "
+                                "--lead is the lead reading that verdict on purpose: it keeps exit 0 and prints the verdict line. Any other verdict word behaves as before. "
                                 "A patch, or a touched_paths entry of the manifest, outside SCOPE fails: SCOPE is the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]. "
                                 "A manifest whose done.command is not the DONE line of RUN/task.md (the check the lead set) fails, with both commands named; a manifest with no done.command warns. "
                                 "Commits dated within two minutes of each other (made in one batch at the end) warn: explain the warning in the report. "
