@@ -54,6 +54,12 @@
    "status": "draft",
    "schema": 1,
    "sha256": "83e4d839fa23b1cbc5ee855d22deaf6e6309a9709a5d28ef383d8afe20726baa"
+  },
+  {
+   "kind": "qargi-suite-queue",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "8d8a0d80e0e8679d2d6a66e792229a83d602c757b96915dad08732b562be0911"
   }
  ]
 }

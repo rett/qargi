@@ -1,0 +1,50 @@
+{
+  "registry": 1,
+  "kind": "qargi-suite-queue",
+  "schema": 1,
+  "status": "draft",
+  "since": "0.3.10",
+  "stream": "stdout",
+  "verbs": ["suite status --json"],
+  "about": "The queue of the whole-suite runs of this user, as `qargi suite status` shows it: the slot (`state`), the run that holds it (`holder`) and the runs that wait for it, in the order they will be served. A whole-suite run (feature verify, release verify, `suite run`) holds the slot only while its suite runs, so two never overlap on one host. `state` is `free` (nobody holds the slot), `held` (a lock is held; `holder` names the run when its record is there and its process is alive, else it is null) or `unknown` (the lock cannot be read from /proc/locks and no live record names a holder); the state is read from the kernel's lock table, never from the records alone, so a holder that was killed is not shown. `waiting` lists only the runs whose process is alive. A field read from a file in the queue directory is cut to plain characters. The verb exits 0 with a document and prints nothing else on standard output; a queue that cannot be read is exit 1 with one line on standard error and no document, a document that fails the check of this registry file is exit 70 with one line on standard error and no document, and a wrong call is exit 2.",
+  "writes": "Nothing: the queue directory is only read (a waiter file of a process that is gone is not removed), no lock is taken, no token is made and no process is signalled.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "state", "holder", "waiting"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-suite-queue"},
+      "state": {"enum": ["free", "held", "unknown"], "x-open": true, "description": "Whether a run holds the slot: see `about`."},
+      "holder": {"$ref": "#/$defs/holder", "description": "The run that holds the slot; null when nobody does, or when the lock is held and its record is missing or names a process that is gone."},
+      "waiting": {"type": "array", "items": {"$ref": "#/$defs/waiter"}, "x-ordered": true, "description": "The runs that wait, first served first; empty when none does."}
+    },
+    "$defs": {
+      "holder": {
+        "type": ["object", "null"],
+        "required": ["pid", "project", "verb", "name", "head", "age_seconds"],
+        "properties": {
+          "pid": {"type": "integer", "description": "The process that holds the lock: the shell of the verb that runs the suite."},
+          "project": {"type": ["string", "null"], "description": "The stored project of the run; null for a `suite run` outside any project."},
+          "verb": {"type": "string", "x-text": true, "description": "`feature verify`, `release verify` or `suite run`."},
+          "name": {"type": "string", "x-text": true, "description": "The feature, the version, or the command (its first word) of a `suite run`."},
+          "head": {"type": ["string", "null"], "description": "The commit the suite runs on; null for a `suite run`."},
+          "age_seconds": {"type": "integer", "description": "Whole seconds since the run took the slot."}
+        }
+      },
+      "waiter": {
+        "type": "object",
+        "required": ["position", "pid", "project", "verb", "name", "head", "waiting_seconds"],
+        "properties": {
+          "position": {"type": "integer", "description": "1 for the run that is served next."},
+          "pid": {"type": "integer", "description": "The process that waits: the shell of the verb."},
+          "project": {"type": ["string", "null"]},
+          "verb": {"type": "string", "x-text": true},
+          "name": {"type": "string", "x-text": true},
+          "head": {"type": ["string", "null"]},
+          "waiting_seconds": {"type": "integer", "description": "Whole seconds since it began to wait."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.10", "change": "first draft"}]
+}
