@@ -26,9 +26,11 @@
 #                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
 #                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
 #                                        every row when a filter is given, ends with actor=LABEL feature=NAME
-#   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
+#   local.sh list --lanes                read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py)
+#   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--wait SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
-#                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
+#                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused; --wait SECONDS bounds the wait for
+#                                        a busy lane (refused as lane-busy at the bound; 0 does not wait)
 #
 # The disabled origin and wrapper obstruct ordinary pushes through those paths. Runtime sandbox
 # protection is separate. Verify compares observed snapshots and rejects unaccepted differences;
@@ -1792,9 +1794,17 @@ $vout}"
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
-    SCR='' WANT_ACTOR='' WANT_FEATURE=''
+    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES=''
+    [ "${1:-}" != --lanes ] || LANES=1
+    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without taking any lock
+    # (the holder from /proc/locks and the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    if [ -n "$LANES" ]; then
+      [ $# = 1 ] || usage_die "list: --lanes takes no other option or argument"
+      exec python3 -I "$(dirname "$0")/lane.py" list
+    fi
     while [ $# -gt 0 ]; do
       case $1 in
+        --lanes) usage_die "list: --lanes takes no other option or argument";;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         --actor) need_val "$1" $#; WANT_ACTOR=$2; [ -n "$WANT_ACTOR" ] || usage_die "list: --actor takes a coordinator label, or a prefix of one that ends at a colon"; shift 2;;
         --feature) need_val "$1" $#; WANT_FEATURE=$2; [ -n "$WANT_FEATURE" ] || usage_die "list: --feature takes a feature name"; shift 2;;

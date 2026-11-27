@@ -107,7 +107,7 @@ def fakeref "$(jq -n --argjson p "$(refr 20)" '[{from:"~/.fakesi-members/auth.js
 def fakereft "$(jq -n --argjson p "$(refr 2)" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p}]')"
 def fakemixr "$(jq -n --argjson p "$(refr 20)" '[{from:"~/.fakesi-members/auth.json",to:"auth.json",private:$p},{from:"~/.fakesi-members/settings.json",to:"settings.json"}]')"
 setprov() { proj rproj "$T/r" "$1"; }
-LOCKF=$MEM/.qargi-run.lock; DECL=\~/.fakesi-members/auth.json   # the source as the definition declares it: what a message names
+LOCKF=$MEM/.qargi-run.lock; LDECL=\~/.fakesi-members/.qargi-run.lock; DECL=\~/.fakesi-members/auth.json   # the source as the definition declares it: what a message names
 printf '{"k": 1}\n' > "$MEM/settings.json"
 
 # --- the dry run and prepare ------------------------------------------------------------------------------------------------------------
@@ -473,6 +473,81 @@ PY
 { grep -q '^STOP code=2 tries=6 True$' <<<"$got" && [ "$(grep -c 'was replaced or removed' <<<"$got")" = 6 ] && flock -n "$LOCKF" true; } \
   && ok "a lock file that is replaced every time is tried six times, then the run is refused (exit 2), and no descriptor is left holding the lock" || no "replace bound: $got"
 rm -f "$LOCKF"
+
+# --- coordination: the lane record, the holder line and the queue, --wait, local list --lanes ------------------------------------------------------
+export QARGI_LEAD=lead-one
+LREC=$MEM/.qargi-lane.json
+setprov fakeplain; echo hold > "$T/mode"; rm -f "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$LOCKF" "$LREC"
+prep ca; task; CA=$RUN; prep cb; task; CB=$RUN; prep cc; task; CC=$RUN; prep cd; task; CD=$RUN; prep ce; task; CE=$RUN
+( $DA local run "$CA" > "$T/ca.out" 2>&1; echo $? > "$T/ca.rc" ) &
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -n "$(jq -r ".member // empty" "$CA/dispatch.json")" ]' 30
+{ [ "$(stat -c %a "$LREC")" = 600 ] && [ "$(jq -r .lead "$LREC")" = lead-one ] && [ "$(jq -r .run "$LREC")" = ca ] && [ "$(jq -r .kind "$LREC")" = run ] \
+  && [ "$(jq -r .runner.pid "$LREC")" = "$(jq -r .runner "$CA/dispatch.json")" ] && [ "$(jq -r .member.pid "$LREC")" = "$(cat "$T/member.pid")" ] \
+  && [[ $(jq -r .runner.start "$LREC") =~ ^[0-9]+$ ]] && [[ $(jq -r .member.start "$LREC") =~ ^[0-9]+$ ]] && [ "$(jq -r .started "$LREC")" -gt 1700000000 ] \
+  && [ "$(grep -c -e "$HOME" -e "$T" "$LREC")" = 0 ]; } \
+  && ok "while a run holds the lane, a record beside the lock (mode 600) names the lead, the run, the runner and the member with their start tokens, and no path" || no "lane record: $(cat "$LREC" 2>&1)"
+( $DA local run "$CB" > "$T/cb.out" 2>&1; echo $? > "$T/cb.rc" ) &
+wait_until 'grep -q "holder is" "$T/cb.out"' 30
+( $DA local run "$CC" > "$T/cc.out" 2>&1; echo $? > "$T/cc.rc" ) &
+wait_until 'grep -q "holder is" "$T/cc.out"' 30
+{ grep -qE '^qargi: note: holder is lead lead-one, run ca, holding it for [0-9]+s$' "$T/cb.out" && grep -qE '^qargi: note: holder is lead lead-one, run ca, holding it for [0-9]+s; you are number 2 of 2 waiting$' "$T/cc.out"; } \
+  && ok "a waiting run prints one line naming the holder (lead, run, how long) and, when several wait, its place among them" || no "holder line: $(cat "$T/cb.out" "$T/cc.out")"
+echo x > "$MEM/.qargi-lane-wait.1.1"; true & DEADP=$!; wait "$DEADP"; echo '{"pid": 1, "start": "1", "lead": "ghost-waiter-never-listed", "run": "ghost-waiter-never-listed", "since": 1}' > "$MEM/.qargi-lane-wait.$DEADP.5"
+ino=$(stat -c %i "$LOCKF"); before=$(grep -c ":$ino " /proc/locks)
+out=$(timeout 20 $DA local list --lanes 2>&1); rc=$?
+after=$(grep -c ":$ino " /proc/locks)
+{ [ "$rc" = 0 ] && grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held +lead lead-one run ca \(run, [0-9]+s\)$' <<<"$out" \
+  && grep -qE '^  waiting 1: lead lead-one run cb \([0-9]+s\)$' <<<"$out" && grep -qE '^  waiting 2: lead lead-one run cc \([0-9]+s\)$' <<<"$out" && ! grep -q ghost-waiter-never-listed <<<"$out" \
+  && [ "$before" = "$after" ] && [ ! -s "$T/ca.rc" ] && [ ! -s "$T/cb.rc" ] && notext "$out"; } \
+  && ok "local list --lanes shows the holder and the waiters in the order they began to wait, ignores a waiter of a process that is gone, and does not block or disturb a live run (no lock taken)" || no "lanes: rc=$rc $out before=$before after=$after"
+rm -f "$MEM"/.qargi-lane-wait.1.1 "$MEM/.qargi-lane-wait.$DEADP.5"
+out=$($DA local list --lanes --scratch "$T" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF -e '--lanes takes no other option' <<<"$out"; } && ok "--lanes takes no other option" || no "lanes with an option: rc=$rc $out"
+# --wait: a bounded wait ends in lane-busy before the attempt is recorded; 0 does not wait
+out=$($DA local run "$CD" --wait 2 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'is held by lead lead-one run ca (for ' <<<"$out" && grep -qF 'the wait of 2 s ended' <<<"$out" && grep -qF "$LDECL" <<<"$out" \
+  && [ ! -e "$CD/dispatch.json" ] && [ ! -e "$CD/out/transcript" ] && [ ! -e "$CD/home/.fk" ]; } \
+  && ok "--wait 2: still held at the bound, the run is refused (lane-busy, exit 1) naming the holder and the wait; nothing is made, no record written" || no "wait 2: rc=$rc $out"
+out=$($DA local run "$CE" --wait 0 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'the wait of 0 s ended' <<<"$out" && ! grep -q 'waiting for it to end' <<<"$out" && [ ! -e "$CE/dispatch.json" ] && [ ! -e "$CE/home/.fk" ]; } \
+  && ok "--wait 0 fails at once when the lane is held, without the waiting note" || no "wait 0: rc=$rc $out"
+out=$($DA local run "$CE" --wait abc 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF -e '--wait: a whole number of seconds' <<<"$out"; } && ok "--wait takes a whole number of seconds" || no "wait abc: rc=$rc $out"
+: > "$T/hold-go"; wait_until '[ -s "$T/ca.rc" ] && [ -s "$T/cb.rc" ] && [ -s "$T/cc.rc" ]' 90
+{ [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
+  && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
+out=$($DA local list --lanes 2>&1)
+grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +free *$' <<<"$out" && ok "local list --lanes of a free lane says free" || no "lanes free: $out"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$T"/c?.rc
+echo quick > "$T/mode"
+out=$($DA local run "$CD" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .outcome "$CD/dispatch.json")" = ok ]; } && ok "the run that was refused as lane-busy starts with a plain local run once the lane is free: the refusal used up no attempt" || no "after lane-busy: rc=$rc $out"
+# a --wait that is long enough: the run waits, the holder ends, the run starts
+echo hold > "$T/mode"; prep cf; task; CF=$RUN; prep cg; task; CG=$RUN
+( $DA local run "$CF" > "$T/cf.out" 2>&1; echo $? > "$T/cf.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$CG" --wait 60 > "$T/cg.out" 2>&1; echo $? > "$T/cg.rc" ) &
+wait_until 'grep -q "holder is" "$T/cg.out"' 30
+: > "$T/hold-go"; wait_until '[ -s "$T/cf.rc" ] && [ -s "$T/cg.rc" ]' 90
+{ [ "$(cat "$T/cf.rc")" = 0 ] && [ "$(cat "$T/cg.rc")" = 0 ] && grep -qF 'is free; the run starts' "$T/cg.out"; } \
+  && ok "--wait 60: the run queues behind the holder and starts when it ends" || no "wait long: $(cat "$T/cf.rc" "$T/cg.rc") $(cat "$T/cg.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$T"/c?.rc "$LOCKF"
+# a killed runner: the member keeps the lane and the record says so, local list --lanes too; once the member ends the stale record is not a holder
+echo hold > "$T/mode"; prep cs1; task; CS1=$RUN
+( $DA local run "$CS1" > "$T/cs1.out" 2>&1; echo $? > "$T/cs1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -n "$(jq -r ".member // empty" "$CS1/dispatch.json")" ]' 30
+kill -KILL "$(jq -r .runner "$CS1/dispatch.json")"; wait_until '[ -s "$T/cs1.rc" ]' 30
+out=$($DA local list --lanes 2>&1)
+grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held, member alive, runner gone +lead lead-one run cs1 ' <<<"$out" \
+  && ok "SIGKILL of the runner: the record and local list --lanes say member alive, runner gone" || no "lanes after SIGKILL: $out"
+prep cs2; task; CS2=$RUN
+( $DA local run "$CS2" > "$T/cs2.out" 2>&1; echo $? > "$T/cs2.rc" ) &
+wait_until 'grep -q "holder is" "$T/cs2.out"' 30
+grep -qE '^qargi: note: holder is lead lead-one, run cs1, holding it for [0-9]+s \(member alive, runner gone\)$' "$T/cs2.out" \
+  && ok "and a run that waits for it says so in its holder line" || no "holder line after SIGKILL: $(cat "$T/cs2.out")"
+: > "$T/hold-go"; wait_until '[ -s "$T/cs2.rc" ]' 60
+[ "$(cat "$T/cs2.rc")" = 0 ] && ok "when the member ends the waiting run starts and ends ok" || no "after the killed runner's member: $(cat "$T/cs2.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$LOCKF" "$LREC"; unset QARGI_LEAD
 
 # --- the shipped runtime that declares it ------------------------------------------------------------------------------------------------------
 { [ "$(jq -c '.dispatch.home.link[0].private | del(.refresh)' lib/providers/codex.json)" = '{"set":{"tokens.refresh_token":"qargi-no-refresh"},"expiry":{"path":"tokens.access_token","encoding":"jwt-exp"}}' ] \

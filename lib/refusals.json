@@ -526,6 +526,16 @@
       "message": "the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s (set by {bound_from}) plus a margin of {margin} s ({cause}): no member is started",
       "next": {"lead": "sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said", "host": "sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said"}
     },
+    "lane-busy": {
+      "rule": "A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then",
+      "why": "the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue, and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again",
+      "class": "state",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label", "lock": "path", "wait": "count", "holder": "name", "age": "count"},
+      "message": "the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded",
+      "next": {"lead": "start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again", "host": "start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again"}
+    },
     "runtime-hidden-path": {
       "rule": "A member sees its clone, contract and OUT",
       "why": "a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in",

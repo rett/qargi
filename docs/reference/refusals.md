@@ -123,6 +123,7 @@ compares them with that page.
 | [`gate-error`](#gate-error) | seat-gate | 77 | planned | A gate that cannot answer refuses (R67) |
 | [`runtime-drift`](#runtime-drift) | state | 1 | live | A run starts on the runtime it was prepared for |
 | [`runtime-signin-expiring`](#runtime-signin-expiring) | state | 1 | live | A member run starts only when its private copy of the sign-in outlasts the run |
+| [`lane-busy`](#lane-busy) | state | 1 | live | A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then |
 | [`verify-env-invalid`](#verify-env-invalid) | verify-environment | 1 | live | The verify.environment answer is a valid declaration |
 | [`verify-env-change-unapproved`](#verify-env-change-unapproved) | verify-environment | 1 | live | A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted |
 | [`verify-env-cpu-no-systemd-run`](#verify-env-cpu-no-systemd-run) | verify-environment | 1 | live | With the cpu part on, the suite runs in a scope made by systemd-run |
@@ -862,6 +863,15 @@ compares them with that page.
 - Fields: `name` (label), `path` (path), `left` (count), `bound` (count), `bound_from` (enum:timeout-option,definition,default), `margin` (count), `cause` (enum:margin,bound-exceeds,refresh-failed), `login` (name).
 - Message: `the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s (set by {bound_from}) plus a margin of {margin} s ({cause}): no member is started`
 - Next, for a lead: sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said
+
+### lane-busy
+
+- Rule: A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then.
+- Why: the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue, and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again.
+- Exit 1, live.
+- Fields: `name` (label), `lock` (path), `wait` (count), `holder` (name), `age` (count).
+- Message: `the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded`
+- Next, for a lead: start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again
 
 ## Class verify-environment
 

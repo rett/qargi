@@ -2,7 +2,7 @@
 """qargi local run: start the member of a prepared local run as a command line, from the data of the project's local runtime.
 
   local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model TIER|ID] [--effort LEVEL] [--drift-check]
-               [--timeout SECONDS] [--dry-run] [--again]
+               [--timeout SECONDS] [--wait SECONDS] [--dry-run] [--again]
 
 lib/local.sh `run` finds the project and its runtime (the one resolver, `provider.py of`) and calls this. Everything the command line is
 made of comes from the definition's `dispatch` (schema 2, mode `command`); nothing here is specific to a runtime:
@@ -40,10 +40,19 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex; ~/.codex
                        for any runtime, and the directory the lead's environment names in CODEX_HOME or the variable env, unless it is the directory
                        of the source itself), for a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem).
-                       The runs that share a plain link's source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's
-                       real file is held from before the links are made until they are removed; a run that finds it held says so on standard error
-                       and waits, with no bound (a signal ends the wait); a directory that cannot be written refuses the run, which is never started
-                       without the lock. The wait can be long and the file at the declared path can change in it, so each source is checked again
+                       The runs that share a plain link's source run one at a time (the lane): an exclusive flock on NAME .qargi-run.lock in the directory of the source's
+                       real file is held from before the links are made until they are removed; a run that finds it held says so on standard error,
+                       names the holder from the lane record beside the lock (lib/lane.py: .qargi-lane.json, mode 600, written atomically while the lock is held and removed
+                       before it is let go: lead, run slug, the runner and the member with their process start tokens, the start time; no path, no value) and, when
+                       several runs wait, its place among them (the waiters' small files .qargi-lane-wait.PID.START, removed when the wait ends, a stale one ignored), and
+                       waits, with no bound unless --wait SECONDS gives one (a signal ends the wait): at the bound the run is refused as lane-busy (exit 1) before its
+                       attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait. The record and the
+                       waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (the holder only when /proc/locks says the lock is held).
+                       The lock descriptor goes to the member (pass_fds), so a runner killed with SIGKILL leaves the lane held until the member's process group ends (the
+                       record then shows the runner gone and the member alive), and after the flock succeeds the descriptor must still be the file at the path (st_dev and
+                       st_ino of fstat against lstat): a lock file removed or replaced while the run waited is closed, noted and opened again, at most six times, then the run is refused
+                       (exit 2). A process of the member that moved to a process group of its own and still holds the descriptor keeps the lane busy after the runner has
+                       ended. A directory that cannot be written refuses the run, which is never started without the lock. The wait can be long and the file at the declared path can change in it, so each source is checked again
                        once the lock is held (recheck_source: the same rules, and the same real path as when the run was planned, else exit 2) and
                        the link is made to that checked real path, never to the declared one.
                        A link that carries private ({set: {PATH: TEXT}, expiry: {path, encoding, margin_seconds}}) is a private copy, for a runtime that refreshes
@@ -60,9 +69,18 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        the copy stays in the run home and goes with it, and a copy that changed is a note (the name, never a value). A source whose every link
                        is private takes no lock, so the runs that share it overlap; a plain link keeps its lock and its behaviour as described above. A
                        private copy still hands the member a live access token in its own home, as the link did: the read barrier does not change, but the
-                       refresh token no longer reaches the member. The real sign-in is refreshed by the lead with the runtime's own login (an automatic
-                       refresh is a later change). --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
-                       [{to, set (the paths), expires_in_seconds (when the run started), sha256 (of the copy as written)}].
+                       refresh token no longer reaches the member. A link may also declare private.refresh ({argv, prompt, timeout_seconds, min_remaining_seconds}): the
+                       command that makes the runtime use, and so refresh, the real sign-in (argv[0] is the definition's own command; {model} is its default model, {scratch}
+                       the working directory). When a copy's token would not last the run (the bound plus the margin) the runner, before anything is recorded and again once the
+                       locks are held, takes the lock beside the source (the one a plain link uses; not twice when this run holds it already, and bounded by --wait as above), reads
+                       the source again (another run may have refreshed it while this one waited: when it lasts now the lock is released and the run goes on), and otherwise
+                       runs the command once, read-only in a scratch directory of its own, with the environment a member run gets and the variable of dispatch.home naming the
+                       source's directory, the prompt on its standard input and its output discarded and never printed (it can carry tokens); it is stopped when it outlives
+                       timeout_seconds or the runner is signalled. The run prints qargi: refreshing the sign-in of RUNTIME (expires in N s), reads the source again and lets the
+                       lock go. A command that fails or times out, a file it leaves as it was, or a token that still does not last (the run's need, and min_remaining_seconds) is the
+                       refusal runtime-signin-expiring with cause refresh-failed, naming the login as before; never a second try in one run. --dry-run prints HOME_REFRESH= and
+                       refreshes nothing; local prepare never does. --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
+                       [{to, set (the paths), expires_in_seconds (when the run started), refreshed (whether this run refreshed the real sign-in), sha256 (of the copy as written)}].
                        The directory is made and the links are removed without following a link a member may have put in the run
                        directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
                        source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
@@ -156,6 +174,7 @@ import tempfile
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
+import lane as LN
 import prepared_request as PR
 import refusal
 import refusal as RF
@@ -425,7 +444,7 @@ def plan_home(disp, run, runtime, doc=None):
     return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "copies": copies, "missing": missing, "notes": notes, "start": {},
             "private": {ln["to"]: ln["private"] for ln in h.get("link", []) if "private" in ln}, "copied": [], "copy_sum": {}, "copy_len": {}, "expires": {}, "refreshed": {}, "refresh_tried": set(), "locked": set(),
             "residue": [], "declared": [ln["from"] for ln in h.get("link", [])], "from": {ln["to"]: ln["from"] for ln in h.get("link", [])},
-            "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime}
+            "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime, "run": run, "project": None, "wait": None}
 
 
 def source_problem(src):
@@ -528,53 +547,92 @@ def same_file(fd, path):
     return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
 
-def lock_one(path, home, runtime, sig):
+def run_slug(home):
+    """The slug of the run the home belongs to, as the lead's registry records it (else the run directory's name): what the lane record and the notes of a waiting
+    run call it."""
+    run = home.get("run")
+    slug = registry_line(run).get("slug") if run else None
+    return LN.plain(slug if isinstance(slug, str) and slug else os.path.basename(run or "")) or "unknown"
+
+
+def lane_busy(home, runtime, shown, d, wait):
+    """The refusal lane-busy (the catalogue's text; exit 1): the lock was still held when the wait the run asked for (--wait SECONDS) ended. It names the lock as the
+    definition declares it, the wait, the holder from the lane record (lead and run, or unknown) and for how long it has held it."""
+    who, age = LN.holder_brief(d)
+    plain = ("the lane %s of %s member runs is held by %s (for %d s) and the wait of %d s ended: no member is started, and the run left no record; "
+             "start it again when the lane is free (qargi local list --lanes shows who holds it)" % (shown, runtime, who, age, wait))
+    buf = io.StringIO()
+    try:
+        refusal.refuse("lane-busy", [("name", runtime), ("lock", shown), ("wait", str(wait)), ("holder", who), ("age", str(age))],
+                       verb="local run", project=home.get("project") or "", out=buf)
+    except RF.Defect:
+        return Stop(plain, 1)
+    return Refused(plain, buf.getvalue())
+
+
+def lock_one(path, home, runtime, sig, kind="run"):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
-    that finds it held says so (a note on standard error) and waits for it, a signal ending the wait (Interrupted). The file is made when it is missing
-    (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock. The lock
-    is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the one it waited on is
-    then nobody's) is closed and the path opened again, at most LOCK_RETRIES times, with a note, and then the run is refused. A run that opens the path
-    after a holder's file was replaced finds a new, free file: nothing here can see that holder, which is why the member keeps the descriptor too (take_lock)."""
+    that finds it held says so (a note on standard error, with the holder from the lane record and, when several wait, its place in the queue) and waits for it,
+    a signal ending the wait (Interrupted); with home["wait"] (--wait SECONDS) the wait is bounded and its end is the refusal lane-busy, 0 meaning no wait at all.
+    The file is made when it is missing (mode 600) and never followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run
+    without the lock. The lock is only the lock when the descriptor is still the file at the path: a file deleted or replaced while this run waited for it (the
+    one it waited on is then nobody's) is closed and the path opened again, at most LOCK_RETRIES times, with a note, and then the run is refused. A run that opens
+    the path after a holder's file was replaced finds a new, free file: nothing here can see that holder, which is why the member keeps the descriptor too
+    (take_lock). Once held, the lane record (lib/lane.py) names this run beside the lock; the caller removes it (lane_clear) before it lets the lock go."""
     shown = lock_name(path, home, runtime)
-    waited = False
-    for _ in range(LOCK_RETRIES + 1):
-        try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-        except OSError as e:
-            fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
-                 "make its directory writable for you" % (runtime, shown, e.strerror or e))
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                fail("the lock file %s is not a regular file; remove it" % shown)
+    d = os.path.dirname(path)
+    wait = home.get("wait")
+    waited, waiter = False, None
+    try:
+        for _ in range(LOCK_RETRIES + 1):
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                if not waited:
-                    waited = True
-                    print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
-                          file=sys.stderr, flush=True)
-                sig.armed = True
+                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            except OSError as e:
+                fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
+                     "make its directory writable for you" % (runtime, shown, e.strerror or e))
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    fail("the lock file %s is not a regular file; remove it" % shown)
                 try:
-                    while True:
-                        try:
-                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                            break
-                        except BlockingIOError:
-                            time.sleep(LOCK_POLL)
-                finally:
-                    sig.armed = False
-                sig.check()
-            if same_file(fd, path):
-                if waited:
-                    print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
-                return fd
-        except BaseException:
-            os.close(fd)
-            raise
-        os.close(fd)                                     # the file at the path is not the one that was locked: it was deleted or replaced meanwhile
-        print("qargi: note: the lock file %s was replaced or removed while this run took it; taking the file that is there now" % shown, file=sys.stderr, flush=True)
-    fail("the lock file %s was replaced %d times while this run took it; something keeps removing it (the sign-in lock is never started without): "
-         "look at the directory, then start the run again" % (shown, LOCK_RETRIES + 1))
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if wait == 0:
+                        raise lane_busy(home, runtime, shown, d, 0)
+                    if not waited:
+                        waited = True
+                        waiter = LN.add_waiter(d, runtime, run_slug(home))
+                        print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
+                              file=sys.stderr, flush=True)
+                        ahead, total = LN.position(d)
+                        print("qargi: note: %s%s" % (LN.holder_line(d), "; you are number %d of %d waiting" % (ahead + 1, total) if total > 1 else ""), file=sys.stderr, flush=True)
+                    end = None if wait is None else time.monotonic() + wait
+                    sig.armed = True
+                    try:
+                        while True:
+                            try:
+                                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                break
+                            except BlockingIOError:
+                                if end is not None and time.monotonic() >= end:
+                                    raise lane_busy(home, runtime, shown, d, wait)
+                                time.sleep(LOCK_POLL)
+                    finally:
+                        sig.armed = False
+                    sig.check()
+                if same_file(fd, path):
+                    if waited:
+                        print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
+                    LN.write_record(d, runtime, kind, run_slug(home))
+                    return fd
+            except BaseException:
+                os.close(fd)
+                raise
+            os.close(fd)                                 # the file at the path is not the one that was locked: it was deleted or replaced meanwhile
+            print("qargi: note: the lock file %s was replaced or removed while this run took it; taking the file that is there now" % shown, file=sys.stderr, flush=True)
+        fail("the lock file %s was replaced %d times while this run took it; something keeps removing it (the sign-in lock is never started without): "
+             "look at the directory, then start the run again" % (shown, LOCK_RETRIES + 1))
+    finally:
+        LN.remove_waiter(waiter)
 
 
 def take_lock(home, runtime, sig):
@@ -585,18 +643,27 @@ def take_lock(home, runtime, sig):
     try:
         for path in lock_files(home):
             held.append(lock_one(path, home, runtime, sig))
-            home["locked"].add(path)
+            home.setdefault("locked", set()).add(path)
     except BaseException:
+        lane_clear(home)
         release_lock(held)
-        home["locked"].clear()
         raise
     return held
 
 
+def lane_clear(home):
+    """Remove the lane record this run wrote beside each lock it holds (home["locked"]), while it still holds them; the set is emptied."""
+    for path in sorted(home.get("locked") or ()):
+        LN.clear_record(os.path.dirname(path))
+    home["locked"] = set()
+
+
 def release_lock(held):
-    for fd in held:
+    """Close the lock descriptors and empty the list (so a list shared by the caller that took them and the run that releases them is closed once): the flock
+    goes with the descriptor, once the member that was given it has ended too."""
+    while held:
         try:
-            os.close(fd)                                 # the flock goes with the descriptor
+            os.close(held.pop())
         except OSError:
             pass
 
@@ -773,7 +840,7 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
     frm = home["from"][to]
     home["refresh_tried"].add(to)
     lock = os.path.join(os.path.dirname(os.path.realpath(src)), LOCK_NAME)
-    fd = None if lock in home["locked"] else lock_one(lock, home, home["runtime"], sig)
+    fd = None if lock in home["locked"] else lock_one(lock, home, home["runtime"], sig, "refresh")
     scratch = None
     try:
         data2, left2 = load_copy(home, to, src)          # another run may have refreshed it while this one waited
@@ -832,6 +899,7 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
         if fd is not None:
+            LN.clear_record(os.path.dirname(lock))
             os.close(fd)
 
 
@@ -1520,6 +1588,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     home = plan_home(disp, run, runtime, doc)
+    if home:
+        home["project"] = project                        # the refusals of the lane (lane-busy) are made for it
     rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime, chosen, declared)
     options_line = PR.options_text(declared, chosen) if chosen else ""
     if cls == "read-only":
@@ -2621,6 +2691,18 @@ def check_signin_early(plan, sig):
 
 def run_owned(plan, run, pending, sig):
     check_signin_early(plan, sig)
+    home, pre = plan["home"], None
+    if home and home.get("wait") is not None:            # --wait: the lane is taken, or refused as lane-busy, before the attempt is recorded and before anything is made
+        pre = take_lock(home, plan["runtime"], sig)
+    try:
+        return run_owned_lane(plan, run, pending, sig, pre)
+    finally:
+        if pre is not None:                              # run_started lets them go when it was reached (and then the list is empty)
+            lane_clear(home)
+            release_lock(pre)
+
+
+def run_owned_lane(plan, run, pending, sig, pre):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -2650,7 +2732,7 @@ def run_owned(plan, run, pending, sig):
         except FileNotFoundError:
             pass
         sig.check()
-        result = run_started(plan, run, store, dispatch_state, sig)
+        result = run_started(plan, run, store, dispatch_state, sig, pre)
         return result
     finally:
         if not dispatch_state["spawned"]:
@@ -2661,7 +2743,7 @@ def run_owned(plan, run, pending, sig):
         # The foundation deliberately refuses recovery of that unknown window.
 
 
-def run_started(plan, run, store, dispatch_state, sig):
+def run_started(plan, run, store, dispatch_state, sig, pre=None):
     out = os.path.join(run, "out")
     dispatch = os.path.join(run, "dispatch.json")
     fin, pk = plan["final"], plan["package"]
@@ -2681,7 +2763,7 @@ def run_started(plan, run, store, dispatch_state, sig):
         if home.get("copies"):                               # the copies a killed runner leaves are found by these names (local list, verify, clean): paths of the copy only, no value
             begun["home"]["private"] = private_record(home)
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
-    made, home_left, staged, locks = [], [], False, []
+    made, home_left, staged, locks = [], [], False, pre if pre is not None else []   # pre: the lane was taken before the attempt began (--wait)
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = left = drifted = None
     timed_out, stop_code = False, 2
@@ -2690,7 +2772,8 @@ def run_started(plan, run, store, dispatch_state, sig):
     try:
         try:
             if home:
-                locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
+                if pre is None:
+                    locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
                 drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
                 data = prepare_copies(home, plan, sig) if home.get("copies") else {}   # a token that would end inside the run's bound is refused here
                 made = make_home(run, home, data)        # the links and copies exist for the length of the run only
@@ -2727,6 +2810,8 @@ def run_started(plan, run, store, dispatch_state, sig):
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:
                         dispatch_state["spawned"] = True
+                        for lp in (home.get("locked") or ()) if home else ():     # the lane record names the member too
+                            LN.set_member(os.path.dirname(lp), proc.pid)
                         store.member(proc.pid)
                         dispatch_state["recorded"] = True
                         begun["member"] = proc.pid
@@ -2797,6 +2882,8 @@ def run_started(plan, run, store, dispatch_state, sig):
                 unexpected = e
         if home and home.get("cleanup_failed"):
             home_left.append("cleanup during run home setup failed; inspect the planned link names for residue")
+        if home:
+            lane_clear(home)                             # the record goes while the lock is still held
         release_lock(locks)                              # after the links are gone: the next run finds the sign-in as this one left it
     if unexpected is not None:
         try:
@@ -2915,9 +3002,10 @@ def run_started(plan, run, store, dispatch_state, sig):
 def parse(argv):
     if len(argv) < 1 or argv[0].startswith("--"):
         fail("usage: local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model M] [--effort E] [--timeout S] [--dry-run] [--again]", 1)
-    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None, "drift": False}
+    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None, "drift": False,
+         "wait": None}
     i = 1
-    flags = {"--project": "project", "--runtime": "runtime", "--class": "class", "--task": "task", "--model": "model", "--effort": "effort", "--timeout": "timeout"}
+    flags = {"--project": "project", "--runtime": "runtime", "--class": "class", "--task": "task", "--model": "model", "--effort": "effort", "--timeout": "timeout", "--wait": "wait"}
     while i < len(argv):
         a = argv[i]
         if a == "--dry-run":
@@ -2934,6 +3022,10 @@ def parse(argv):
         if not o["timeout"].isdigit():
             fail("--timeout: a whole number of seconds", 1)
         o["timeout"] = int(o["timeout"])
+    if o["wait"] is not None:
+        if not o["wait"].isdigit() or len(o["wait"]) > 9:
+            fail("--wait: a whole number of seconds (0 fails at once when the lane is busy)", 1)
+        o["wait"] = int(o["wait"])
     if not (o["project"] and o["runtime"] and o["class"] in CLASSES):
         fail("--project, --runtime and --class are needed (qargi local run supplies them)", 1)
     return o
@@ -2954,6 +3046,8 @@ def main(argv):
         if not o["dry"]:
             earlier_start(run, o["again"])
         plan = build(run, o["project"], o["runtime"], o["class"], o["task"], o["model"], o["effort"], o["timeout"], keep)
+        if plan["home"]:
+            plan["home"]["wait"] = o["wait"]             # --wait SECONDS: how long a run waits for the lane (None: no bound)
         for n in plan["notes"]:
             if not o["dry"]:
                 print("qargi: note: " + n, file=sys.stderr)
