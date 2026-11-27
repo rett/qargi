@@ -121,6 +121,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     the pure reader, python3 lib/run_plan.py, stays open as lib/backlog_graph.py does);
     `qargi history` (it reads the history of the whole-suite runs and the review reports of the lead and writes nothing, but the command is the lead's under the current policy,
     as backlog graph is; also through lib/history.py and lib/history_write.py, which append to the history);
+    `qargi suite` (run takes the slot of the queue of the whole-suite runs and runs a command in it, status reads the queue; both are the lead's under the current policy,
+    as backlog graph is; also through lib/suite.sh and lib/suite_queue.py, which take and read the slot);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -132,8 +134,9 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     `qargi review apply` skips the scrub for a series recorded there: found and decided like features/, reading stays allowed;
   - a write under the finish-intent/ and apply/ directories of the state, where the finishing verbs of a feature and a release keep the record a re-run
     completes from after a death, and `qargi review apply` keeps the record of the apply it is making: found and decided like scrub_ok/, reading stays allowed;
-  - a write under the history/ and suite-logs/ directories of the state, where feature verify, release verify and review check keep the history of the whole-suite
-    runs and the review reports and the logs of the runs that history cites: found and decided like scrub_ok/, reading stays allowed;
+  - a write under the history/, suite-logs/ and suite-queue/ directories of the state, where feature verify, release verify and review check keep the history of the whole-suite
+    runs and the review reports and the logs of the runs that history cites, and where the queue of the whole-suite runs keeps its lock, its holder and its waiters:
+    found and decided like scrub_ok/, reading stays allowed;
   - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
     feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
     like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
@@ -335,12 +338,12 @@ SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "d
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
            "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py",
-           "install.sh", "install_record.py", "history.py", "history_write.py")
+           "install.sh", "install_record.py", "history.py", "history_write.py", "suite.sh", "suite_queue.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, render.py renders member definitions and runs the command a definition names,
 # and install_record.py is the install engine install.sh runs: its uninstall and apply remove and relink what the install records list)
-OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh", "install_record.py", "history.py", "history_write.py")   # names a project may use too: only the file of the tool is the script (own_script)
+OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh", "install_record.py", "history.py", "history_write.py", "suite.sh", "suite_queue.py")   # names a project may use too: only the file of the tool is the script (own_script)
 ROOT_SCRIPTS = ("install.sh",)                                       # of those, the ones at the top of the tool, not in its lib directory
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
@@ -2545,9 +2548,10 @@ def scrub_ok_roots(P=None, home=None):
 
 
 def history_roots(P=None, home=None):
-    """The history/ and suite-logs/ directories of the state: the history of the whole-suite runs and of the review reports (STATE/history/PROJECT.jsonl) and the logs of
-    the runs it cites. They are the lead's evidence (`qargi history`), so a member must not plant or change a line or a log."""
-    return state_sub("history", P, home) | state_sub("suite-logs", P, home)
+    """The history/, suite-logs/ and suite-queue/ directories of the state: the history of the whole-suite runs and of the review reports (STATE/history/PROJECT.jsonl), the
+    logs of the runs it cites, and the lock, the holder and the waiters of the queue of the whole-suite runs. They are the lead's evidence (`qargi history`) and the lead's slot
+    (`qargi suite status`), so a member must not plant or change a line, a log or a waiter."""
+    return state_sub("history", P, home) | state_sub("suite-logs", P, home) | state_sub("suite-queue", P, home)
 
 
 def resume_roots(P=None, home=None):
@@ -2630,8 +2634,8 @@ def refusal_text(what, dest, root):
         return OwnReason("%s on %s would change %s, the lead's record of the series whose declared scrub passed (review apply skips the scrub for a series "
                          "recorded there); a member does not write it" % (what, dest, root))
     if root in history_roots():
-        return OwnReason("%s on %s would change %s, the lead's history of the whole-suite runs and the review reports, or the logs of the runs (qargi history cites them as evidence); "
-                         "a member does not write it" % (what, dest, root))
+        return OwnReason("%s on %s would change %s, the lead's history of the whole-suite runs and the review reports, the logs of the runs (qargi history cites them as evidence), "
+                         "or the queue of the whole-suite runs (qargi suite status reads it); a member does not write it" % (what, dest, root))
     if root in resume_roots():
         return OwnReason("%s on %s would change %s, the lead's record of a finishing verb or of an apply that a re-run completes from (finish-intent/ and apply/); "
                          "a member does not write it" % (what, dest, root))
@@ -3719,6 +3723,8 @@ def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
         words = ["skill", "unaccept" if "unaccept" in words[:2] else "accept"]
     if name in ("history.py", "history_write.py"):       # the script behind the verb and the one that appends to it: any use is the verb
         words = ["history"] + words
+    if name in ("suite.sh", "suite_queue.py"):           # the script behind the verb and the one that takes the slot of the queue: any use is the verb
+        words = ["suite"] + words
     if name == "marshal_handoff.py":
         words = ["marshal", "handoff"] + words
     if name in ("provider.py", "provider.sh"):
@@ -3758,6 +3764,11 @@ def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
         # qargi history only reads the history file, and lib/history.py and lib/history_write.py are the scripts behind it, which a member does not run: the second appends to the lead's history.
         return OwnReason("qargi history is a read-only query reserved for the lead under the current CLI policy (the history of the whole-suite runs and the review reports is the lead's evidence); "
                          "report in your task output what you need from it")
+    if area == "suite":
+        # qargi suite run takes the slot of the queue of the whole-suite runs of the lead's user and runs a command in it, and status reads the queue; lib/suite.sh and lib/suite_queue.py
+        # are the scripts behind them. A member's own checks run in its clone and never wait in the lead's queue.
+        return OwnReason("qargi suite %s is the lead's under the current CLI policy (it takes, or reads, the slot of the lead's queue of whole-suite runs); "
+                         "run the checks that cover your change yourself, and report in your task output what you need from the queue" % (verb or "(no verb)"))
     if area == "upstream" and verb not in UPSTREAM_OPEN:
         return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
                          "report in your task output that the upstream line needs looking at"

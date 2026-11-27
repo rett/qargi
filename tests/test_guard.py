@@ -2250,10 +2250,24 @@ class Marshal(HookCase):
                 for c in ("echo qargi history", "cat lib/history.py", "grep -n 'history' lib/commands.py", "qargi help history", "cat docs/reference/history.md"):
                     self.assertEqual(self.bash(c).returncode, 0, c)
 
+    def test_suite_cli_is_the_leads_for_build_and_review(self):
+        for role in ("build", "review"):
+            with self.subTest(role=role):
+                with open(os.path.join(self.run_dir, "ability"), "w") as f:
+                    f.write(role)
+                for c in ("qargi suite status", "qargi suite status --json", "qargi suite run -- make test", "/opt/q/bin/qargi suite run -- true", "bin/qargi suite status",
+                          "env FOO=1 qargi suite status", "true && qargi suite status", "bash -c 'qargi suite run -- bash tests/run.sh'", "qargi suite"):
+                    result = self.bash(c)
+                    self.assertEqual(result.returncode, 2, (c, result.stderr))
+                    self.assertIn("is the lead's under the current CLI policy (it takes, or reads, the slot of the lead's queue of whole-suite runs)", result.stderr)
+                # Reading about it is not running it.
+                for c in ("echo qargi suite status", "cat lib/suite.sh", "grep -n 'suite' lib/commands.py", "qargi help suite", "cat docs/reference/suite-queue.md"):
+                    self.assertEqual(self.bash(c).returncode, 0, c)
+
     def test_the_history_and_the_run_logs_are_protected_and_readable(self):
-        """$STATE/history holds the lead's evidence of the whole-suite runs and the review reports and $STATE/suite-logs the logs it cites; a member who could write them
-        would plant a pass."""
-        for d, name in (("history", "demo.jsonl"), ("suite-logs", "runs/0123456789abcdef.log")):
+        """$STATE/history holds the lead's evidence of the whole-suite runs and the review reports, $STATE/suite-logs the logs it cites and $STATE/suite-queue the lock, the holder
+        and the waiters of the queue of the whole-suite runs; a member who could write them would plant a pass, or hold the slot of the lead's suites."""
+        for d, name in (("history", "demo.jsonl"), ("suite-logs", "runs/0123456789abcdef.log"), ("suite-queue", "wait.1.2")):
             p = os.path.join(self.state, d)
             os.makedirs(os.path.dirname(os.path.join(p, name)))
             with open(os.path.join(p, name), "w") as f:
@@ -5066,6 +5080,34 @@ class HistoryScripts(HookCase):
                 f.write("")
         for c in ("python3 lib/history.py --json", "python3 -I lib/history_write.py suite", "cd lib && python3 history.py", "cat %s/history.py" % self.LIB,
                   "grep -n def %s/history_write.py" % self.LIB, "echo python3 %s/history.py" % self.LIB, "python3 -m unittest tests/test_history.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+
+class SuiteScripts(HookCase):
+    """lib/suite.sh is `qargi suite` and lib/suite_queue.py takes, releases and reads the slot of the lead's queue of whole-suite runs; run directly they are the verb, which a
+    member does not run. Their names are common, so only the files of the tool are refused: a suite.sh of a project, or of the clone a member works in, is its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    LIB = LibraryScripts.LIB
+    WHY = "is the lead's under the current CLI policy (it takes, or reads, the slot of the lead's queue of whole-suite runs)"
+
+    def test_refuses_the_tools_own_scripts(self):
+        lib = self.LIB
+        for c in ("%s/suite.sh status", "bash %s/suite.sh run -- true", "python3 %s/suite_queue.py status --state /tmp/x", "python3 -I %s/suite_queue.py acquire --state /tmp/x --fd 3",
+                  "bash -c 'python3 -I %s/suite_queue.py release --state /tmp/x --owner 1'", "env X=1 bash %s/suite.sh status", "cd src && python3 %s/suite_queue.py pids --state /tmp/x",
+                  "sudo bash %s/suite.sh status --json"):
+            self.refused(c % lib, self.WHY)
+        self.refused("python3 suite_queue.py status --state /tmp/x", self.WHY, cwd=lib)
+        self.refused("bash lib/suite.sh status", self.WHY, cwd=os.path.dirname(lib))
+
+    def test_a_suite_sh_that_is_not_the_tools_is_not_refused(self):
+        os.makedirs(os.path.join(self.clone, "lib"))
+        for name in ("suite.sh", "suite_queue.py"):
+            with open(os.path.join(self.clone, "lib", name), "w") as f:
+                f.write("")
+        for c in ("bash lib/suite.sh", "python3 -I lib/suite_queue.py", "cd lib && bash suite.sh", "cat %s/suite.sh" % self.LIB, "grep -n def %s/suite_queue.py" % self.LIB,
+                  "echo bash %s/suite.sh" % self.LIB, "python3 -m unittest tests/test_suite_queue.py"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 

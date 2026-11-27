@@ -59,6 +59,8 @@ For read-only planning reports, `qargi backlog graph check|show|why --graph FILE
 
 `qargi history [--kind suite|review] [--head SHA] [--json]` lists the history of a project: one entry for each whole-suite run of `feature verify` and `release verify` (the commit and tree, the command, the gates, the failing tests, the attempt, the log) and for each report `review check` read, newest first, and `qargi history show ID` prints one. The history is append-only evidence that a run can be cited by, never a gate. The [history reference](docs/reference/history.md) says what is recorded and where.
 
+Two whole-suite runs of one user never overlap on a host: `feature verify` and `release verify` take the one slot of a first-in, first-out queue just before their suite starts and give it back when it ends, `--queue-wait SECONDS` bounds the wait (`suite-queue-busy` at the bound), `qargi suite run -- COMMAND` puts any command in the same queue, and `qargi suite status [--json]` shows who holds the slot and who waits. The [queue reference](docs/reference/suite-queue.md) says how the slot is held, what a waiting run prints and what is not offered.
+
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
 [Codex as the lead](docs/members-and-providers/codex.md#codex-as-the-lead).

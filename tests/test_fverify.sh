@@ -282,6 +282,19 @@ touch "$T/go"; reap "$pc"
 { [ "$rc_" = 0 ] && [ "$(nstarts)" = 2 ] && grep -q '^full suite: pass' "$T/qc.out"; } && ok "the slot is free when the orphaned suite has ended, and the waiter then runs and passes" || no "qc rc=$rc_ starts=$(nstarts): $(cat "$T/qc.out")"
 fake_alive() { local p; while read -r p; do kill -0 "$p" 2>/dev/null && return 0; done < "$T/starts"; return 1; }
 wait_until '! fake_alive' 30 && ok "no fake suite is left running" || no "a fake suite is still running"
+# a tests/run.sh below a run of the queue (qargi suite run -- ...) is named by the queue, not warned about as another suite in the repository (the one that no queue holds is, above)
+if [ -d /proc/$$ ]; then
+  mkdir -p "$R/sleeper2/tests"
+  printf '#!/bin/bash\n for _ in $(seq 1500); do [ -e "%s" ] && break; sleep 0.02; done\n' "$T/stop2" > "$R/sleeper2/tests/run.sh"
+  (cd "$R/sleeper2" && exec "$DA" suite run -- bash tests/run.sh) & qpid=$!
+  held_by_run() { qstatus | jq -e '.holder.verb == "suite run"' >/dev/null; }
+  wait_until held_by_run 30 || no "the suite run did not take the slot: $(qstatus)"
+  out=$($F verify qd --queue-wait 0 2>&1); rc=$?
+  { [ $rc = 1 ] && grep -q 'qargi: refused \[suite-queue-busy\] the suite queue is busy: app suite run bash run.sh holds the slot' <<<"$out" && [ "$(warns "$out")" = 0 ]; } \
+    && ok "a tests/run.sh below a run of the queue is named by the queue (suite run bash run.sh) and not warned about" || no "queued run.sh: rc=$rc $out"
+  touch "$T/stop2"; reap "$qpid"
+  [ "$rc_" = 0 ] && ok "and the suite run ends with the status of its command" || no "suite run rc=$rc_"
+fi
 
 [ "$fail" = 0 ] && echo "all fverify tests passed"
 exit "$fail"

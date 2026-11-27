@@ -174,4 +174,4 @@
 345 bash tests/test_signin_copy.sh
 6 python3 tests/test_run_plan.py
 5 python3 tests/test_history.py
-6 python3 tests/test_suite_queue.py
+10 python3 tests/test_suite_queue.py

@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 LIB = os.path.join(ROOT, "lib")
 SQ = os.path.join(LIB, "suite_queue.py")
+BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import suite_queue as Q  # noqa: E402
 import jsonkind as K  # noqa: E402
@@ -61,8 +62,10 @@ class Helper:
     """A process that waits for the slot like the shell of a verb does; its lines on standard output and standard error are kept."""
 
     def __init__(self, state, name, mode="hold", bound=None):
-        args = [sys.executable, "-I", "-c", HELPER, SQ, state, name, mode] + ([str(bound)] if bound is not None else [])
-        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.start([sys.executable, "-I", "-c", HELPER, SQ, state, name, mode] + ([str(bound)] if bound is not None else []), name)
+
+    def start(self, args, name, env=None):
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.name, self.out, self.err = name, [], []
         self.threads = []
         for stream, into in ((self.p.stdout, self.out), (self.p.stderr, self.err)):
@@ -405,6 +408,89 @@ class Status(Base):
         self.assertEqual(problems, [])
         self.assertTrue(reg["writes"].startswith("Nothing:"))
         self.assertEqual(reg["verbs"], ["suite status --json"])
+
+
+class Verbs(Base):
+    """qargi suite run and qargi suite status, started as a user starts them (bin/qargi, the state of the test)."""
+
+    def env(self):
+        return dict(os.environ, QARGI_STATE=self.state)
+
+    def qargi(self, *args, stdin=None):
+        return subprocess.run([BIN] + list(args), capture_output=True, text=True, env=self.env(), input=stdin, timeout=60)
+
+    def run_verb(self, *args):
+        h = Helper.__new__(Helper)
+        h.start([BIN] + list(args), "suite run", env=self.env())
+        self.helpers.append(h)
+        return h
+
+    def command(self, name):
+        """A bash command that says it runs (a line in NAME.started) and waits, bounded, for the file NAME.go: ($0 is the path without the suffix)."""
+        base = os.path.join(self.tmp, name)
+        return base, ["bash", "-c", 'echo $$ >> "$0.started"; for _ in $(seq 1500); do [ -e "$0.go" ] && break; sleep 0.02; done', base]
+
+    def test_run_gives_the_command_its_streams_and_returns_its_status(self):
+        r = self.qargi("suite", "run", "--", "sh", "-c", "echo out; echo err >&2; exit 7")
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (7, "out\n", "err\n"))
+        r = self.qargi("suite", "run", "--", "cat", stdin="hello\n")
+        self.assertEqual((r.returncode, r.stdout), (0, "hello\n"))
+        r = self.qargi("suite", "run", "--", "echo", "--json", "--help", "-h")        # what follows -- is the command's own
+        self.assertEqual((r.returncode, r.stdout), (0, "--json --help -h\n"))
+        self.assertEqual(self.qargi("suite", "run", "--", "no-such-command-of-qargi").returncode, 127)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "history")), "suite run wrote a history")
+        self.assertEqual(os.listdir(self.dir), ["lock"], "a run left a file in the queue")
+
+    def test_the_command_has_no_descriptor_of_the_slot(self):
+        r = self.qargi("suite", "run", "--", "sh", "-c", "ls -l /proc/$$/fd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("suite-queue", r.stdout)
+
+    def test_usage_errors_are_exit_2(self):
+        for args in (("suite",), ("suite", "nope"), ("suite", "run"), ("suite", "run", "--"), ("suite", "run", "true"), ("suite", "run", "--json", "--", "true"),
+                     ("suite", "status", "extra"), ("suite", "status", "--json", "x")):
+            r = self.qargi(*args)
+            self.assertEqual(r.returncode, 2, (args, r.stderr))
+            self.assertIn("usage: qargi suite", r.stderr, args)
+        for args in (("suite", "--help"), ("suite", "run", "--help"), ("suite", "status", "-h"), ("help", "suite")):
+            r = self.qargi(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stderr))
+            self.assertIn("qargi suite", r.stdout, args)
+
+    def test_status_names_a_command_that_runs_and_the_one_that_waits(self):
+        base, cmd = self.command("one")
+        a = self.run_verb("suite", "run", "--", *cmd)
+        until(lambda: os.path.exists(base + ".started"), "the command to start")
+        doc = self.status()
+        self.assertEqual((doc["state"], doc["holder"]["verb"], doc["holder"]["name"], doc["holder"]["pid"], doc["holder"]["project"], doc["holder"]["head"]),
+                         ("held", "suite run", "bash", a.p.pid, None, None))
+        base2, cmd2 = self.command("two")
+        b = self.run_verb("suite", "run", "--", *cmd2)
+        until(lambda: any("position 1, holder is suite run bash (running " in l for l in b.err), "the wait line: %r" % b.err)
+        until(lambda: self.status()["waiting"], "the waiter")
+        doc = self.status()
+        self.assertEqual([(w["position"], w["verb"], w["name"], w["pid"]) for w in doc["waiting"]], [(1, "suite run", "bash", b.p.pid)])
+        self.assertFalse(os.path.exists(base2 + ".started"), "the second command started while the first held the slot")
+        text = self.qargi("suite", "status").stdout
+        self.assertRegex(text, r"holder\s+-\s+suite run\s+bash\s+-\s+\d+s\s+%d" % a.p.pid)
+        open(base + ".go", "w").close()
+        until(lambda: os.path.exists(base2 + ".started"), "the second command to start once the first has ended")
+        open(base2 + ".go", "w").close()
+        for h in (a, b):
+            self.assertEqual(h.p.wait(timeout=30), 0)
+        self.assertEqual(self.status()["state"], "free")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "history")))
+
+    def test_a_killed_run_leaves_the_slot_to_its_command_until_it_ends(self):
+        base, cmd = self.command("orphan")
+        a = self.run_verb("suite", "run", "--", *cmd)
+        until(lambda: os.path.exists(base + ".started"), "the command to start")
+        a.kill()
+        a.p.wait()
+        doc = self.status()
+        self.assertEqual((doc["state"], doc["holder"]), ("held", None), "the command is still running, so the slot stays taken")
+        open(base + ".go", "w").close()
+        until(lambda: self.status()["state"] == "free", "the slot to be free once the command ended")
 
 
 if __name__ == "__main__":

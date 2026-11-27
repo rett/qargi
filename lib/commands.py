@@ -107,8 +107,8 @@ SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.
                    "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
                    "A command that prints none shows its last lines instead.")
 QUEUE_WAIT_OPT = opt("--queue-wait", "wait at most SECONDS in the queue of the whole-suite runs (a whole number; without the option the wait has no bound; 0 refuses at once when the slot is not free): at the bound the run is refused as suite-queue-busy, exit 1, naming the holder, with nothing run, recorded or counted as an attempt", "SECONDS", "seconds")
-QUEUE_NOTE = ("Whole-suite runs of one user never overlap on a host: before its suite starts the run waits in a queue, first in, first out (a run of qargi feature verify or qargi release verify takes the one slot while its suite runs and not "
-              "for the rest of the verb), and prints one line on standard error naming the holder (project, verb, name, how long) and its own place, again only when one of them changes. The seconds it waited are not in the seconds of the suite; "
+QUEUE_NOTE = ("Whole-suite runs of one user never overlap on a host: before its suite starts the run waits in a queue, first in, first out (a run of qargi feature verify, qargi release verify or qargi suite run takes the one slot while its suite runs and not "
+              "for the rest of the verb; qargi suite status lists them), and prints one line on standard error naming the holder (project, verb, name, how long) and its own place, again only when one of them changes. The seconds it waited are not in the seconds of the suite; "
               "they are the queue_wait_s of its entry in the history. --queue-wait SECONDS bounds the wait. A run whose verb is killed frees the slot at once.")
 WAIVE_ENV_OPT = opt("--waive-environment", "run once without these parts of verify.environment, which a refusal named (comma separated: signals, fds, tty, cpu; never env); needs --plan and --approved", "PARTS")
 VERIFY_ENV_ANSWER = ("verify.environment (an object, or null for off) is the environment the whole-suite runs of feature verify and release verify start under: "
@@ -147,7 +147,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "flow", "history", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "flow", "history", "suite", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -740,6 +740,30 @@ COMMANDS = {
                  opt("--limit", "at most N entries, 1 to 1000 (default 20; a list, not show)", "N"),
                  opt("--json", "print one document of the kind qargi-history (qargi help json qargi-history): project, matched, skipped and the entries; with show, the entry as stored (qargi-history-entry)")],
         "examples": ["qargi history", "qargi history --kind suite --head 1a2b3c4d --limit 5", "qargi history show 0123456789abcdef --json"],
+    },
+    "suite": {
+        "summary": "The queue of the whole-suite runs of this user: take the slot, see who holds it",
+        "desc": ("Two whole-suite runs of one user never overlap on a host: qargi feature verify and qargi release verify take the one slot of a queue before their suite starts and give it back when it ends, "
+                 "and the waiting is first in, first out. The slot is a kernel lock (flock) on a file of STATE/suite-queue/ (mode 700) that the shell of the run holds only while the suite runs, so a verb that is killed "
+                 "leaves nothing stale (its suite, if it still runs, keeps the slot until it ends). Beside the lock there is a record of the holder (the pid and its start token, the project, the verb, the name, the commit, when it started) "
+                 "and one file for each run that waits, all mode 600; a file of a process that is gone is ignored. A run that waits prints one line on standard error naming the holder and its place, again only when one of them changes. "
+                 "Moving a run forward in the queue is not offered. Lead only under the current member guard, as qargi backlog graph is: a member's own checks run in its clone and never wait here. "
+                 "docs/reference/suite-queue.md describes the queue; qargi help json qargi-suite-queue shows the fields of the document of status."),
+        "scripts": ["suite.sh"],
+        "verbs": {
+            "run": verb("Run a command as a whole-suite run: take a slot of the queue, run it, give the slot back", [("--", ("--",)), ("COMMAND", "none"), ("ARGS", "none", True)],
+                        desc=("For a suite run by hand, or by a supervisor to verify a run: the command follows -- (what follows is the command's own, a --json or a --help of it included). The run waits its turn in the queue "
+                              "(a line on standard error names the holder and its place, as for the verify verbs; no bound on the wait), holds the slot while COMMAND runs, with its standard input, output and error as they are, "
+                              "lets it go when COMMAND ends and exits with the status of COMMAND (127 or 126 when it cannot be run). COMMAND runs without the descriptor of the slot, so nothing it starts keeps the slot. "
+                              "It records nothing in the history of the whole-suite runs (qargi history): the history is for feature verify and release verify, which say what was verified. "
+                              "The queue shows it as the verb suite run, named by the command and, when it is a word and no option, its first argument. It takes no option of its own, and not the global --json (a usage error, exit 2)."),
+                        examples=["qargi suite run -- bash tests/run.sh -j 4", "qargi suite run -- make test"]),
+            "status": verb("List the holder of the slot and the runs that wait, in the order they will be served", [], [opt("--json", "print one document of the draft kind qargi-suite-queue (qargi help json qargi-suite-queue): state, holder and waiting; checked against its registry file before it is printed (exit 70 when it fails)")],
+                           desc=("One line each: position (holder first, then 1, 2, ...), project, verb, name, the commit it runs on, how long it has held the slot or waited, and the pid of the shell that holds or waits. "
+                                 "It only reads: no lock is taken, nothing is removed and no process is signalled; the lock is read from /proc/locks, so the record of a holder that was killed names nobody. "
+                                 "Exit 0 after the text or a complete document, 1 for a queue that cannot be read, 2 for a wrong call, 70 for a document that fails its registry file."),
+                           examples=["qargi suite status", "qargi suite status --json"]),
+        },
     },
     "ref": {
         "summary": "Record in the lead's ref journal a branch move or a branch that no flow verb made",
@@ -2132,7 +2156,7 @@ for _area, _names, _words in (
     # only read
     ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt card check"),
     ("feature", "", "list"), ("marshal", "", "status check handoff"), ("upstream", "", "status review"), ("campaign", "", "show check log"),
-    ("backlog", "", "graph list"), ("flow", "", "plan"), ("history", "", ""), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
+    ("backlog", "", "graph list"), ("flow", "", "plan"), ("history", "", ""), ("suite", "", "status"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
     ("instances", "", "list show"), ("skill", "", "list show effective check"), ("tool", "", "list show effective check"), ("packs", "", "load check"),
     ("status", "", ""), ("report", "", ""), ("watch", "", ""), ("methodology", "", "list show check files deployment"),
     ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
@@ -2162,7 +2186,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, flow plan, history, plan show, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, flow plan, history, suite status, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "

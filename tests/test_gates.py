@@ -266,7 +266,7 @@ class Cli(unittest.TestCase):
 # added or moved in the table without this list changing fails. Every other verb of the table of commands is refused (the lead runs it).
 COORD_ALLOWED = {
     "project": "template show list validate profile", "agent": "list models for", "role": "list show prompt card check", "feature": "list status verify",
-    "marshal": "status check handoff", "upstream": "status review", "campaign": "show check log", "backlog": "graph list", "flow": "plan", "history": "", "release": "plan status",
+    "marshal": "status check handoff", "upstream": "status review", "campaign": "show check log", "backlog": "graph list", "flow": "plan", "history": "", "suite": "status", "release": "plan status",
     "doctor": "", "env": "show check", "instances": "list show", "skill": "list show effective check", "tool": "list show effective check",
     "packs": "load check", "status": "", "report": "", "watch": "", "methodology": "list show check files deployment", "cloud": "list show check",
     "provider": "list show check addenda notes model", "noticed": "list", "team": "brief check contract", "memory": "lint get tiers check",
