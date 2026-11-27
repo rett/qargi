@@ -1,7 +1,7 @@
 {
  "purpose": "0.3.10: static run-plan checker, exit-0 hardening, 0.3.8 carry-overs, tag-signing support",
  "started": "2026-11-27T12:25:56Z",
- "goal": "0.3.10: carry-overs A4, A5, A6",
+ "goal": "0.3.10: Z1 cleanup, then feature verify",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-27T12:25:56Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-27T23:02:34Z",
+ "renewed_at": "2026-11-27T23:32:43Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 10,
- "updated_at": "2026-11-27T23:02:34Z",
+ "rev": 11,
+ "updated_at": "2026-11-27T23:32:43Z",
  "feature": "release-0310",
  "project": "qargi"
 }
