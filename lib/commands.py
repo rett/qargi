@@ -1573,11 +1573,13 @@ COMMANDS = {
                                   "The temporary parent is resolved once before directory creation: QARGI_RUN_TMP accepts aliases, relative paths and ..; TMP in the display, task, registry and private ownership record is the canonical path. Cleanup uses that recorded path even if an alias is later repointed.")),
             "verify": verb("Compare observed repository refs with the run's current authoritative snapshot", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID"),
-                            opt("--mine", "a coordinator's own runs: verify every open run whose recorded label is this session's QARGI_ACTOR, each as local verify RUN would; one line per run, the worst exit status; takes no RUN")],
+                            opt("--mine", "a coordinator's own runs: verify every open run whose recorded label is this session's QARGI_ACTOR, each as local verify RUN would; one line per run, the worst exit status; takes no RUN"),
+                            opt("--timings", "print one timings: line when it ends with the seconds of each phase (checks, registry, snapshot, compare, save); with --mine, one line with the phases of all the runs added up and runs=N")],
                            desc=("--mine (the coordinator label, qargi help coordinator): the open runs are those the registry records under exactly QARGI_ACTOR and that are neither cleaned nor closed and whose directory exists; "
                                  "each is verified as qargi local verify RUN does, and one line says RUN, its slug, pass or fail with the exit status and, for a failure, the first line of what verify said. "
                                  "The exit status is the worst of them (3, then 2, then 1, then 0); with no open run it says so and exits 0. Without a valid QARGI_ACTOR it is a usage error (exit 2): the lead lists runs with local list and verifies one with local verify RUN. "
-                                 "--mine takes no RUN and no --saved.\n"
+                                 "--mine takes no RUN and no --saved, and asks the repository and its origin for their refs once for all its runs (the first run that needs them asks; the answer is kept for this call only and never for another). "
+                                 "Every verify records the seconds of each phase in the run's line of the registry (verify_timings: checks, registry, snapshot, compare, save), which outlives the run directory; --timings prints them.\n"
                                  "OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
                                  "the member is told to collect again or return its report as the final message (for a read-only run it is a note, and the exit status stays the refs verdict). "
                                  "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
@@ -1625,7 +1627,8 @@ COMMANDS = {
                            opt("--days", "with --orphans: remove only the orphans older than DAYS days, and with nothing in them newer (default 2, at least 1)", "DAYS"),
                            opt("--plan", "with --orphans, or --applied --legacy: the plan token printed by the same command without --approved", "TOKEN"),
                            opt("--approved", "with --orphans or --applied --legacy, and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
-                           opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
+                           opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir"),
+                           opt("--timings", "print one timings: line when it ends with the seconds of each phase (checks, removal, prune; --applied also registry and merged, --stale registry, and the line says runs=N with the phases of all the runs added up)")],
                           desc=("Lifecycle clean records ownership and atomically renames saved output and attempt state before recording cleaned in the registry and deleting them. Rerun clean after interruption; recorded deletion is idempotent even after partial marker or state removal. Unknown or replaced tombstones refuse cleanup. Cleaned registry rows remain as recovery evidence. "
                                 "Clean of a lifecycle run writes an outcome receipt below <state>/attempts/.receipts/ before it removes anything, and the receipt stays when the run is gone "
                                 "(docs/members-and-providers/verification-lifecycle.md describes it). When the receipt cannot be written, clean refuses (exit 3) with nothing removed and the run still usable, "
@@ -1668,7 +1671,8 @@ COMMANDS = {
                                 "With --plan TOKEN --approved WORDS it removes only the directories that no registry names, that are older than --days (default 2, at least 1) and have nothing in them newer; "
                                 "each is checked again at the moment of removal, a directory that appeared or changed since the plan makes the token stale, and the removal is in the audit log with your words. "
                                 "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --legacy, --discard, --stale, --yes or --scratch; --days is for it only, and --plan and --approved are for it and for --applied --legacy. "
-                                "A clean marks the run's record cleaned and removes its saved copy."),
+                                "A clean marks the run's record cleaned and removes its saved copy. "
+                                "It records the seconds of each phase in the run's line of the registry (clean_timings: checks, which include the comparison of the refs, removal, prune), which stays after the run is gone (a legacy run whose directory is already gone has its line dropped by clean, so nothing is recorded for it); --timings prints them."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --applied --legacy --scratch /tmp/scratch",
                                     "qargi local clean --applied --legacy --scratch /tmp/runs --plan TOKEN --approved \"go\"",
                                     "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",

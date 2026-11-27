@@ -437,6 +437,19 @@ out=$(./bin/qargi local list --lanes --scratch "$T/ls" --json 2>&1); rcj=$?
 out=$(./bin/qargi local list --scratch "$T/nonexistent" --json 2>&1); rcj=$?
 { [ $rcj != 0 ] && ! grep -q '"kind"' <<<"$out"; } && ok "list --json of a directory that does not exist prints no document" || no "json of a missing directory: rc=$rcj $out"
 kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json" "$T/lj.json" "$T/lj2.json" "$T/lj.err"
+# --timings: verify and clean print one timings: line only when asked; the seconds of each phase are recorded in the run's registry line either way (it outlives the run directory)
+read -r TMR _ <<<"$(mkc timings)"; echo '{}' > "$TMR/out/manifest.json"
+PH='[0-9]+\.[0-9]{3}s'
+out=$(./bin/qargi local verify "$TMR" 2>&1); rcv=$?
+{ [ $rcv = 0 ] && ! grep -q 'timings' <<<"$out" && grep -qE "^checks=$PH registry=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$(jq -r --arg r "$TMR" 'select(.run == $r) | .verify_timings // ""' "$T/s/local-runs.jsonl")"; } \
+  && ok "verify says nothing of timings unless asked, and records the seconds of its phases (checks, registry, snapshot, compare, save) in the run's registry line" || no "verify timings (rc=$rcv): $out $(jq -c --arg r "$TMR" 'select(.run == $r)' "$T/s/local-runs.jsonl")"
+out=$(./bin/qargi local verify "$TMR" --timings 2>&1); rcv=$?
+{ [ $rcv = 0 ] && [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: checks=$PH registry=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$out"; } \
+  && ok "verify --timings prints one timings: line" || no "verify --timings (rc=$rcv): $out"
+out=$(./bin/qargi local clean "$TMR" --timings 2>&1); rcc=$?
+{ [ $rcc = 0 ] && [ ! -e "$TMR" ] && [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: checks=$PH removal=$PH prune=$PH\$" <<<"$out" \
+  && grep -qE "^checks=$PH removal=$PH prune=$PH\$" <<<"$(jq -r --arg r "$TMR" 'select(.run == $r) | .clean_timings // ""' "$T/s/local-runs.jsonl")"; } \
+  && ok "clean --timings prints one timings: line (checks, removal, prune), and the registry line of the removed run keeps the seconds" || no "clean --timings (rc=$rcc): $out $(jq -c --arg r "$TMR" 'select(.run == $r)' "$T/s/local-runs.jsonl")"
 ./bin/qargi local list --scratch "$T/nonexistent" >/dev/null 2>&1 && no "list accepted a missing directory" || ok "list refuses a directory that does not exist"
 for bad in "--applied" "--applied --scratch $T/ls $LA" "--applied --discard --scratch $T/ls" "--scratch $T/ls $LA" "--applied --scratch $T/nonexistent"; do
   # shellcheck disable=SC2086

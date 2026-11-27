@@ -70,6 +70,9 @@ refusal changes nothing.
      [JSON output](../reference/json-output.md#draft-kinds): the run, its role, slug, age in seconds, applied, merged, runtime, state, the
      whole seconds it waited for a lane and the repository path your registry recorded for it), and with `--lanes` the lanes in place of
      the runs.
+   - `qargi local verify` and `qargi local clean` record the seconds of each phase in the run's registry line and print one `timings:` line
+     when you give `--timings` (one for all the runs of `verify --mine`, `clean --applied` and `clean --stale --yes`, which also ask the
+     origin for its refs once for all of them, never again in the next call).
    - `qargi local clean --applied --scratch DIR` cleans the runs that are applied and merged and keeps the rest, one line for each kept run; over hundreds
      of run directories both verbs read the registry once and ask the repository's refs once for all the runs. A legacy run (made before
      the lifecycle) that is kept because its refs changed since it was prepared gets a line with the one command to run next: when its work

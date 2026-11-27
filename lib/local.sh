@@ -7,12 +7,16 @@
 #                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)
 #                                        (the submodules the role declares in roles.R.tools are checked out in the clone from the lead's
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
-#   local.sh verify RUN_DIR
+#   local.sh verify RUN_DIR [--timings]
 #   local.sh verify RUN_DIR | --saved ID     (--saved: the lead's copy of a passed run whose directory is gone, $QARGI_STATE/runs/ID)
-#   local.sh verify --mine               a coordinator's own runs: every open run the registry records under this session's QARGI_ACTOR, each as verify RUN does; one line
-#                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN)
+#   local.sh verify --mine [--timings]   a coordinator's own runs: every open run the registry records under this session's QARGI_ACTOR, each as verify RUN does; one line
+#                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN); the refs of the repository and of its
+#                                        origin are asked once for all the runs (the first run that needs them asks; kept for this call only)
+#                                        --timings: one `timings:` line when it ends, the seconds of each phase (checks, registry, snapshot, compare, save; for --mine added up over the
+#                                        runs, runs=N); the phases of each run are recorded in its registry line (verify_timings) whether it is given or not
 #   local.sh close RUN_DIR --applied-by-am   mark a verified run whose patches the lead applied by hand (git am) closed: not open any more, files kept
-#   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
+#   local.sh clean RUN_DIR [--discard] [--timings]   remove a collected, verified run and its temporary directory (--discard: whatever verify says); --timings: one `timings:` line,
+#                                        the seconds of each phase (checks, removal, prune; --applied and --stale: added up, runs=N), recorded in the run's registry line (clean_timings)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others, one line each (the registry is read once, the refs
 #                                        of the repository asked once for all the runs, and a legacy run whose refs changed is decided here and named with the one command to run)
 #   local.sh clean --applied --legacy --scratch DIR [--plan TOKEN --approved WORDS]   the legacy runs (no lifecycle marker) that are applied and merged: a plan and a token; with the
@@ -146,6 +150,52 @@ snap_cached() {
 }
 snapshot_url() { snap_cached url "$1 ${2:-}" snapshot_url_raw "$@"; }   # the credential file is part of the key: another credential may read other refs
 snapshot() { snap_cached repo "$1" snapshot_raw "$@"; }
+
+# Timings of verify and clean: the seconds of each phase of one run (verify: checks, registry, snapshot, compare, save; clean: checks, removal, prune), added up in TM (microseconds)
+# in the order the phases first ran (TM_ORDER). tm_lap NAME ends the phase that began at the last lap. The verb records them in the run's line of the lead's registry (verify_timings,
+# clean_timings: "phase=0.123s ..."; the line outlives the run directory) and, under --timings, prints one `timings:` line when it ends (on_exit). A bulk verb (verify --mine, clean
+# --applied, clean --stale) prints one line for all its runs: each child run adds its phases to BULK_DIR/timings (bulk_dir) and the parent adds them up (tm_collect).
+declare -A TM=(); TM_ORDER=(); TIMINGS=''
+tm_now() { if [ -n "${EPOCHREALTIME:-}" ]; then local t=${EPOCHREALTIME/[.,]/}; echo "$t"; else echo $(( $(date +%s%N) / 1000 )); fi; }
+TM_T=$(tm_now)
+tm_lap() { local n; n=$(tm_now); [ -n "${TM[$1]+x}" ] || { TM[$1]=0; TM_ORDER+=("$1"); }; TM[$1]=$(( TM[$1] + n - TM_T )); TM_T=$n; }
+tm_sec() { printf '%d.%03d' $(( $1 / 1000000 )) $(( $1 % 1000000 / 1000 )); }   # microseconds -> seconds with three decimals
+tm_text() { local k out=''; for k in ${TM_ORDER[@]+"${TM_ORDER[@]}"}; do out+="${out:+ }$k=$(tm_sec "${TM[$k]}")s"; done; printf '%s' "$out"; }
+# bulk_dir -> the private directory of the bulk verb this process runs under (the one snap_cached trusts), or nothing
+bulk_dir() {
+  case ${QARGI_SNAP_CACHE:-} in "$DA_STATE"/verify.*) [ -d "$QARGI_SNAP_CACHE" ] && [ ! -L "$QARGI_SNAP_CACHE" ] && [ -O "$QARGI_SNAP_CACHE" ] && echo "$QARGI_SNAP_CACHE";; esac
+  return 0
+}
+# tm_done KEY RUN -> the phases of this run recorded in its registry line as KEY, and added to the bulk verb's file when this process is one of its children
+tm_done() {
+  local k b
+  [ "${#TM_ORDER[@]}" -gt 0 ] || return 0
+  reg_mark "$2" "$1" "$(tm_text)"
+  b=$(bulk_dir)
+  if [ -n "$b" ]; then for k in "${TM_ORDER[@]}"; do printf '%s %s\n' "$k" "${TM[$k]}" >> "$b/timings"; done; printf 'run 1\n' >> "$b/timings"; fi
+  return 0
+}
+# tm_collect -> adds what the children of a bulk verb wrote (the phases, and the number of runs) to TM
+tm_collect() {
+  local b=${BULK_DIR:-} k v
+  [ -n "$b" ] && [ -f "$b/timings" ] || return 0
+  while read -r k v; do
+    [[ $k =~ ^[a-z]+$ ]] && [[ $v =~ ^[0-9]{1,15}$ ]] || continue
+    [ -n "${TM[$k]+x}" ] || { TM[$k]=0; TM_ORDER+=("$k"); }
+    TM[$k]=$(( TM[$k] + v ))
+  done < "$b/timings"
+}
+# on_exit -> what every exit of verify and clean does: removes the working directories of the verb and, under --timings, prints the line of the phases
+on_exit() {
+  local r=0
+  [ -z "$TIMINGS" ] || tm_collect
+  rm -rf -- "${CHECK_DIR:-}" "${BULK_DIR:-}"
+  if [ -n "$TIMINGS" ] && [ "${#TM_ORDER[@]}" -gt 0 ]; then
+    if [ -n "${TM[run]+x}" ]; then r=${TM[run]}; fi
+    if [ "$r" -gt 0 ]; then printf 'timings: runs=%d %s\n' "$r" "$(for k in "${TM_ORDER[@]}"; do [ "$k" = run ] || printf '%s=%ss ' "$k" "$(tm_sec "${TM[$k]}")"; done | sed 's/ $//')"
+    else printf 'timings: %s\n' "$(tm_text)"; fi
+  fi
+}
 
 # merged_tip REPO TIP [BRANCH [RUN]] -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
 # other than agent/*, a worktree-bridge-* branch or a ref the run's answers declare owned, 1 when it is not, 2 when there is no tip that is a full hex object name;
@@ -581,7 +631,7 @@ check_run() {
   else reg_record "$run" || return 3; fi
   # All comparisons, including diagnostics, are built in private lead paths.
   CHECK_DIR=$(mktemp -d "$DA_STATE/verify.XXXXXX") || return 3
-  trap 'rm -rf -- "${CHECK_DIR:-}"' EXIT
+  trap on_exit EXIT
   if [ "$LC_SCHEMA" = true ]; then
     gate=$(lc compare-input "$run") || return 3
     ref=$(jq -r .baseline <<<"$gate")
@@ -594,14 +644,17 @@ check_run() {
   fi
   CHECK_PHASE=strict; [ -n "$strict" ] || CHECK_PHASE=after-verify
   CREPO=$RUN_REPO CURLK=''
+  tm_lap registry
   if [ -n "$RUN_URL" ]; then
     CURLK=$(url_key "$RUN_URL")
     snapshot_url "$RUN_URL" "$RUN_CRED" > "$CHECK_DIR/refs.after"
   else
     snapshot "$RUN_REPO" > "$CHECK_DIR/refs.after"
   fi
+  tm_lap snapshot
   : > "$CHECK_DIR/refs.accepted"
-  compare "$RUN_REPO" "$ref" "$CHECK_DIR/refs.after" "$strict" "$CHECK_DIR/refs.accepted" > "$CHECK_DIR/refs.diff" || return 2
+  compare "$RUN_REPO" "$ref" "$CHECK_DIR/refs.after" "$strict" "$CHECK_DIR/refs.accepted" > "$CHECK_DIR/refs.diff" || { tm_lap compare; return 2; }
+  tm_lap compare
   return 0
 }
 
@@ -609,7 +662,7 @@ check_run() {
 # QARGI_SNAP_CACHE, which the child clean and verify of each run read (snap_cached): the refs of a repository and of its origin are asked once, not once for each run.
 bulk_begin() {
   BULK_DIR=$(mktemp -d "$DA_STATE/verify.XXXXXX") || { echo "qargi: could not make a working directory in $DA_STATE; nothing was done" >&2; exit 3; }
-  trap 'rm -rf -- "${BULK_DIR:-}"' EXIT
+  trap on_exit EXIT
   QARGI_SNAP_CACHE=$BULK_DIR; export QARGI_SNAP_CACHE
 }
 
@@ -1149,6 +1202,10 @@ WRAP
     fi;;
   verify)
     MINE=''
+    # --timings: one `timings:` line at the end (on_exit); the phases are recorded in the run's registry line whether it is given or not
+    vargs=(); for _a in "$@"; do if [ "$_a" = --timings ]; then TIMINGS=1; else vargs+=("$_a"); fi; done
+    set -- ${vargs[@]+"${vargs[@]}"}
+    [ -z "$TIMINGS" ] || trap on_exit EXIT
     for _a in "$@"; do [ "$_a" != --mine ] || MINE=1; done
     if [ -n "$MINE" ]; then
       # a coordinator's own runs: every open run the lead's registry records under exactly this session's label, each verified as `verify RUN` does
@@ -1156,6 +1213,8 @@ WRAP
       actor_label || exit $?
       [ -n "$ACTOR" ] || usage_die "verify --mine needs QARGI_ACTOR, the label of a coordinator session (<lead-id>:coord:<feature>:<n>); the lead uses \"qargi local list\" and \"qargi local verify RUN\""
       reg_load; worst=0; nmine=0
+      bulk_begin   # the refs of the repository (and of its origin) are asked once for all the runs below (QARGI_SNAP_CACHE), by the first run that needs them, never kept for another call
+      tm_lap registry
       for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
         [ "$(reg_get "$d" actor)" = "$ACTOR" ] && [ -d "$d" ] && [ -z "$(reg_get "$d" cleaned)" ] && [ -z "$(reg_get "$d" closed)" ] || continue   # open: there, not cleaned, not closed
         nmine=$((nmine + 1)); vrc=0
@@ -1220,6 +1279,7 @@ WRAP
       res=$(home_residue "$RUN")
       [ -z "$res" ] || echo "qargi: note: the run home of $RUN holds what a run left there: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177'). qargi local run $RUN --again replaces a link left there; qargi local clean $RUN removes the run with it" >&2
     fi
+    tm_lap checks
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" != 3 ]; then
       for diagnostic in refs.after refs.accepted refs.diff; do
@@ -1237,6 +1297,7 @@ WRAP
         if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       fi
       echo "$EMPTY" >&2
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
       if [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
@@ -1257,6 +1318,7 @@ WRAP
         cp "$CHECK_DIR/refs.after" "$CHECK_DIR/verified"
         mv -T -- "$CHECK_DIR/verified" "$SRC/verified"
       fi   # refs-only observation never verifies or saves output
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       if [ -s "$CHECK_DIR/refs.accepted" ]; then
         if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed snapshots only; scope and unavailable remotes: qargi help local verify:"
         else echo "refs differ from the snapshot only by accepted moves; observed snapshots only; scope and unavailable remotes: qargi help local verify:"; fi
@@ -1268,6 +1330,7 @@ WRAP
       if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       [ "$CHECK_PHASE" = strict ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
         || echo "(after a passing verify the lead's fast-forwards and new branches are accepted too; nothing else that the lead's ref journal does not name)" >&2
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       exit 2
     fi;;
   clean)
@@ -1279,6 +1342,7 @@ WRAP
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
+        --timings) TIMINGS=1; shift;;   # one `timings:` line at the end (on_exit); the phases are recorded in the run's registry line whether it is given or not
         --applied) ALL=1; shift;;
         --legacy) LEGACY=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
@@ -1295,6 +1359,7 @@ WRAP
     [ -n "$ORPH" ] || [ -z "$DAYS" ] || usage_die "clean: --days is for --orphans"
     [ -n "$ORPH" ] || [ -n "$LEGACY" ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
     [ -z "$LEGACY" ] || [ -n "$ALL" ] || usage_die "clean: --legacy is for --applied (qargi local clean --applied --legacy --scratch DIR)"
+    [ -z "$TIMINGS" ] || trap on_exit EXIT
     if [ -n "$ORPH" ]; then
       # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
       # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
@@ -1350,6 +1415,7 @@ WRAP
       [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
       REG_BULK=1 reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
       [ -z "$YES" ] || bulk_begin   # the refs of the repository are asked once for all the runs cleaned below (QARGI_SNAP_CACHE)
+      tm_lap registry
       nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
@@ -1397,12 +1463,14 @@ WRAP
       if [ -n "$LEGACY" ]; then bulk_begin; clean_legacy "$SCR"; fi
       scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; leg_n=0; REG_BULK=1 reg_load
       bulk_begin   # the refs of the repository are asked once for all the runs below (QARGI_SNAP_CACHE), and the registry read once by this process
+      tm_lap registry
       cand=(); mp=()
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         cand+=("$d"); [ ! -f "$d/applied" ] || mp+=("$d" "$d/applied")
       done
       merged_prefetch ${mp[@]+"${mp[@]}"}   # the state of the work of each applied run, for the reason of one that is kept: one process for all of them
+      tm_lap merged
       for d in ${cand[@]+"${cand[@]}"}; do
         reg_val cl "$d" closed; reg_val rp "$d" repo
         if [ ! -f "$d/applied" ] && [ -z "$cl" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
@@ -1496,12 +1564,14 @@ WRAP
         mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
         [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
+      tm_lap checks
       if [ "$LC_SCHEMA" = true ]; then
         clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
         lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
       else
         [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       fi
+      tm_lap removal
       scrub_ok_drop "$RUN"
       apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
       if [ "$LC_SCHEMA" = true ]; then
@@ -1510,6 +1580,7 @@ WRAP
       else
         reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       fi
+      tm_lap prune; [ "$LC_SCHEMA" != true ] || tm_done clean_timings "$RUN"   # a legacy run of this branch has its line dropped just above: nothing to record it in
       if [ "$LC_SCHEMA" = true ]; then echo "cleaned $RUN (directory gone)${sv:+ and its saved copy $sv}; kept cleaned registry record"
       else echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"; fi
       exit 0
@@ -1569,6 +1640,7 @@ WRAP
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
     read -r wtt wtu _ <<<"$wt"
+    tm_lap checks
     if [ "$LC_SCHEMA" = true ]; then
       clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
       lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
@@ -1578,6 +1650,7 @@ WRAP
       rt=$(legacy_run_tmp "$RUN")
       { [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"; } && rm -rf --one-file-system -- "$RUN" || die "could not remove $RUN or its temporary directory completely; not recorded as cleaned: fix the mount or permission and rerun clean"
     fi
+    tm_lap removal
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
@@ -1591,6 +1664,7 @@ WRAP
     if [ "$LC_SCHEMA" = true ]; then reg_edit "$rrun" cleaned exact
     else reg_edit "$rrun" cleaned; fi || die "could not commit cleanup in the registry; rerun local clean"
     [ "$LC_SCHEMA" != true ] || lc clean-finish "$rrun" >/dev/null || exit 3
+    tm_lap prune; tm_done clean_timings "$rrun"   # a legacy run keeps its cleaned line too, so it records its phases like a lifecycle run
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   close)
