@@ -84,7 +84,7 @@ The draft is not pinned: it has no fixtures, and its integer may be raised witho
 | `flow plan check FILE` | Nothing: the file is written by its author, and the checker only reads it. |
 | `flow plan check FILE --json` | Nothing: no state, no token, no network, no file; the plan, the roles qargi knows and the files a done command names are only read. |
 | `history --json` | Nothing: the file of the history is only read. |
-| `history show ID --json` | Nothing: `history show` only reads the file. (The entries are written by feature verify, release verify and review check; see the reference page of the history.) |
+| `history show ID --json` | Nothing: `history show` only reads the file. (The entries are written by `feature verify`, `release verify` and `review check`; see the reference page of the history.) See [History](history.md). |
 | `local list --json` | Nothing: no state, no lock, no token, no network and no file; the registry, the run directories, the lane records and /proc are only read, and no process is signalled. |
 
 ## The refusal codes of the three verbs
