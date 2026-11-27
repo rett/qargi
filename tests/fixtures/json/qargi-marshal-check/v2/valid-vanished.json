@@ -1,0 +1,21 @@
+{
+ "schema": 2,
+ "kind": "qargi-marshal-check",
+ "project": "app",
+ "integrity": "advisory",
+ "backend": "refs",
+ "remote": "checked",
+ "feature": "v1",
+ "answer": "free",
+ "lead": null,
+ "warnings": [
+  {
+   "text": "feature v1 has no lead (unled): claim or take it",
+   "severity": "info"
+  },
+  {
+   "text": "refs/qargi/features/v1 vanished from the remote and there is no done/v1 that ends the record this machine accepted: it was deleted or rewound",
+   "severity": "damaging"
+  }
+ ]
+}

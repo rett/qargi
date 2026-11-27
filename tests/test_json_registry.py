@@ -65,7 +65,8 @@ RULE_IDS = [r[0] for r in RULES]
 GOLDEN = {
     "qargi-marshal-status": {"valid.json": "status.local.json", "valid-name.json": "status.local-name.json", "valid-refs.json": "status.refs.json"},
     "qargi-marshal-check": {"valid.json": "check.local.json", "valid-name.json": "check.local-name.json", "valid-yours.json": "check.local-yours.json",
-                            "valid-refs-name.json": "check.refs-name.json", "valid-refs.json": "check.refs.json", "valid-successor.json": "check.local-successor.json"},
+                            "valid-refs-name.json": "check.refs-name.json", "valid-refs.json": "check.refs.json", "valid-successor.json": "check.local-successor.json",
+                            "valid-vanished.json": "check.refs-vanished.json"},
     "qargi-handoff": {"valid.json": "handoff.local.json", "valid-truncated.json": "handoff.local-truncated.json", "valid-refs.json": "handoff.refs.json"},
     "qargi-refusal": {"valid.json": "refusal.held"},
 }

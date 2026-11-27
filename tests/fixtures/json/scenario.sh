@@ -124,4 +124,22 @@ keep status.refs.json XE "$DA" marshal status --all --json
 keep check.refs-name.json XE "$DA" marshal check r1 --as alice --json
 keep check.refs.json XE "$DA" marshal check --json
 keep handoff.refs.json XE "$DA" marshal handoff --json
+
+# ================================================================ a keyed machine: its signed record is accepted, then the ref vanishes from the remote with no done record
+# (a doubt of the integrity reading: the check says it as a warning of severity damaging, besides the info warning that the feature has no lead)
+make_machine k
+git -C "$T/m/k/app" branch feature/v1 develop
+XK() { (cd "$T" && env HOME="$T/m/k/home" QARGI_CONF="$T/m/k/c" QARGI_STATE="$T/m/k/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="${MONO:-1000}" QARGI_LEAD=op "$@"); }
+# own VERB...: an owner verb of the marshal, the plan and then the apply with its token and the words (the apply's output on standard output)
+own() { local tk; tk=$(XK "$DA" marshal "$@" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); [ -n "$tk" ] || die "no plan token for marshal $*"; XK "$DA" marshal "$@" --plan "$tk" --approved "$WORDS"; }
+own enable >/dev/null || die "enable the shared refs on k"
+line=$(own key init --principal k@scenario | grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' | sed 's/^[[:space:]]*//')
+[ -n "$line" ] || die "key init on k"
+own signers add --line "$line" >/dev/null || die "signers add on k"
+jq '.integrity = "advisory"' "$T/m/k/s/marshal/app.enabled" > "$T/en.tmp" && cp "$T/en.tmp" "$T/m/k/s/marshal/app.enabled"
+jq '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}' "$T/m/k/c/projects/app.json" > "$T/p.tmp" && cp "$T/p.tmp" "$T/m/k/c/projects/app.json"
+XK "$DA" marshal claim v1 --as alice --goal "signed" >/dev/null || die "claim v1"
+XK "$DA" marshal status v1 --json >/dev/null || die "the read that accepts the signed record of v1"
+git --git-dir="$ORIGIN" update-ref -d refs/qargi/features/v1 || die "delete the ref of v1 on the remote"
+keep check.refs-vanished.json XK "$DA" marshal check v1 --as alice --json
 echo "scenario done"
