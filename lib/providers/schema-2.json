@@ -110,6 +110,18 @@
                               "encoding": {"enum": ["jwt-exp"]},
                               "margin_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "seconds the token must outlast the run's own time bound by (default 900)"}
                             }
+                          },
+                          "refresh": {
+                            "description": "The command that makes the runtime use, and so refresh, the real sign-in when the copy's token would end inside a run. qargi local run takes the lock beside the source (exclusive), reads the source again (another run may have refreshed it), and if it still would not last runs argv once, read-only, in a scratch working directory, with the scrubbed environment of a member run and the variable of dispatch.home naming the source's directory; prompt is its standard input; its output is discarded and never printed. A command that fails, times out or leaves the source unchanged, or a token that still would not last, refuses the run (runtime-signin-expiring, cause refresh-failed); there is no second try. argv[0] is the runtime's own command (dispatch.argv[0]); {model} is the definition's default model and {scratch} the working directory.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["argv", "prompt", "timeout_seconds"],
+                            "properties": {
+                              "argv": {"type": "array", "minItems": 1, "maxItems": 40, "items": {"type": "string", "pattern": "^[ -~]{1,200}$"}},
+                              "prompt": {"type": "string", "pattern": "^[ -~]{1,200}$"},
+                              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+                              "min_remaining_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "seconds a refreshed token must have left, besides the run's own need (bound plus margin), for the refresh to count (default 0)"}
+                            }
                           }
                         }
                       }
