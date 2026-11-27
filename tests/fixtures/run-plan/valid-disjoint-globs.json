@@ -1,0 +1,51 @@
+{
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "project": "demo",
+  "target_feature": "release-next",
+  "nodes": [
+    {
+      "id": "python",
+      "task": "Do the work of python",
+      "role": "build",
+      "scope": [
+        "lib/*.py",
+        "docs/**/*.md"
+      ],
+      "done": "python3 tests/test_python.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "shell",
+      "task": "Do the work of shell",
+      "role": "build",
+      "scope": [
+        "lib/*.sh",
+        "tests/**/*.md"
+      ],
+      "done": "python3 tests/test_shell.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "config",
+      "task": "Do the work of config",
+      "role": "build",
+      "scope": [
+        "etc/app-*.conf"
+      ],
+      "done": "python3 tests/test_config.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "backup",
+      "task": "Do the work of backup",
+      "role": "build",
+      "scope": [
+        "etc/*.bak",
+        "var"
+      ],
+      "done": "python3 tests/test_backup.py",
+      "review_kind": "none"
+    }
+  ]
+}

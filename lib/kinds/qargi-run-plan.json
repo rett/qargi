@@ -1,0 +1,40 @@
+{
+  "registry": 1,
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "status": "draft",
+  "since": "0.3.10",
+  "stream": "none",
+  "verbs": ["flow plan check FILE"],
+  "about": "The run plan that `qargi flow plan check` reads: one feature and the task nodes that merge into it, written by a person (qargi never prints one; the checker's own document is qargi-run-plan-check). Each node names a role, the paths it may change (`scope`), the command that says it is done (`done`) and the nodes it comes after (`after`). The checker is stricter than this shape: it refuses a key that is not listed here, a role qargi does not know, a scope that is absolute or holds `..`, a `done` that reads as prose, a node id used twice, an `after` that names no node or the node itself, a cycle, and two nodes that are not ordered by `after` and whose scopes can touch the same path. A plan describes work to be done: it grants no approval and starts nothing.",
+  "writes": "Nothing: the file is written by its author, and the checker only reads it.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "project", "target_feature", "nodes"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-run-plan"},
+      "project": {"type": "string", "pattern": "^[a-z][a-z0-9]{0,23}$", "description": "The name of the project, as a stored project has it."},
+      "target_feature": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The open feature the nodes merge into: a lower case slug of at most 40 characters, never master or develop."},
+      "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}, "description": "At least one and at most 500 task nodes."}
+    },
+    "$defs": {
+      "node": {
+        "type": "object",
+        "required": ["id", "task", "role", "scope", "done", "review_kind"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "A lower case slug of at most 40 characters, unique in the plan."},
+          "task": {"type": "string", "x-text": true, "description": "What the node does, in words; not empty."},
+          "role": {"type": "string", "description": "A role qargi knows (qargi role list)."},
+          "scope": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "The paths or globs, relative to the repository root, that the node may change: a directory stands for everything beneath it; no `..`, no absolute path, no space or comma; at least one and at most 100. Declare CHANGELOG.md, man/qargi.1, docs/reference/refusals.md, tests/suite.txt and tests/durations.txt here when the task changes them: a node is never assumed to write them."},
+          "done": {"type": "string", "x-text": true, "description": "One command line whose exit status says the task is done; its command words are checked as the DONE of a prepared run is."},
+          "after": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"}, "description": "The ids of the nodes that must be done first; absent is the same as empty."},
+          "review_kind": {"enum": ["none", "review", "advisor"], "description": "What looks at the result before it merges. The checker only notes a review or an advisor."},
+          "profile": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "A profile of the role (qargi agent for ROLE --profile)."},
+          "runtime": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "The runtime the member of the node runs on."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.10", "change": "first draft"}]
+}

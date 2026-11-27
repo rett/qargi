@@ -2220,6 +2220,22 @@ class Marshal(HookCase):
                 # into a new write capability or add future graph verbs to OPEN.
                 self.assertEqual(self.bash("python3 lib/backlog_graph.py check --graph graph.json").returncode, 0)
 
+    def test_flow_plan_check_cli_is_the_leads_for_build_and_review(self):
+        for role in ("build", "review"):
+            with self.subTest(role=role):
+                with open(os.path.join(self.run_dir, "ability"), "w") as f:
+                    f.write(role)
+                for c in ("qargi flow plan check plan.json", "qargi flow plan check plan.json --json", "/opt/q/bin/qargi flow plan check plan.json", "bin/qargi flow plan check plan.json",
+                          "qargi flow", "qargi flow plan run plan.json", "env FOO=1 qargi flow plan check plan.json", "true && qargi flow plan check plan.json"):
+                    result = self.bash(c)
+                    self.assertEqual(result.returncode, 2, (c, result.stderr))
+                    self.assertIn("qargi flow ", result.stderr)
+                    self.assertIn("is a read-only query reserved for the lead", result.stderr)
+                    self.assertNotIn("rewrites the file", result.stderr)
+                # Reading about it is not running it, and the pure reader has no write verb: CLI policy does not turn it into a new capability.
+                for c in ("echo qargi flow plan check", "cat lib/run_plan.py", "grep -n 'flow plan' lib/commands.py", "qargi help flow", "python3 lib/run_plan.py plan check plan.json"):
+                    self.assertEqual(self.bash(c).returncode, 0, c)
+
     def test_ref_record_is_the_leads(self):
         """qargi ref record --rewrite moves an agent branch of the lead's repository and writes the lead's ref journal, which local verify trusts."""
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",

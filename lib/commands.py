@@ -143,7 +143,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "flow", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -691,6 +691,30 @@ COMMANDS = {
                                "(make the ids unique first). Not available in a member run."),
                          examples=["qargi backlog done fix-names --evidence \"merged, suite green\"", "qargi backlog done fix-names add-cache --evidence \"merged in feature/names, suite green\"",
                                    "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
+        },
+    },
+    "flow": {
+        "summary": "Check a run plan: valid or not, and in which order its nodes can run",
+        "desc": ("A run plan is one JSON file: one feature (target_feature) and the task nodes that merge into it, each with its role, the paths it may change (scope), "
+                 "the command that says it is done and the nodes it comes after. qargi flow plan check reads it and only says whether it is valid and in which order the nodes can run; "
+                 "it plans nothing and starts nothing: no flow is run, kept or resumed. The format, the checks and their codes are in docs/reference/run-plan.md; "
+                 "qargi help json qargi-run-plan and qargi-run-plan-check show the fields of the file and of the report."),
+        "scripts": ["run_plan.py"],
+        "verbs": {
+            "plan": verb("Check a run plan file: valid or not, the nodes in waves, and the findings", [("ACTION", ("check",)), ("FILE", "file")],
+                         [opt("--json", "print one document of the kind qargi-run-plan-check (qargi help json qargi-run-plan-check): valid, digest, waves and findings; printed also when the plan is invalid (exit 1)")],
+                         desc=("Use check FILE. Static and read only: no state, no token, no network and nothing written; it reads FILE, the roles qargi role list prints, and the files a done command names "
+                               "(from the current directory, which should be the repository). "
+                               "Checks: the shape and the types of the plan and of each node (unknown keys are refused); a node id used twice; after naming an unknown id or the node itself; a cycle (one is named); "
+                               "a role qargi does not know; a scope that is empty, absolute or holds ..; a done that is not a command line whose command words are real, as qargi local prepare --done checks them; "
+                               "and two nodes that after does not order, directly or through other nodes, whose scopes can touch the same path (scope-overlap-unordered, naming the pair of patterns; a glob pair that cannot be decided counts as an overlap). "
+                               "CHANGELOG.md, man/qargi.1, docs/reference/refusals.md, tests/suite.txt and tests/durations.txt are written by almost every task: a node that lists one in its scope overlaps every other unordered node that lists it, "
+                               "but a node that does not list them is not assumed to write them, so declare them in the scope of a task that changes them. A review_kind other than none is only noted. "
+                               "The output lists the nodes in a valid run order in waves (wave N: the nodes whose after are all in earlier waves), then the findings, each with a stable code, a severity (error or note), the node ids and a path. "
+                               "Lead only under the current member guard (a member reports the findings in its task output). "
+                               "Exit 0 for a valid plan (notes allowed), 1 for an invalid one (with --json the document is printed all the same), 2 for a wrong call or a file that cannot be read, 70 when the document of --json fails the check of its own registry file. "
+                               "The format, the codes and what it does not do are in docs/reference/run-plan.md."),
+                         examples=["qargi flow plan check plan.json", "qargi flow plan check plan.json --json"]),
         },
     },
     "ref": {
@@ -2073,7 +2097,7 @@ for _area, _names, _words in (
     # only read
     ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt card check"),
     ("feature", "", "list"), ("marshal", "", "status check handoff"), ("upstream", "", "status review"), ("campaign", "", "show check log"),
-    ("backlog", "", "graph list"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
+    ("backlog", "", "graph list"), ("flow", "", "plan"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
     ("instances", "", "list show"), ("skill", "", "list show effective check"), ("tool", "", "list show effective check"), ("packs", "", "load check"),
     ("status", "", ""), ("report", "", ""), ("watch", "", ""), ("methodology", "", "list show check files deployment"),
     ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
@@ -2103,7 +2127,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, plan show, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, flow plan, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
