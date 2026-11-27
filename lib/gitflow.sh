@@ -380,7 +380,7 @@ busy_same_refuse() {
 lead_advice() {
   pymod lead_usage advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
 }
-on_exit() { marshal_hold_stop; busy_end; cleanup; intent_unlock; }
+on_exit() { history_end interrupted; marshal_hold_stop; busy_end; cleanup; intent_unlock; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
 worktree() { # commit-ish -> a detached temporary worktree there (WT)
   WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX")
@@ -787,6 +787,8 @@ run_suite_cmd() {
 suite_env_settle() {
   local codes route parts
   [ -n "${SUITE_ENV:-}" ] && [ -n "${ENV_DIR:-}" ] || return 0
+  # a run that ends here has no verdict and is no entry of the history either (the exit trap would append it as interrupted)
+  if [ -s "$ENV_DIR/refused" ] || [ -s "$ENV_DIR/noreport" ]; then HIST_PENDING=''; fi
   if [ -s "$ENV_DIR/refused" ]; then
     codes=$(tr ' ' '\n' < "$ENV_DIR/refused" | awk 'NF && !s[$0]++' | tr '\n' ' '); codes=${codes% }
     parts=$({ jq -r '(.details // [])[] | select(.part != null) | .part' "$ENV_DIR"/*.json 2>/dev/null; tr , '\n' <<<"${ENV_WAIVE:-}"; } | awk 'NF && !s[$0]++' | LC_ALL=C sort | paste -sd, -)
@@ -842,14 +844,44 @@ run_suite_logged() {
       rm -rf "$ENV_DIR"
       ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run${ENV_WAIVE:+. The waiver token was spent}"
     fi
+    history_arm
     run_suite 2>&1 | tee "$SUITE_LOG"
     rc=${PIPESTATUS[0]}
   else
     [ -z "${SUITE_ENV:-}" ] || die "verify-env-no-log: the suite log $SUITE_LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run${ENV_WAIVE:+. The waiver token was spent}"
-    SUITE_LOG=''; run_suite; rc=$?
+    SUITE_LOG=''; history_arm; run_suite; rc=$?
   fi
   return "$rc"
 }
+# The history of the whole-suite runs (lib/history.py; docs/reference/history.md): one line for each run of feature verify and release verify, appended when the run
+# ends, and with the result interrupted when the verb ends before it had a verdict (the exit trap, on_exit). It is evidence and no gate: nothing here changes what a
+# verify decides, and a line that cannot be written is a warning.
+#   history_prepare VERB NAME BRANCH HEAD   what the run is (VERB: feature verify | release verify; NAME: the feature or the version); nothing is recorded yet
+#   history_arm                             the suite starts now: its start, its load average and the pending entry that the exit trap completes
+#   history_end RESULT                      pass | fail | interrupted: appends the entry and, with it, keeps the log of the run
+HISTW=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/history_write.py
+HIST_PENDING='' HIST_VERB='' HIST_NAME='' HIST_BRANCH='' HIST_HEAD='' HIST_TREE='' HIST_START='' HIST_T0=0 HIST_LOAD0=''
+history_prepare() {
+  HIST_VERB=$1 HIST_NAME=$2 HIST_BRANCH=$3 HIST_HEAD=$4
+  HIST_TREE=$(g rev-parse "$4^{tree}" 2>/dev/null) || HIST_TREE=''
+}
+history_arm() {
+  local l=''
+  [ -n "$HIST_VERB" ] || return 0
+  { read -r l _ < /proc/loadavg; } 2>/dev/null || l=''
+  HIST_LOAD0=$l HIST_START=$(now) HIST_T0=$SECONDS HIST_PENDING=1
+}
+history_end() {
+  [ -n "${HIST_PENDING:-}" ] || return 0
+  HIST_PENDING=''
+  [ -n "$HIST_TREE" ] || { echo "qargi: warning: history: the tree of $HIST_HEAD is not known; no entry was written" >&2; return 0; }
+  { [ -z "${SUITE_LOG:-}" ] || [ ! -f "$SUITE_LOG" ] || suite_failing_names "$SUITE_LOG"; } | python3 -I "$HISTW" suite --project "$PROJ" --verb="$HIST_VERB" --name="$HIST_NAME" \
+    --branch="$HIST_BRANCH" --head="$HIST_HEAD" --tree="$HIST_TREE" --command="$TESTCMD" --env-id="${SUITE_ENV_ID:-}" --result="$1" --started="$HIST_START" \
+    --seconds="$((SECONDS - HIST_T0))" --load-start="$HIST_LOAD0" --log="${SUITE_LOG:-}" --gates="${GATES_FILE:-}" --names=- || true
+}
+# suite_failing_names LOG -> the failing-test lines of a suite log (`FAIL name`, `FAIL: name` and `--- FAIL: name`), each once, in the order they appear: what the failure
+# report below prints and what the history of the run (history_end) stores
+suite_failing_names() { grep -E '^(FAIL( |:)|--- FAIL: )' "$1" | awk '!s[$0]++' || true; }
 # suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
 # tests/run.sh) and failing tests (`FAIL name`, `FAIL: name` and `--- FAIL: name` lines) its report holds, where its own logs of the failed
 # steps are (`logs of the failed steps: DIR`), and the log of the whole run. Any gate may print these lines (the help of feature verify names
@@ -858,7 +890,7 @@ suite_failure_report() {
   local f=${SUITE_LOG:-} steps names dir gate
   if [ -n "$f" ] && [ -s "$f" ]; then
     steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
-    names=$(grep -E '^(FAIL( |:)|--- FAIL: )' "$f" | awk '!s[$0]++')
+    names=$(suite_failing_names "$f")
     dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
     gate=$(sed -n 's/^== gate \(.*\): fail ([0-9]*s)$/\1/p' "$f" | head -1)
     [ -z "$gate" ] || echo "failing gate: $gate"

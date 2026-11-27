@@ -403,9 +403,11 @@ case $verb in
     other_runs_warning
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     t0=$SECONDS
+    history_prepare "feature verify" "$NAME_ARG" "$BR" "$h"
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
     busy_end; hold_end
     suite_env_settle
+    history_end "$res"
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$BR")$(suite_env_note "$BR")"
     [ "$res" = pass ] || suite_failure_report

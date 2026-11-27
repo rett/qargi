@@ -81,6 +81,8 @@ rc=0
 ./features
 ./features/app-f.json
 ./features/app-f.json.lock
+./history
+./history/app.jsonl
 ./releases
 ./releases/app-develop.json
 ./releases/app-feature_f.json
@@ -88,3 +90,4 @@ rc=0
 ./suite-logs
 ./suite-logs/app.feature-f.log
 ./suite-logs/app.release-0.2.0.log
+./suite-logs/runs

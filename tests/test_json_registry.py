@@ -473,12 +473,12 @@ class Lint:
         for f in J.check_dir(self.kinds_dir):                                                                   # point 1
             self.fail(1, f.line())
         names = J.kind_names(self.kinds_dir)
-        KINDS_SEEN[:] = names
         regs = {}
         for n in names:
             reg, fs = J.load_registry(os.path.join(self.kinds_dir, n + ".json"))
             if reg is not None:
                 regs[n] = reg
+        KINDS_SEEN[:] = [n for n in names if n in regs and regs[n]["status"] != "draft"]       # as --regen has them: a draft is no kind a fixture names, so the `kind-wrong` file never depends on one
         expected_rules = rules_text()
         if not os.path.isfile(os.path.join(self.fix, "rules.json")) or read(os.path.join(self.fix, "rules.json")) != expected_rules:
             self.fail(2, "%s/rules.json is not the list of rules of this test (python3 tests/test_json_registry.py --regen)" % FIX)

@@ -41,6 +41,11 @@ case $area in
       case $_a in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show flow "${1:-}";; esac
     done
     exec python3 -B -I "$lib/run_plan.py" "$@";;
+  history) # The history of the whole-suite runs and the review reports (qargi history): it names the project itself and prints its own --json documents, so before the JSON wrapper too.
+    for _a in "$@"; do
+      case $_a in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show history;; esac
+    done
+    exec python3 -B -I "$lib/history.py" "$@";;
 esac
 # --json on any verb: the plan (or the output) as one JSON object (lib/jsonplan.py runs the call again without it). The marker says this
 # call is that run; it is taken out here so that nothing the verb starts sees it. help, the guard, completion and the run-event hooks never wrap.

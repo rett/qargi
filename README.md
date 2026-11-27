@@ -57,6 +57,8 @@ For read-only planning reports, `qargi backlog graph check|show|why --graph FILE
 
 `qargi flow plan check FILE [--json]` checks a run plan, one feature and the task nodes that merge into it, before anything is dispatched: it says whether the plan is valid, in which waves its nodes can run, and which unordered nodes could change the same path. It keeps no state, plans nothing and starts nothing. The [run plan reference](docs/reference/run-plan.md) gives the format, the finding codes and what the checker does not do.
 
+`qargi history [--kind suite|review] [--head SHA] [--json]` lists the history of a project: one entry for each whole-suite run of `feature verify` and `release verify` (the commit and tree, the command, the gates, the failing tests, the attempt, the log) and for each report `review check` read, newest first, and `qargi history show ID` prints one. The history is append-only evidence that a run can be cited by, never a gate. The [history reference](docs/reference/history.md) says what is recorded and where.
+
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
 [Codex as the lead](docs/members-and-providers/codex.md#codex-as-the-lead).

@@ -1187,9 +1187,11 @@ case $verb in
     other_runs_warning
     busy_begin release-verify "$VER"
     t0=$SECONDS
+    history_prepare "release verify" "$VER" "$on" "$h"
     if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
     busy_end
     suite_env_settle
+    history_end "$res"
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")$(suite_env_note "$on")"
     if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi

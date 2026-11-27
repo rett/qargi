@@ -143,7 +143,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "flow", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "flow", "history", "campaign", "ref", "start", "send", "status", "report", "noticed", "plan", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -716,6 +716,26 @@ COMMANDS = {
                                "The format, the codes and what it does not do are in docs/reference/run-plan.md."),
                          examples=["qargi flow plan check plan.json", "qargi flow plan check plan.json --json"]),
         },
+    },
+    "history": {
+        "summary": "The history of the whole-suite runs and of the review reports of a project: evidence, newest first",
+        "desc": ("Every run of qargi feature verify and qargi release verify leaves one entry in the history of its project when it ends, pass or fail (and as interrupted when the verb is "
+                 "stopped before it had a verdict), and every qargi review check of a report-only run of the lead's registry leaves one for the report. The file is STATE/history/PROJECT.jsonl: "
+                 "one JSON object a line, appended and never rewritten (mode 600 in a directory of mode 700). An entry is evidence and no gate: no verb decides from it, and what a verify means "
+                 "is still the record of the branch. A suite entry names the verb, the feature or version, the branch, the head and the tree of the head, the command and the id of verify.environment it ran under, "
+                 "each gate with its result and seconds, the result, the times, the failing tests (the lines the failure report prints, at most 200), the load average at the start and the end, the attempt "
+                 "(1 plus the earlier runs of the same head, tree and command) and the path of its log, kept under STATE/suite-logs/runs/ID.log (the newest 20 of a project, and the latest pass of each branch). "
+                 "A review entry names the run, the verdict word, the sha256 of the report (never its text), the base, and the role, class, runtime, model and vendor (the family the runtime's descriptor gives) "
+                 "as the lead's registry records them. Lead only under the current member guard, as qargi backlog graph is. The page docs/reference/history.md describes the file; "
+                 "qargi help json qargi-history-entry and qargi-history show the fields."),
+        "scripts": ["history.py"],
+        "usage": [("ACTION", ("show",), True), ("ID", "none", True)],
+        "opts": [PROJECT_OPT,
+                 opt("--kind", "only entries of this kind: suite or review (a list, not show)", "KIND", ("suite", "review")),
+                 opt("--head", "only entries of this commit, a prefix of 4 to 64 hex digits of the head of a suite entry or the base of a review entry (a list, not show)", "SHA"),
+                 opt("--limit", "at most N entries, 1 to 1000 (default 20; a list, not show)", "N"),
+                 opt("--json", "print one document of the kind qargi-history (qargi help json qargi-history): project, matched, skipped and the entries; with show, the entry as stored (qargi-history-entry)")],
+        "examples": ["qargi history", "qargi history --kind suite --head 1a2b3c4d --limit 5", "qargi history show 0123456789abcdef --json"],
     },
     "ref": {
         "summary": "Record in the lead's ref journal a branch move or a branch that no flow verb made",
@@ -2097,7 +2117,7 @@ for _area, _names, _words in (
     # only read
     ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt card check"),
     ("feature", "", "list"), ("marshal", "", "status check handoff"), ("upstream", "", "status review"), ("campaign", "", "show check log"),
-    ("backlog", "", "graph list"), ("flow", "", "plan"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
+    ("backlog", "", "graph list"), ("flow", "", "plan"), ("history", "", ""), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
     ("instances", "", "list show"), ("skill", "", "list show effective check"), ("tool", "", "list show effective check"), ("packs", "", "load check"),
     ("status", "", ""), ("report", "", ""), ("watch", "", ""), ("methodology", "", "list show check files deployment"),
     ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
@@ -2127,7 +2147,7 @@ TOPICS = {
         "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
         "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
         "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
-        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, flow plan, plan show, "
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, role card, backlog list and graph, flow plan, history, plan show, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "

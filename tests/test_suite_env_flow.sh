@@ -45,12 +45,15 @@ setenv() {
 unsetenv() { jq 'del(.verify)' "$P" > "$P.new" && mv "$P.new" "$P"; python3 -I "$SE" approved set app null --by test --state "$T/s" >/dev/null; }
 rawenv() { jq --argjson d "$1" '.verify = {environment: $d}' "$P" > "$P.new" && mv "$P.new" "$P"; }   # a hand edit of the answers file only
 calls() { grep -c "^argv-ok" "$T/fakelog" 2>/dev/null || true; }
+# the number of entries in the history of the runs: a run the launcher refused is no run, so no refusal adds one (not even an interrupted one)
+hcount() { if [ -f "$T/s/history/app.jsonl" ]; then wc -l < "$T/s/history/app.jsonl"; else echo 0; fi; }
 reset() { rm -f "$T/ran" "$T/fakelog" "$FREC" "$DREC"; }
 setcmd "echo suite-ran; touch $T/ran"
 $F start f >/dev/null 2>&1
 
 # offscen: the verbs with the setting off, run in order and printed normalised (a sha, the scratch directory, the times). tests/fixtures/suite-env-off.golden is
 # what the tree before verify.environment printed for it (the tree at 791595a1, before the flow verbs used the launcher); this tree must print the same, byte for byte.
+# The one difference is the state listing at its end: the history of the runs (history/PROJECT.jsonl and suite-logs/runs/, lib/history.py) is new, added to the listing by hand.
 # OFF_GOLDEN_WRITE=FILE OFF_GOLDEN_ONLY=1 writes the file from the tree under test: only a deliberate change of what the verbs print with the setting off may do that.
 offscen() {
   say() { echo "### $*"; "$DA" "$@" 2>&1; echo "rc=$?"; }
@@ -89,7 +92,9 @@ run $F status f
 setcmd "echo suite-ran; touch $T/ran"
 setenv '{"cpu_quota":"max"}'
 mode ok
+hn=$(hcount)
 reset; run $F verify f
+[ "$(hcount)" = "$hn" ] && ok "a run the launcher refused after the suite was started adds no entry to the history (not an interrupted one)" || no "refused run in the history: $(tail -1 "$T/s/history/app.jsonl")"
 [ "$rc" = 1 ] && saw 'verify-env-cpu-readback' && saw '^plan token: [0-9a-f]{12}' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && grep -qx 'argv-ok CPUWeight=100' "$T/fakelog" && ! grep -q 'argv-BAD' "$T/fakelog" \
   && ok "cpu-readback: a run that is not in a scope of its own is refused; the scope route's argument list is the fixed one; nothing ran or was recorded" || no "readback: rc=$rc: $(out); $(cat "$T/fakelog" 2>&1)"
 setenv '{"cpu_quota":"200%"}'
@@ -98,7 +103,8 @@ reset; run $F verify f
 setenv '{"cpu_quota":"max"}'
 mode old; reset; run $F verify f
 [ "$rc" = 1 ] && saw 'verify-env-cpu-systemd-too-old' && saw '254' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ! grep -q argv-ok "$T/fakelog" && ok "cpu-systemd-too-old: systemd 253 is refused before anything runs" || no "old: rc=$rc: $(out)"
-mode nouser; reset; run $F verify f
+mode nouser; hn=$(hcount); reset; run $F verify f
+[ "$(hcount)" = "$hn" ] && ok "a run that left no report adds no entry to the history" || no "no-report run in the history: $(tail -1 "$T/s/history/app.jsonl")"
 [ "$rc" = 1 ] && saw 'verify-env-cpu-no-user-manager' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "cpu-no-user-manager: a scope that cannot be made is refused, not a test failure" || no "nouser: rc=$rc: $(out)"
 mkdir -p "$T/farm"
 for d in ${PATH_PLAIN//:/ }; do for f in "$d"/*; do [ -e "$f" ] || continue; b=${f##*/}; case $b in systemd-run*) continue;; esac; [ -e "$T/farm/$b" ] || ln -s "$f" "$T/farm/$b"; done; done
@@ -428,12 +434,15 @@ if [ "\$n" = 2 ]; then for i in "\${!args[@]}"; do case \${args[i]} in CPUQuota=
 exec "$real" "\${args[@]}"
 EOF
   chmod +x "$T/tamper/systemd-run"
+  hn=$(hcount)
   reset; PATH=$T/tamper:$PATH_PLAIN; export PATH; run $F verify f; tokt=$(tokof "$(out)")
+  [ "$(hcount)" = "$hn" ] && ok "the run the launcher refused after the suite had started adds no entry to the history: it is no run, and no attempt" || no "refused run in the history: $(tail -1 "$T/s/history/app.jsonl")"
   [ "$rc" = 1 ] && saw 'verify-env-cpu-readback' && saw 'the launcher refused this run' && [ -n "$tokt" ] && [ "$(grep -c '^plan token: ' "$T/o")" = 1 ] && saw -- '--waive-environment cpu --plan [0-9a-f]{12} --approved' \
     && [ ! -f "$FREC" ] && ok "the attempt passed and the run was refused: the token the message promises is printed, for the refused part; nothing was recorded" || no "refused after a passing attempt: rc=$rc $(out)"
   reset; run $F verify f --waive-environment cpu --plan "$tokt" --approved "the owner said so"
   [ "$rc" = 0 ] && saw 'waived for this run, and the attempt before it applied every part' && [ "$(jq -r '.environment.parts.cpu' "$FREC")" = applied ] && ! saw 'waived-failed' && [ -f "$T/ran" ] \
     && ok "the retry takes that token: the part the run refused once is applied this time, recorded applied" || no "retry after a refused run: rc=$rc $(out)"
+  [ "$(tail -1 "$T/s/history/app.jsonl" | jq -r '[.result, .attempt] | join(" ")')" = "pass 1" ] && ok "the waived re-run of the refused run is attempt 1 in the history: the refusal did not count" || no "attempt after a refusal: $(tail -1 "$T/s/history/app.jsonl")"
   reset; run $F verify f --waive-environment cpu --plan "$tokt" --approved "the owner said so"
   [ "$rc" = 1 ] && saw 'verify-env-waive-used' && ! saw '^plan token: ' && [ ! -f "$T/ran" ] && ok "that token is spent: used again it is refused, and with nothing refused no new one is printed" || no "reuse after a refused run: rc=$rc $(out)"
   nofake; unsetenv
