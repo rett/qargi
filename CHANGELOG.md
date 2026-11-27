@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-11-26
+
 ### Added
 - Four JSON documents are pinned, each with an integer `schema` and a `kind`: `qargi-marshal-status` (`marshal status --json`), `qargi-marshal-check` (`marshal check --json`), `qargi-handoff` (`marshal handoff --json`) and `qargi-refusal` (the object of the `qargi-refusal/1` line). Their shapes are the registry files of `lib/kinds/`, their golden files and broken cases are in `tests/fixtures/json/` (a consumer copies the tree to qualify a reader), `python3 tests/test_json_registry.py` and `bash tests/test_json_live.sh` lint them against the files and against the real output of every verb on both backends of the marshal, and `docs/reference/json-output.md` holds the rule (integers within 2^53 - 1, what raises the integer, the exit rule) and what each verb writes.
 - `qargi help json [KIND]` prints the rule and the kinds, or the fields of one kind (an unknown kind exits 2), and `qargi help json KIND --json` prints the registry file itself; `json` is a help topic, so it is in `qargi help`, the manual page and the completion.
