@@ -76,7 +76,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        the source again (another run may have refreshed it while this one waited: when it lasts now the lock is released and the run goes on), and otherwise
                        runs the command once, read-only in a scratch directory of its own, with the environment a member run gets and the variable of dispatch.home naming the
                        source's directory, the prompt on its standard input and its output discarded and never printed (it can carry tokens); it is stopped when it outlives
-                       timeout_seconds or the runner is signalled. The run prints qargi: refreshing the sign-in of RUNTIME (expires in N s), reads the source again and lets the
+                       timeout_seconds or the runner is signalled; it holds the lock descriptor too (pass_fds), so a runner killed with SIGKILL leaves the lane held until it ends, and the lane record names it as the member. The run prints qargi: refreshing the sign-in of RUNTIME (expires in N s), reads the source again and lets the
                        lock go. A command that fails or times out, a file it leaves as it was, or a token that still does not last (the run's need, and min_remaining_seconds) is the
                        refusal runtime-signin-expiring with cause refresh-failed, naming the login as before; never a second try in one run. --dry-run prints HOME_REFRESH= and
                        refreshes nothing; local prepare never does. --dry-run prints HOME_COPIES=NAME<-PATH (the path, never a content); dispatch.json records home.private:
@@ -644,6 +644,7 @@ def take_lock(home, runtime, sig):
         for path in lock_files(home):
             held.append(lock_one(path, home, runtime, sig))
             home.setdefault("locked", set()).add(path)
+            home.setdefault("lockfds", {})[path] = held[-1]
     except BaseException:
         lane_clear(home)
         release_lock(held)
@@ -652,10 +653,12 @@ def take_lock(home, runtime, sig):
 
 
 def lane_clear(home):
-    """Remove the lane record this run wrote beside each lock it holds (home["locked"]), while it still holds them; the set is emptied."""
+    """Remove the lane record this run wrote beside each lock it holds (home["locked"]), while it still holds them; the set (and the descriptors kept for the refresh
+    child, home["lockfds"]) is emptied."""
     for path in sorted(home.get("locked") or ()):
         LN.clear_record(os.path.dirname(path))
     home["locked"] = set()
+    home["lockfds"] = {}
 
 
 def release_lock(held):
@@ -830,7 +833,9 @@ def refresh_note(home, why):
 def refresh_signin(home, to, src, plan, sig, data, left, need):
     """The sign-in of the private link `to` would not last the run: take the lock beside its source (the one a plain link uses, unless this run holds it
     already), read the source again (another run may have refreshed it while this one waited: when it lasts now, the lock is released and the run goes
-    on), else run the declared command once (private.refresh), read the source again and release the lock. The command makes the runtime use, and so refresh, the
+    on), else run the declared command once (private.refresh), read the source again and release the lock. The refresh child is given the descriptor of the lock
+    (pass_fds: the one taken here, or the one this run holds already) and the lane record names it as the member, so a runner killed with SIGKILL leaves the lane
+    held until the refresh ends, as it does for the member of a run. The command makes the runtime use, and so refresh, the
     real sign-in: its variable (dispatch.home.env) names the directory of the source, the prompt is its standard input, its output is discarded and never
     printed (it can carry tokens), it runs in a scratch directory of its own with the environment a member run gets, and is stopped when it outlives timeout_seconds
     or the runner is signalled. Returns the new (copy bytes, seconds left); a command that fails or times out, a source it leaves unchanged and a token that still
@@ -841,7 +846,7 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
     home["refresh_tried"].add(to)
     lock = os.path.join(os.path.dirname(os.path.realpath(src)), LOCK_NAME)
     fd = None if lock in home["locked"] else lock_one(lock, home, home["runtime"], sig, "refresh")
-    scratch = None
+    scratch, named = None, False
     try:
         data2, left2 = load_copy(home, to, src)          # another run may have refreshed it while this one waited
         if left2 >= need:
@@ -859,13 +864,16 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
         with open(os.path.join(scratch, "prompt"), "w", encoding="utf-8") as pf:
             pf.write(spec["prompt"] + "\n")
         why = None
+        keep = [x for x in (fd if fd is not None else (home.get("lockfds") or {}).get(lock),) if x is not None]   # the lock this run holds: the refresh keeps it too
         try:
             with open(os.path.join(scratch, "prompt"), "rb") as sin:
                 proc = subprocess.Popen(argv, cwd=work, env=env, stdin=sin, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
-                                        start_new_session=True, close_fds=True)
+                                        start_new_session=True, close_fds=True, pass_fds=tuple(keep))   # so a runner killed with SIGKILL leaves the lane held until it ends
         except OSError as e:
             proc, why = None, "the command could not be started: %s" % (e.strerror or e)
         if proc is not None:
+            LN.set_member(os.path.dirname(lock), proc.pid)           # the lane record names the refresh as the member while it runs
+            named = True
             try:
                 sig.armed = True
                 sig.check()
@@ -901,6 +909,8 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
         if fd is not None:
             LN.clear_record(os.path.dirname(lock))
             os.close(fd)
+        elif named:
+            LN.set_member(os.path.dirname(lock), None)               # the lock is this run's own and goes on: the refresh is over
 
 
 def private_record(home):

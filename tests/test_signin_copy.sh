@@ -410,6 +410,20 @@ wait_until 'grep -q "waiting for it to end" "$T/t2.out"' 30
   && ok "two runs started together refresh once and both finish: the one that waited read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
 rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode"
 
+# a runner killed with SIGKILL while its refresh command runs: the refresh got the lock descriptor, so the lane stays held until the command ends, and the lane record names it
+setprov fakeref; echo ok > "$T/refmode"; echo quick > "$T/mode"; signin 500; rm -f "$T/refresh.count" "$T/refresh.log" "$T/refresh-go" "$LOCKF"; : > "$T/refresh-gate"
+KREC=$MEM/.qargi-lane.json; prep rk1; RK1=$RUN; task
+( $DA local run "$RK1" > "$T/k1.out" 2>&1; echo $? > "$T/k1.rc" ) &
+wait_until 'grep -q "^PID=" "$T/refresh.log" 2>/dev/null && [ "$(jq -r .member.pid "$KREC" 2>/dev/null)" = "$(sed -n "s/^PID=//p" "$T/refresh.log")" ]' 30
+KPID=$(sed -n 's/^PID=//p' "$T/refresh.log"); KRUN=$(jq -r .runner.pid "$KREC")
+kill -KILL "$KRUN"; wait_until '[ -s "$T/k1.rc" ]' 30
+out=$($DA local list --lanes 2>&1)
+{ ! kill -0 "$KRUN" 2>/dev/null && kill -0 "$KPID" 2>/dev/null && ! flock -n "$LOCKF" true && [ "$(jq -r .kind "$KREC")" = refresh ] \
+  && grep -qE '^fakeref +~/.fakesi-members/.qargi-run.lock +held, member alive, runner gone +lead .* \(refresh, ' <<<"$out"; } \
+  && ok "SIGKILL of the runner during a refresh: the lane stays held while the refresh command lives (it holds the lock descriptor), and the lane record and local list --lanes name it" || no "lane after SIGKILL in a refresh: runner $KRUN refresh $KPID $(cat "$KREC" 2>&1) $out"
+: > "$T/refresh-go"; wait_until '! kill -0 "$KPID" 2>/dev/null && flock -n "$LOCKF" true' 30 && ok "when the refresh command ends the lane is free" || no "lane after the refresh: $(ls -lA "$MEM")"
+rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode" "$KREC" "$T/k1.rc"
+
 # a home with a plain link beside the private one holds the lock for the whole run: a refresh that is needed after the wait takes no second lock (no deadlock) and goes on
 setprov fakemixr; echo hold > "$T/mode"; echo ok > "$T/refmode"; signin 259200; rm -f "$T/hold-ready" "$T/hold-go" "$T/refresh.count" "$T/refresh.log" "$LOCKF"
 prep mr1; M1=$RUN; task; prep mr2; M2=$RUN; task

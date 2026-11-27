@@ -145,12 +145,12 @@ def read_record(d):
 
 
 def set_member(d, pid):
-    """Add the member (its pid and start token) to the record this process wrote in d; nothing when the record is not this process's."""
+    """Add the member (its pid and start token) to the record this process wrote in d, or remove it (pid None); nothing when the record is not this process's."""
     rec = _read(os.path.join(d, RECORD))
     mine = me()
     if not rec or not isinstance(rec.get("runner"), dict) or rec["runner"].get("pid") != mine["pid"] or rec["runner"].get("start") != mine["start"]:
         return
-    rec["member"] = {"pid": pid, "start": token(pid) or ""}
+    rec["member"] = {"pid": pid, "start": token(pid) or ""} if pid else None
     try:
         _atomic(os.path.join(d, RECORD), (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
     except OSError:
