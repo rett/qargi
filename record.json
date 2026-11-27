@@ -4,19 +4,13 @@
  "goal": "0.3.9: fixes found by the first CI run of develop (test_marshal_json refs minutes)",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-27T06:26:22Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-27T07:54:30Z",
- "finished_at": null,
+ "finished_at": "2026-11-27T08:12:02Z",
  "updated_by": "arc-claude-qargi",
- "rev": 3,
- "updated_at": "2026-11-27T07:54:30Z",
+ "rev": 4,
+ "updated_at": "2026-11-27T08:12:02Z",
  "feature": "release-039b",
  "project": "qargi"
 }
