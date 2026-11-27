@@ -148,7 +148,7 @@ sed -i 's|^    if hidden:$|    if False:|' "$T/cx.nohide/lib/local_run.py"
 cmp -s "$T/cx.nohide/lib/local_run.py" lib/local_run.py && no "the local run mutation nohide changed nothing"
 # a qargi local run that does not put the placeholder in a private copy: the copy holds the source's content at the paths the definition sets (the refresh token would reach the member)
 mkdir -p "$T/cx.noplaceholder"; cp -R lib agents "$T/cx.noplaceholder/"
-sed -i 's|^            at\[key\] = text$|            pass|' "$T/cx.noplaceholder/lib/local_run.py"
+sed -i 's|^\( *\)at\[key\] = text$|\1pass|' "$T/cx.noplaceholder/lib/local_run.py"
 cmp -s "$T/cx.noplaceholder/lib/local_run.py" lib/local_run.py && no "the local run mutation noplaceholder changed nothing"
 # a stub that writes through the sign-in file the run home links in: the caller's own file changes (on a copy of codex that declares the link plain: the shipped one declares it private, so the
 # same stub writes only to the run's own copy, which is no fault, as the case after the loop says)
