@@ -2743,7 +2743,7 @@ def check_signin_early(plan, sig):
 
 def run_owned(plan, run, pending, sig):
     check_signin_early(plan, sig)
-    home, pre = plan["home"], None
+    home, pre = plan.get("home"), None
     if home and home.get("wait") is not None:            # --wait: the lane is taken, or refused as lane-busy, before the attempt is recorded and before anything is made
         pre = take_lock(home, plan["runtime"], sig)
     try:
