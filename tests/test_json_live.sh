@@ -29,7 +29,7 @@ export QARGI_PROJECT=app
 unset GIT_TERMINAL_PROMPT
 export TMPDIR=$T/tmp; mkdir -p "$TMPDIR"
 JK="python3 -I $TOOL/lib/jsonkind.py"
-KINDS=$(ls lib/kinds | sed 's/\.json$//')
+KINDS=$(ls lib/kinds | sed -e '/^MANIFEST\.json$/d' -e 's/\.json$//')      # the manifest is no kind
 
 # the field of an output that its registry file does not name (drift), one per line; the prefix of a refusal line is taken off
 cat > "$T/drift.py" <<'PY'
@@ -84,7 +84,7 @@ lint() {
 
 # ================================================================ (1) the page says what each verb writes, in the words of the registry
 for k in $KINDS; do
-  w=$(jq -r .writes "lib/kinds/$k.json")
+  w=$(jq -r .writes "lib/kinds/$k.json" | tr -d '`')      # the page is compared without its backticks, so the sentence is too
   tr -d '`' < docs/reference/json-output.md | grep -qF -e "$w" && ok "docs/reference/json-output.md holds the writes sentence of $k" || no "docs/reference/json-output.md does not hold the writes sentence of $k: $w"
   grep -qF -e "\`$k\`" docs/reference/json-output.md && ok "the page names $k" || no "the page does not name $k"
 done

@@ -1,0 +1,59 @@
+{
+ "manifest": 1,
+ "kinds": [
+  {
+   "kind": "qargi-handoff",
+   "status": "pinned",
+   "schema": 1,
+   "sha256": "e5a8b2765e1fe0627889f41ed5688b3d518078dd93402d3e63f59bbfccaede9c"
+  },
+  {
+   "kind": "qargi-history",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "3c77d36056b0ad1a610c9355523de7a63678e0e56060bbe3710d88734af354f3"
+  },
+  {
+   "kind": "qargi-history-entry",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "545495e772c50b4f5c50c039fb2d3b3b8bc5b2a91f2c546cc9c90fd020480ef1"
+  },
+  {
+   "kind": "qargi-local-list",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "b868bc68301d022e9c8fd07bead3fb4ea75aefc6553668931ac280b076842cfd"
+  },
+  {
+   "kind": "qargi-marshal-check",
+   "status": "pinned",
+   "schema": 2,
+   "sha256": "9ec0832af31f915f9ce6712b696c799d335af52cb5234cee4db83735a004149a"
+  },
+  {
+   "kind": "qargi-marshal-status",
+   "status": "pinned",
+   "schema": 2,
+   "sha256": "07c3538c9437bb12206fa067075facaa52cdfb49bab626c8ba681bf06f3c386b"
+  },
+  {
+   "kind": "qargi-refusal",
+   "status": "pinned",
+   "schema": 1,
+   "sha256": "bd9da9108b9f1f424d69b83ee007d9714c947327539686b293c35014c657781e"
+  },
+  {
+   "kind": "qargi-run-plan",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "47a726bab7582051aa58e84dc6260a18069aeca977c3666438c4f843a27196e8"
+  },
+  {
+   "kind": "qargi-run-plan-check",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "83e4d839fa23b1cbc5ee855d22deaf6e6309a9709a5d28ef383d8afe20726baa"
+  }
+ ]
+}

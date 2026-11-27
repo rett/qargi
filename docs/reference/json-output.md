@@ -83,7 +83,8 @@ The draft is not pinned: it has no fixtures, and its integer may be raised witho
 | --- | --- |
 | `flow plan check FILE` | Nothing: the file is written by its author, and the checker only reads it. |
 | `flow plan check FILE --json` | Nothing: no state, no token, no network, no file; the plan, the roles qargi knows and the files a done command names are only read. |
-| `history --json`, `history show ID --json` | Nothing: the history file of the project is only read. (The entries are written by `feature verify`, `release verify` and `review check`: see [History](history.md).) |
+| `history --json` | Nothing: the file of the history is only read. |
+| `history show ID --json` | Nothing: `history show` only reads the file. (The entries are written by feature verify, release verify and review check; see the reference page of the history.) |
 | `local list --json` | Nothing: no state, no lock, no token, no network and no file; the registry, the run directories, the lane records and /proc are only read, and no process is signalled. |
 
 ## The refusal codes of the three verbs
@@ -110,6 +111,16 @@ A consumer may group failures into a few words. Where a pinned verb has a code f
 
 `marshal-remote-unreachable` is none of the seven: it says that the question could not be asked and that nothing was changed, and its exit status 3 says that asking again may work.
 
+## The manifest of the registry files
+
+`lib/kinds/MANIFEST.json` lists every registry file of `lib/kinds/`, pinned or draft: `{"manifest": 1, "kinds": [{"kind", "status" (`pinned` or `draft`), "schema" (the integer), "sha256" (of the bytes of `lib/kinds/KIND.json`)}]}`, sorted by kind. It is not a registry file and names no kind. `python3 lib/jsonkind.py manifest` prints it and `python3 lib/jsonkind.py manifest --check` says whether the committed file is what the registry files make now; `tests/test_json_registry.py` (point 7) fails when it is not, so a change of a registry file and its manifest travel in one commit.
+
+The release archive is `git archive` of the release tag, so `lib/kinds/MANIFEST.json` and the registry files are in it (`qargi-TAG/lib/kinds/`), and the lint fails on a file of `lib/kinds/` that `.gitattributes` marks `export-ignore`. A consumer pins the **sha256 of the manifest file of a release**:
+
+- Take the digest of the release it qualified against: `tar -xzOf qargi-TAG.tar.gz qargi-TAG/lib/kinds/MANIFEST.json | sha256sum` (the archive itself is checked against `qargi-TAG.tar.gz.sha256` of the same release). An installed qargi prints the digest of its own manifest in the last lines of `qargi help json`.
+- At run time, compare the digest of the installed manifest with the pin. Equal: every registry file, and so every schema integer, is the one the consumer qualified. Different: read the installed manifest, which says for each kind its `status`, its `schema` and the `sha256` of its file, so the consumer sees which kind changed and takes `tests/fixtures/json/KIND/vN/` of the new integer to qualify again.
+- A consumer that reads some kinds only pins the `sha256` of those entries instead, or the `schema` of each; the digest of the whole file moves with every kind, a draft included.
+
 ## Qualifying a reader
 
 `tests/fixtures/json/` is a plain tree that a consumer copies and needs nothing else of this repository for. For each kind it holds a directory for each integer (`qargi-handoff/v1/`) with the registry file as it was at the pin (`registry.json`, never changed afterwards), real output of qargi (`valid.json`, `valid-minimal.json` with the required fields only, and more), a file with a field the registry does not name (`valid-unknown-field.json`), one file for each way to break a document (`broken/RULE.json`) and `cases.json`, which lists every file as `{file, expect, rule, applies}`. `rules.json` gives each rule id a sentence.
@@ -120,4 +131,4 @@ A consumer may group failures into a few words. Where a pinned verb has a code f
 - The files of `qargi-refusal` are the whole line with its prefix (`qargi-refusal/1 {...}`); two broken files break the prefix.
 - When a kind changes in a way that raises its integer, the old directory stays and a new one is made, so that a reader of the old integer keeps qualifying.
 
-qargi's own checks are `python3 tests/test_json_registry.py` (the registry files are well formed, every fixture is what `cases.json` says, the live registry is the frozen copy plus additions that keep the integer, every field is in a fixture, the frozen copies equal the ones at the last release tag) and `bash tests/test_json_live.sh`, which runs every pinned verb on both backends of the marshal and validates its real output against the registry.
+qargi's own checks are `python3 tests/test_json_registry.py` (the registry files are well formed, every fixture is what `cases.json` says and none closes an `x-open` enum, the live registry is the frozen copy plus additions that keep the integer, every field is in a fixture, the frozen copies equal the ones at the last release tag, the manifest is what the registry files make now) and `bash tests/test_json_live.sh`, which runs every pinned verb on both backends of the marshal and validates its real output against the registry.

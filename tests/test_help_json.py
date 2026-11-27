@@ -20,7 +20,7 @@ def run(cmd, *args):
 
 
 def kind_files():
-    return sorted(glob.glob(os.path.join(KINDS, "*.json")))
+    return sorted(p for p in glob.glob(os.path.join(KINDS, "*.json")) if os.path.basename(p) != "MANIFEST.json")      # the manifest is no registry file
 
 
 def registry(path):
@@ -82,6 +82,15 @@ class List(unittest.TestCase):
         self.assertIn("`schema`", text)
         listed = set(re.findall(r"(?m)^  (qargi-[a-z0-9-]+) +\(schema", text))
         self.assertEqual(listed, {registry(p)["kind"] for p in kind_files()})
+
+    def test_the_list_names_the_digest_of_the_manifest(self):
+        import hashlib
+        with open(os.path.join(KINDS, "MANIFEST.json"), "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        rc, out, err = run(HELP)
+        self.assertEqual((rc, err), (0, b""))
+        self.assertIn(digest, re.sub(r"\s+", "", out.decode().split("Manifest", 1)[1].split("sha256", 1)[1]))
+        self.assertNotIn("MANIFEST", run(HELP, "qargi-handoff")[1].decode())
 
     def test_no_colour_sequence_when_the_output_is_not_a_terminal(self):
         self.assertNotIn(b"\x1b", run(HELP)[1])

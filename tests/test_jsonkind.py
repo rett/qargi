@@ -431,6 +431,45 @@ class RegistryFormat(Tmp):
         fs = J.check_dir(self.dir)
         self.assertEqual([(f.where, f.rule) for f in fs], [("qargi-second.json", "type-number")])
 
+    def test_the_manifest_lists_each_kind_with_the_digest_of_its_file(self):
+        import hashlib
+        self.put("qargi-marshal-check.json", self.reg())
+        r = self.reg()
+        r["kind"], r["status"] = "qargi-second", "draft"
+        r["document"]["properties"]["kind"] = {"const": "qargi-second"}
+        self.put("qargi-second.json", r)
+        text, fs = J.manifest(self.dir)
+        self.assertEqual(fs, [])
+        def digest(k):
+            with open(os.path.join(self.dir, k + ".json"), "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        want = [{"kind": k, "status": st, "schema": 1, "sha256": digest(k)} for k, st in (("qargi-marshal-check", "pinned"), ("qargi-second", "draft"))]
+        self.assertEqual(json.loads(text), {"manifest": 1, "kinds": want})
+        self.assertTrue(text.endswith("}\n"))
+        # the manifest is no registry file: the directory check leaves it alone, and it does not change the manifest
+        self.put("MANIFEST.json", text)
+        self.assertEqual(J.check_dir(self.dir), [])
+        self.assertEqual(J.manifest(self.dir), (text, []))
+        self.assertEqual(J.manifest_digest(self.dir), hashlib.sha256(text.encode()).hexdigest())
+        # a symlink of that name is still a file the directory does not allow, and a broken registry file gives no manifest
+        os.remove(os.path.join(self.dir, "MANIFEST.json"))
+        os.symlink(os.path.join(self.dir, "qargi-second.json"), os.path.join(self.dir, "MANIFEST.json"))
+        self.assertEqual([(f.where, f.rule) for f in J.check_dir(self.dir)], [("MANIFEST.json", "directory-entry")])
+        os.remove(os.path.join(self.dir, "MANIFEST.json"))
+        self.put("qargi-second.json", "{}")
+        text, fs = J.manifest(self.dir)
+        self.assertIsNone(text)
+        self.assertTrue(fs)
+        self.assertIsNone(J.manifest_digest(self.dir))
+
+    def test_the_committed_manifest_is_what_the_registry_files_make(self):
+        text, fs = J.manifest()
+        self.assertEqual(fs, [])
+        with open(os.path.join(KINDS, "MANIFEST.json"), encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), text)
+        self.assertEqual(run("manifest")[:2], (0, text))
+        self.assertEqual(run("manifest", "--check"), (0, "", ""))
+
     def test_every_rule_has_a_sentence(self):
         for r in RULE_NAMES:
             self.assertTrue(J.RULES[r].strip(), r)

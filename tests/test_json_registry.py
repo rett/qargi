@@ -8,7 +8,9 @@
   4. lib/kinds/KIND.json differs from the frozen KIND/vN/registry.json by more than R-J3 allows (a field removed or renamed, a type changed, an enum
      word lost, added to a closed enum, or a null added to any enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
   5. a field of the live registry appears in no valid fixture;
-  6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag).
+  6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag);
+  7. lib/kinds/MANIFEST.json (each kind with its status, schema and the sha256 of its registry file: `python3 lib/jsonkind.py manifest`) is missing or is not
+     what the registry files make now, or a file of lib/kinds/ is marked export-ignore, so the release archive would not hold it.
 
 A kind whose `status` is draft is held to point 1 only (and to the rules text of point 2): it has no fixtures, no frozen copy and no case file until it is pinned.
 
@@ -526,7 +528,31 @@ class Lint:
             except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
                 self.fail(2, "%s: the lint could not read the fixtures or the registry (%s: %s)" % (kind, type(e).__name__, e))
         self.release_tag(regs)
+        self.manifest()
         return self.problems
+
+    def manifest(self):
+        """Point 7: the manifest is what the registry files make now, and the release archive (git archive of the tag) holds it and them."""
+        J = self.J
+        text, fs = J.manifest(self.kinds_dir)
+        rel = "lib/kinds/" + J.MANIFEST_NAME
+        if text is None:
+            return                      # the registry files are not well formed: point 1 says which
+        p = os.path.join(self.kinds_dir, J.MANIFEST_NAME)
+        if not os.path.isfile(p):
+            self.fail(7, "%s is missing (python3 lib/jsonkind.py manifest > MANIFEST.new && mv MANIFEST.new %s)" % (rel, rel))
+        elif read(p) != text:
+            self.fail(7, "%s is not what the registry files make now (python3 lib/jsonkind.py manifest > MANIFEST.new && mv MANIFEST.new %s)" % (rel, rel))
+        rc, out = git(self.root, "rev-parse", "--show-toplevel")
+        if rc != 0 or os.path.realpath(out.strip()) != os.path.realpath(self.root):
+            self.notes.append("point 7: the export-ignore attribute was not read: %s is not the top of a git repository" % self.root)
+            return
+        names = ["lib/kinds/" + n for n in sorted(os.listdir(self.kinds_dir)) if n.endswith(".json")]
+        rc, out = git(self.root, "check-attr", "export-ignore", "--", *names)
+        for line in out.splitlines():
+            name, _, value = line.rpartition(": export-ignore: ")
+            if rc == 0 and value not in ("unspecified", "unset"):
+                self.fail(7, "%s is marked export-ignore (%s): the release archive would not hold it" % (name, value))
 
     def kind(self, kind, reg):
         J = self.J
@@ -796,11 +822,17 @@ def self_test():
         if not good:
             print("     wanted points %s%s, text %r; got:\n%s" % (points, " exactly" if exact else "", text, "\n".join("     " + l for l in out.splitlines()[-12:])))
 
-    def edit(root, kind, fn):
+    def edit(root, kind, fn, remake=True):
+        """fn changes the registry file of kind in the copy; the manifest is made again (point 7 is not what the case is about), unless remake is False."""
         p = os.path.join(root, "lib", "kinds", kind + ".json")
         reg = read_json(p)
         fn(reg)
         write(p, json.dumps(reg, indent=2) + "\n")
+        if remake:
+            K = load_module(root, "jsonkind")
+            text, _ = K.manifest(os.path.join(root, "lib", "kinds"))
+            if text is not None:
+                write(os.path.join(root, "lib", "kinds", K.MANIFEST_NAME), text)
 
     def vdir(root, kind):
         return os.path.join(root, FIX, kind, "v%d" % read_json(os.path.join(root, "lib", "kinds", kind + ".json"))["schema"])
@@ -885,6 +917,20 @@ def self_test():
         write(fp, json.dumps(frozen, indent=2) + "\n")
         expect("a frozen copy edited together with the live one is seen by the tag (point 6), not by point 4", r, [6], "differs from the file at the release 0.0.1", absent=(4,))
         expect("a tree with no repository passes, with point 6 skipped", copy_tree(), [], "point 6 skipped")
+        # point 7: the manifest of the registry files
+        r = copy_tree()
+        edit(r, "qargi-refusal", lambda g: g.update(about=g["about"] + " More."), remake=False)
+        expect("a registry file changed and the manifest not made again fails point 7", r, [7], "is not what the registry files make now", exact=True)
+        r = copy_tree()
+        os.remove(os.path.join(r, "lib", "kinds", "MANIFEST.json"))
+        expect("a missing manifest fails point 7", r, [7], "MANIFEST.json is missing", exact=True)
+        r = copy_tree()
+        write(os.path.join(r, "lib", "kinds", "MANIFEST.json"), read(os.path.join(r, "lib", "kinds", "MANIFEST.json")).replace('"pinned"', '"draft"', 1))
+        expect("a manifest edited by hand fails point 7", r, [7], "is not what the registry files make now", exact=True)
+        r = copy_tree()
+        write(os.path.join(r, ".gitattributes"), "lib/kinds/MANIFEST.json export-ignore\n")
+        subprocess.run(["git", "-C", r, "init", "-q"], check=True, capture_output=True, env=env)
+        expect("a manifest marked export-ignore fails point 7", r, [7], "the release archive would not hold it", exact=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("self-test: %s" % ("every break was found by the point it belongs to" if not fails else "%d unexpected result(s)" % fails))
