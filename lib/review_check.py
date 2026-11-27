@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Checks the structure of an agent's patch series and its context. Area-count warnings require substantive cohesion review.
-Source acceptance requires independent review of concrete changes and dependencies. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
+Source acceptance requires independent review of concrete changes and dependencies. Usage: review_check.py OUT [--allow-empty] [--lead]   (exit 1 on any FAIL or on a report-only run whose verdict is revise without --lead, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
 The DONE line of RUN/task.md is the check the lead set: a manifest whose done.command is another command fails (a missing done.command is a warning).
@@ -11,11 +11,12 @@ import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
-unknown = [a for a in sys.argv[1:] if a.startswith("--") and a != "--allow-empty"]
+unknown = [a for a in sys.argv[1:] if a.startswith("--") and a not in ("--allow-empty", "--lead")]
 if unknown or len(args) > 1:
-    print("qargi: %s\nusage: review_check.py OUT [--allow-empty]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
+    print("qargi: %s\nusage: review_check.py OUT [--allow-empty] [--lead]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
     sys.exit(2)
 allow_empty = "--allow-empty" in sys.argv   # a team member may return no commits (blocked, or nothing to change)
+lead_reads = "--lead" in sys.argv   # the lead reads a `verdict: revise` on purpose: without it that verdict is exit 1, so a script never takes a reviewer's request for changes as a pass
 run = args[0] if args else "."
 fails, warns, notes = [], [], []
 F = lambda m: fails.append("FAIL " + m)
@@ -117,6 +118,11 @@ if not patches:
                 print("\n".join(fails + warns + notes)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
             print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
             if warns or notes: print("\n".join(warns + notes))
+            if last == "verdict: revise":
+                if not lead_reads:
+                    print("qargi: %s ends with `verdict: revise`: the reviewer asks for changes, so this is exit 1 (the lead reads such a verdict on purpose with --lead)" % base, file=sys.stderr)
+                    sys.exit(1)
+                print(last)
             sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))

@@ -101,7 +101,7 @@ merge_detached() {
   case $EXTRA in agent/*) ;; *) die "only an agent/* task branch is merged into the detached branch $d (not $EXTRA)";; esac
   t=$(sha_of "$EXTRA"); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
   g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
-  run_warning "$EXTRA"
+  run_verified_gate "$EXTRA" "feature merge"
   detached_mix "$EXTRA" "$d"
   tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token --basis "project:name detached:ref head:sha task:ref task-head:sha" --verb "feature merge" --target "$PROJ:$d")
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
@@ -117,19 +117,25 @@ merge_detached() {
   echo "merged $EXTRA into the detached branch $d ($(g rev-parse --short "$d"))"
 }
 
-# run_warning BRANCH -> a warning on stderr for each run of BRANCH (an agent/SLUG branch: the registry's line with that slug, of this repository, not
-# cleaned, its directory still there) that has no passing verify (neither the registry's mark nor RUN/verified): its refs were never checked. The
-# merge goes on; the lead decides.
-run_warning() {
-  local slug=${1#agent/} rp d line
+# run_verified_gate BRANCH VERB -> refuses (feature-merge-unverified, exit 1: the count and the names of the runs, and a `more:` line with the command that verifies each) when a run
+# of BRANCH (an agent/SLUG branch: the registry's line with that slug, of this repository, not cleaned, its directory still there) has no passing verify (neither the
+# registry's mark nor RUN/verified): its refs were never checked. Nothing is changed; a branch with no such run passes.
+# shellcheck disable=SC2034  # REFUSE_MORE is read by refuse (lib/gitflow.sh)
+run_verified_gate() {
+  local slug=${1#agent/} rp d line n=0 lines='' rname
+  local -a names=()
   reg_load; rp=$(readlink -f -- "$REPO" 2>/dev/null) || rp=$REPO
   for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
     line=${LRUNS[$d]}
     [ "$(jq -r --arg s "$slug" --arg p "$rp" 'select(.slug == $s and ((.repo // "") == "" or .repo == $p) and ((.cleaned // "") == "")) | "x"' <<<"$line" 2>/dev/null)" = x ] || continue
     [ -d "$d" ] || continue
     [ -z "$(jq -r '.verified // ""' <<<"$line" 2>/dev/null)" ] && [ ! -f "$d/verified" ] || continue
-    echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
+    n=$((n + 1)); lines+="  $d: qargi local verify $d"$'\n'
+    rname=${d%/}; rname=$(printf '%s' "${rname##*/}" | tr -d '[:cntrl:]' | tr ',' '_' | cut -c1-200); names+=("${rname:-run}")
   done
+  [ "$n" -gt 0 ] || return 0
+  REFUSE_MORE="the refs of the repository were never checked for ${n} run(s) of $1; verify each, then merge:"$'\n'"${lines%$'\n'}"
+  refuse feature-merge-unverified verb="$2" branch="$1" count="$n" runs="$(IFS=,; echo "${names[*]}")"
 }
 # open_run_gate NAME -> refuses (feature-runs-open: the count and the names of the runs, and a `more:` line that lists each run with the command that closes it) when a run of
 # feature/NAME is open: prepared and not verified, verified and not applied, or applied and not merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a
@@ -246,6 +252,7 @@ feature_finish_resume() {
   h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
   tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record:name" --verb "feature finish" --target "$PROJ:$NAME_ARG")
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
+  echo "  merge into: develop; $([ -n "$pushd" ] && echo "push: yes, to origin/develop (origin holds the merge already)" || echo "push: no, develop stays local ($pushwhy)")"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
@@ -325,7 +332,7 @@ case $verb in
     [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
     g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $BR"
-    run_warning "$EXTRA"
+    run_verified_gate "$EXTRA" "feature merge"
     detached_mix "$EXTRA" "$BR"
     need_free_wt "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
@@ -469,7 +476,8 @@ case $verb in
     elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
     else pushd=1; fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha develop:sha keep:label delete-merged:label origin-branch:sha push:label" --verb "feature finish" --target "$PROJ:$NAME_ARG")
-    if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
+    if [ -n "$pushd" ]; then echo "push: yes, to origin/develop"; else echo "push: no, develop stays local ($pushwhy)"; fi
+    echo "merge into: develop"
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     # the commits the lead made with git on the branch, which the deletion takes into the journal (journal_reach): how many, and from where to where

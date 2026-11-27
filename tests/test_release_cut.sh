@@ -342,6 +342,7 @@ sstate() { jq -r '[.steps[] as $s | $s + ":" + (if .done[$s] then "done" else "p
 $REL verify 0.6.0 >/dev/null 2>&1
 out=$($REL plan 0.6.0 --date 2026-04-01 2>&1); st=$(tok <<<"$out")
 grep -q "^4. site: build the documentation site of the tag 0.6.0" <<<"$out" && grep -q "^publish is not in this cut" <<<"$out" && ! grep -q "^[0-9]*\. publish" <<<"$out" && ok "site plan: site is a step of the cut, publish is not" || no "site cut plan: $out"
+grep -qx "   merge into: master, then the tag into develop; push: no, master and develop stay local (no origin)" <<<"$out" && ok "the cut plan of a project with no origin says where finish merges and that nothing is pushed" || no "cut plan facts: $out"
 $REL plan 0.6.0 --date 2026-04-01 --plan "$st" --approved "ship the site too" >/dev/null 2>&1
 [ "$(sstate)" = "start:pending finish:pending site:pending" ] && ok "the recorded cut has start, finish and site (no origin, no push)" || no "site cut steps: $(sstate)"
 $REL start 0.6.0 --plan "$st" >/dev/null 2>&1; $REL verify 0.6.0 >/dev/null 2>&1

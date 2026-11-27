@@ -94,13 +94,13 @@ setcmd 'exit 0'
 feat() { $F start "$1" >/dev/null 2>&1; task "$2"; $F merge "$1" "agent/$2" >/dev/null 2>&1; $F verify "$1" >/dev/null 2>&1; }
 feat pd1 e1
 out=$($F finish pd1 2>&1); t_true=$(tok <<<"$out")
-[ "$(head -n 1 <<<"$out")" = "will push develop to origin" ] && ok "the first line of the plan says develop will be pushed (the default)" || no "default plan: $out"
+[ "$(head -n 1 <<<"$out")" = "push: yes, to origin/develop" ] && [ "$(sed -n 2p <<<"$out")" = "merge into: develop" ] && ok "the first lines of the plan say develop will be pushed, to origin/develop, and is the merge destination (the default)" || no "default plan: $out"
 out=$($DA project set app branches.push_develop false 2>&1) && grep -q 'branches.push_develop = false' <<<"$out" && ok "project set accepts branches.push_develop false" || no "project set: $out"
 out=$($DA project set app branches.push_develop maybe 2>&1); rc=$?
 [ $rc != 0 ] && grep -q 'branches.push_develop: true' <<<"$out" && [ "$(jq -r '.branches.push_develop' "$T/c/projects/app.json")" = false ] && ok "and refuses anything but true or false, changing nothing" || no "project set maybe rc=$rc: $out"
 d0=$(git -C "$R" rev-parse develop); od0=$(git -C "$T/origin.git" rev-parse develop)
 out=$($F finish pd1 2>&1); t_false=$(tok <<<"$out")
-[ "$(head -n 1 <<<"$out")" = "local only, will not push (branches.push_develop is false)" ] && ! grep -q ', push develop' <<<"$out" && [ -n "$t_false" ] && [ "$t_false" != "$t_true" ] && ok "false: the plan says local only, and its token is another plan" || no "false plan: $out"
+[ "$(head -n 1 <<<"$out")" = "push: no, develop stays local (branches.push_develop is false)" ] && [ "$(sed -n 2p <<<"$out")" = "merge into: develop" ] && ! grep -q ', push develop' <<<"$out" && [ -n "$t_false" ] && [ "$t_false" != "$t_true" ] && ok "false: the plan says local only, and its token is another plan" || no "false plan: $out"
 $F finish pd1 --plan "$t_true" --approved go >/dev/null 2>&1 && no "the token of the pushing plan was accepted after the policy changed" || ok "the token of the earlier plan is refused"
 [ "$(git -C "$R" rev-parse develop)" = "$d0" ] && ok "a refused token changes nothing" || no "develop moved on a refused token"
 out=$($F finish pd1 --plan "$t_false" --approved go 2>&1); rc=$?
@@ -109,13 +109,13 @@ out=$($F finish pd1 --plan "$t_false" --approved go 2>&1); rc=$?
 $DA project set app branches.push_develop true >/dev/null 2>&1
 feat pd2 e2
 out=$($F finish pd2 2>&1); t=$(tok <<<"$out")
-[ "$(head -n 1 <<<"$out")" = "will push develop to origin" ] && ok "true: the plan says it will push" || no "true plan: $out"
+[ "$(head -n 1 <<<"$out")" = "push: yes, to origin/develop" ] && ok "true: the plan says it will push" || no "true plan: $out"
 $F finish pd2 --plan "$t" --approved go >/dev/null 2>&1
 [ "$(git -C "$T/origin.git" rev-parse develop)" = "$(git -C "$R" rev-parse develop)" ] && ok "and finish pushes develop (the local-only merge of before goes with it)" || no "push after true"
 git -C "$R" remote remove origin
 feat pd3 e3
 out=$($F finish pd3 2>&1)
-[ "$(head -n 1 <<<"$out")" = "local only, will not push (the repository has no origin)" ] && ok "a repository with no origin: local only, whatever the answer" || no "no origin plan: $out"
+[ "$(head -n 1 <<<"$out")" = "push: no, develop stays local (the repository has no origin)" ] && ok "a repository with no origin: local only, whatever the answer" || no "no origin plan: $out"
 
 # --- 4. verify warns, and goes on, when another suite may be running
 $F start wn >/dev/null 2>&1; task g1; $F merge wn agent/g1 >/dev/null 2>&1

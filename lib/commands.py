@@ -410,7 +410,8 @@ COMMANDS = {
                                 "and the merge, local only, prints a plan and token like a merge into develop (--plan, --approved). A detached branch never meets develop, master, "
                                 "release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. "
                                 "For a feature, --plan and --approved are not used. When the registry of local runs names a run of BRANCH (its slug) that still exists and has no passing "
-                                "local verify, a warning names the run; the merge goes on. " + FLOW_UNREACHABLE_NOTE)),
+                                "local verify, the merge is refused (exit 1, code feature-merge-unverified, with the runs and the qargi local verify command for each) and nothing is changed; "
+                                "a run that is cleaned or whose directory is gone does not count. " + FLOW_UNREACHABLE_NOTE)),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
                            desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT, WAIVE_ENV_OPT, PLAN, APPROVED],
@@ -422,7 +423,7 @@ COMMANDS = {
                                  "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
                                  "it and its token covers origin's tip. The answer branches.push_features (never, when-shared, always; default never) decides whether feature start, "
-                                 "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. With the answer branches.push_develop false (default true) finish does not push develop either; the first line of its plan says 'will push develop to origin' or 'local only, will not push' with the reason (no origin, or the answer). A clean worktree of the feature under the "
+                                 "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. With the answer branches.push_develop false (default true) finish does not push develop either; the first line of its plan says 'push: yes, to origin/develop' or 'push: no, develop stays local' with the reason (no origin, or the answer), and the next line 'merge into: develop'. A clean worktree of the feature under the "
                                  "worktree root is detached and removed after the merge, when the branch is deleted. " + REMOTE_NOTE + " A merge that conflicts changes "
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists "
@@ -857,7 +858,7 @@ COMMANDS = {
                               + DRY_NOTE + " With fix it is for --push only (a usage error, exit 2, without it)."),
                         examples=["qargi release fix 0.2.4", "qargi release fix 0.2.4 --record", "qargi release fix 0.2.4 --push --dry-run"]),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED, DRY],
-                         desc=REMOTE_NOTE + " When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
+                         desc=REMOTE_NOTE + " The plan says what is pushed ('push: yes, to origin/BRANCH') and where the pull request merges ('merge into: master'). When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
                               "does not mention (never a refusal; the plan still has its token). An item is a line at the margin that starts with -, *, + or a number and a dot; it is mentioned when its leading `backticked term`, "
                               "else its first three words, occurs in the file, ignoring case and spacing. A notes file that is not on the branch is a warning. When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
                               "When a pull request for the branch is open already (found with gh pr list; a gh that cannot list it is caught by the refusal of gh pr create) the plan says so, "
@@ -875,7 +876,8 @@ COMMANDS = {
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
                             PLAN, APPROVED, RESOLVED_OPT],
-                           desc=("The plan lists the checks of the branch's pull request (gh pr checks: one line per check, pass, fail or pending) and refuses, without a token, while one fails or is pending, "
+                           desc=("The plan names the merge destinations ('merge into: master ...', then the tag into develop or the open release) and whether it pushes ('push: yes, to origin/master, origin/develop and the tag', or 'push: no' when the repository has no origin). "
+                                 "The plan lists the checks of the branch's pull request (gh pr checks: one line per check, pass, fail or pending) and refuses, without a token, while one fails or is pending, "
                                  "unless --ignore-checks WORDS is given; the plan token covers the words. A missing gh, no pull request or no checks is a warning in the plan, and the apply then refuses "
                                  "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
                                  "The second merge is of the master merge commit that carries the tag (message \"Merge tag 'VERSION' into develop\"); it may conflict, usually over the version number (the model says so), "
@@ -1678,7 +1680,8 @@ COMMANDS = {
         "scripts": ["review_check.py", "review.sh"],
         "verbs": {
             "check": verb("Check what a run returned: numbered patches, messages, manifest, groups", [("OUT", "dir")],
-                          [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
+                          [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)"),
+                           opt("--lead", "read a report whose verdict is revise on purpose (the lead taking in a review): exit 0 and the verdict line printed; without it that verdict is exit 1")],
                           desc=("Structural inspection of unsuccessful-attempt output is diagnostic, not acceptance; verify and apply refuse it. Verify, check and apply refuse OUT changed since acceptance; re-prepare for revised external output. "
                                 "Save staging uses a private directory with recorded device, inode and prepared identity. Reconciliation recovers only that owned stage; unowned or replaced stages are preserved and refused, and historical .save.* paths are never adopted. Retention bounds count copies, not bytes. "
                                 "An unfinished apply marked started refuses resume, clean and discard even after its shell dies: Git or a hook may still be alive. Preserve the worktree and record. An apply marked built can finish bookkeeping after its owner exits. Apply scrubs the private patch copy; a previous check cannot authorize replacement bytes. "
@@ -1691,6 +1694,8 @@ COMMANDS = {
                                 "Source acceptance requires independent review of concrete changes and dependencies. Reject semantically mixed work with concrete evidence. Keep one patch per actual commit and meaningful buildable commit boundaries. "
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
                                 "`verdict: accept` or `verdict: revise`, and the manifest.json (PREFIXmanifest.json) beside it; a missing manifest or verdict line fails, a missing Checked section warns. "
+                                "A report whose verdict is revise (the reviewer asks for changes) is exit 1 with a plain line on standard error that names the verdict, so a script or a DONE check never takes it for a pass; "
+                                "--lead is the lead reading that verdict on purpose: it keeps exit 0 and prints the verdict line. Any other verdict word behaves as before. "
                                 "A patch, or a touched_paths entry of the manifest, outside SCOPE fails: SCOPE is the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]. "
                                 "A manifest whose done.command is not the DONE line of RUN/task.md (the check the lead set) fails, with both commands named; a manifest with no done.command warns. "
                                 "Commits dated within two minutes of each other (made in one batch at the end) warn: explain the warning in the report. "
