@@ -423,6 +423,44 @@ out=$($DA local list --lanes 2>&1)
   && ok "SIGKILL of the runner during a refresh: the lane stays held while the refresh command lives (it holds the lock descriptor), and the lane record and local list --lanes name it" || no "lane after SIGKILL in a refresh: runner $KRUN refresh $KPID $(cat "$KREC" 2>&1) $out"
 : > "$T/refresh-go"; wait_until '! kill -0 "$KPID" 2>/dev/null && flock -n "$LOCKF" true' 30 && ok "when the refresh command ends the lane is free" || no "lane after the refresh: $(ls -lA "$MEM")"
 rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode" "$KREC" "$T/k1.rc"
+# a refresh command that leaves a process of its group that cannot be stopped (the stop is faked to report it): the refresh failed, its result is not read, and the lane stays held (the
+# descendant has the descriptor) with its record
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+import lane as LN
+d = tempfile.mkdtemp(dir=sys.argv[2])
+src, pidf = os.path.join(d, "auth.json"), os.path.join(d, "descendant.pid")
+open(src, "w").write("{}")
+spec = {"argv": ["sh", "-c", 'sleep 60 & echo $! >> "$1"; exit 0', "sh", pidf], "prompt": "ok", "timeout_seconds": 20}
+home = {"private": {"auth.json": {"refresh": spec}}, "from": {"auth.json": "~/.x/auth.json"}, "refresh_tried": set(), "refreshed": {}, "locked": set(), "runtime": "fakeref", "env": "X_HOME", "wait": None}
+plan = {"env": {}, "env_pass": [], "exe": "sh", "project": "p"}
+reads = []
+L.models_values = lambda *a: ["m"]
+L.refresh_argv = lambda home, plan, spec, exe=None: list(spec["argv"])
+L.load_copy = lambda home, to, src: (reads.append(1), (b"copy", 10))[1]
+L.signin_refusal = lambda home, to, left, plan, cause=None: RuntimeError("refused:%s" % cause)
+L.kill_group = lambda proc, grace=0: 1
+try:
+    L.refresh_signin(home, "auth.json", src, plan, L.Signals(), b"copy", 10, 1000)
+    print("NOEXC")
+except RuntimeError as e:
+    print(e)
+pid = int(open(pidf).read())
+fd = os.open(os.path.join(d, L.LOCK_NAME), os.O_RDWR)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    print("LOCK-FREE")
+except BlockingIOError:
+    print("LOCK-HELD")
+rec = LN.read_record(d)
+print("RECORD member=%s reads=%d" % (bool(rec and rec["member"]), len(reads)))
+os.killpg(os.getpgid(pid), 9)
+PY
+)
+{ grep -qx 'refused:refresh-failed' <<<"$got" && grep -qx 'LOCK-HELD' <<<"$got" && grep -qx 'RECORD member=True reads=1' <<<"$got" && grep -qF 'could not be stopped' <<<"$got"; } \
+  && ok "a refresh command that leaves a process that cannot be stopped is a refresh-failed: the result is not read, and the lane stays held with its record while the process lives" || no "refresh survivors: $got"
 
 # a home with a plain link beside the private one holds the lock for the whole run: a refresh that is needed after the wait takes no second lock (no deadlock) and goes on
 setprov fakemixr; echo hold > "$T/mode"; echo ok > "$T/refmode"; signin 259200; rm -f "$T/hold-ready" "$T/hold-go" "$T/refresh.count" "$T/refresh.log" "$LOCKF"

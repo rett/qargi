@@ -838,7 +838,8 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
     held until the refresh ends, as it does for the member of a run. The command makes the runtime use, and so refresh, the
     real sign-in: its variable (dispatch.home.env) names the directory of the source, the prompt is its standard input, its output is discarded and never
     printed (it can carry tokens), it runs in a scratch directory of its own with the environment a member run gets, and is stopped when it outlives timeout_seconds
-    or the runner is signalled. Returns the new (copy bytes, seconds left); a command that fails or times out, a source it leaves unchanged and a token that still
+    or the runner is signalled. Returns the new (copy bytes, seconds left); a command that fails or times out, one that leaves a process of its group that cannot be
+    stopped (the result is then not read, and the record of the lane stays), a source it leaves unchanged and a token that still
     does not last (the larger of need and min_remaining_seconds) are the refusal runtime-signin-expiring with the cause refresh-failed. Never more than once for a link
     in one run (home["refresh_tried"]). home["refreshed"][to] says whether the command ran and made the token last; nothing else of it is kept or printed."""
     spec = home["private"][to]["refresh"]
@@ -846,7 +847,7 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
     home["refresh_tried"].add(to)
     lock = os.path.join(os.path.dirname(os.path.realpath(src)), LOCK_NAME)
     fd = None if lock in home["locked"] else lock_one(lock, home, home["runtime"], sig, "refresh")
-    scratch, named = None, False
+    scratch, named, survivors = None, False, 0
     try:
         data2, left2 = load_copy(home, to, src)          # another run may have refreshed it while this one waited
         if left2 >= need:
@@ -880,20 +881,25 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
                 code = proc.wait(timeout=spec["timeout_seconds"])
                 sig.armed = False
                 if group_left(proc.pid):
-                    kill_group(proc)
+                    survivors = kill_group(proc)
                 if code != 0:
                     why = "the command exited with status %d" % code
             except subprocess.TimeoutExpired:
                 sig.armed = False
-                kill_group(proc)
+                survivors = kill_group(proc)
                 why = "the command did not end in %d s" % spec["timeout_seconds"]
             except BaseException:
                 sig.armed = False
-                kill_group(proc)
+                survivors = kill_group(proc)
                 raise
             finally:
                 sig.armed = False
-        data3, left3 = load_copy(home, to, src)
+            if survivors:
+                why = "the command left %s that could not be stopped (the lane stays held until they end)" % ("a process" if survivors == 1 else "processes")
+        if survivors:                                    # the result is not read nor accepted while a process of the command runs: it may still be writing the sign-in
+            data3, left3 = None, left2
+        else:
+            data3, left3 = load_copy(home, to, src)
         if why is None and digest_of(src) == before:
             why = "the command left the sign-in file as it was"
         if why is None and left3 < max(need, spec.get("min_remaining_seconds", 0)):
@@ -907,9 +913,10 @@ def refresh_signin(home, to, src, plan, sig, data, left, need):
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
         if fd is not None:
-            LN.clear_record(os.path.dirname(lock))
+            if not survivors:                                        # a process of the command that is left holds the lock: its record stays and names it
+                LN.clear_record(os.path.dirname(lock))
             os.close(fd)
-        elif named:
+        elif named and not survivors:
             LN.set_member(os.path.dirname(lock), None)               # the lock is this run's own and goes on: the refresh is over
 
 
