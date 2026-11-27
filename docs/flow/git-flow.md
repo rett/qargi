@@ -62,8 +62,18 @@ refusal changes nothing.
    - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
-   - `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is applied and merged;
-     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest, one line for each kept run; over hundreds
+   - `qargi local list --scratch DIR` shows each run's role, slug, age, whether it is applied and merged, and its STATE: `prepared` (no
+     `qargi local run` has started it: a run of an in-session member is always this), `waiting` (its runner waits for a sign-in lane),
+     `running`, `ended` (it finished, or its runner is gone) or `unknown`. The STATE is for your eyes only: it is read from the run's
+     `dispatch.json` and the runner's process (its pid and start token; nothing is signalled) and decides nothing that verify, clean or apply
+     do. `--json` prints the same list as one document of the draft kind `qargi-local-list` (its fields are in
+     [JSON output](../reference/json-output.md#draft-kinds): the run, its role, slug, age in seconds, applied, merged, runtime, state, the
+     whole seconds it waited for a lane and the repository path your registry recorded for it), and with `--lanes` the lanes in place of
+     the runs.
+   - `qargi local verify` and `qargi local clean` record the seconds of each phase in the run's registry line and print one `timings:` line
+     when you give `--timings` (one for all the runs of `verify --mine`, `clean --applied` and `clean --stale --yes`, which also ask the
+     origin for its refs once for all of them, never again in the next call).
+   - `qargi local clean --applied --scratch DIR` cleans the runs that are applied and merged and keeps the rest, one line for each kept run; over hundreds
      of run directories both verbs read the registry once and ask the repository's refs once for all the runs. A legacy run (made before
      the lifecycle) that is kept because its refs changed since it was prepared gets a line with the one command to run next: when its work
      is merged, `qargi local clean RUN --discard` once its `out/` is archived. `qargi local clean --applied --legacy --scratch DIR` does both

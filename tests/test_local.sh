@@ -400,13 +400,56 @@ SB=$(applied "$LB" agent/lb); git -C "$T/r6" update-ref refs/heads/agent/lb "$SB
 SD=$(applied "$LD" agent/ld); git -C "$T/r6" update-ref refs/heads/feature/ld "$SD"
 before=$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)
 out=$(./bin/qargi local list --scratch "$T/ls"); rcl=$?
-[ $rcl = 0 ] && [ "$(head -1 <<<"$out" | awk '{print $1,$2,$3,$4,$5,$6}')" = "ROLE SLUG AGE APPLIED MERGED RUN" ] \
-  && [ "$(awk '$2=="la"{print $1,$4,$5,$6}' <<<"$out")" = "build yes yes $LA" ] && [ "$(awk '$2=="lb"{print $1,$4,$5}' <<<"$out")" = "build yes no" ] \
+[ $rcl = 0 ] && [ "$(head -1 <<<"$out" | awk '{print $1,$2,$3,$4,$5,$6,$7}')" = "ROLE SLUG AGE APPLIED MERGED STATE RUN" ] \
+  && [ "$(awk '$2=="la"{print $1,$4,$5,$6,$7}' <<<"$out")" = "build yes yes prepared $LA" ] && [ "$(awk '$2=="lb"{print $1,$4,$5}' <<<"$out")" = "build yes no" ] \
   && [ "$(awk '$2=="lc"{print $1,$4,$5}' <<<"$out")" = "build no no" ] && ! grep -q "$LD" <<<"$out" && [ "$(wc -l <<<"$out")" = 4 ] \
-  && ok "list --scratch DIR: role, slug, age, applied and merged of each run in that directory only" || no "list: rc=$rcl $out"
+  && ok "list --scratch DIR: role, slug, age, applied, merged and state of each run in that directory only" || no "list: rc=$rcl $out"
 out=$(./bin/qargi local list); for sl in la lb lc ld; do awk -v s=$sl '$2==s{f=1} END{exit !f}' <<<"$out" || no "the registry list lacks $sl"; done
 awk '$2=="ld"{f=1} END{exit !f}' <<<"$out" && ok "list with no --scratch reads the registry (runs that still exist)" || no "registry list: $out"
 [ "$before" = "$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)" ] && ok "and list changes nothing" || no "list changed a file"
+# STATE (display only) and the document of list --json: prepared (no dispatch.json), then running, waiting, ended and unknown from start records written by hand, the runner a live
+# process (a sleep) with its start token; a runner that is gone, or whose pid another process now has (another token), is ended
+pidtok() { sed 's/^.*) //' "/proc/$1/stat" | awk '{print $20}'; }
+spawn_bg sleep 600; SLP=$SPAWNED_PID; SLT=$(pidtok "$SLP")
+spawn_bg sleep 600; DEADP=$SPAWNED_PID; DEADT=$(pidtok "$DEADP"); kill "$DEADP"; wait "$DEADP" 2>/dev/null
+lst_state() { ./bin/qargi local list --scratch "$T/ls" | awk -v s="$1" '$2 == s {print $6}'; }
+rec() { jq -n --argjson p "$2" --arg t "$3" --arg o "$4" --argjson w "$5" "{outcome:\$o,runner:\$p,runner_start:\$t,member:null,lock_wait_s:\$w} + $6" > "$1/dispatch.json"; }
+{ [ "$(lst_state la)" = prepared ] && [ "$(lst_state lb)" = prepared ] && [ "$(lst_state lc)" = prepared ]; } && ok "STATE: a run with no dispatch.json is prepared" || no "state prepared: $(./bin/qargi local list --scratch "$T/ls")"
+rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" running 2.3 '{waiting_since:"2026-01-02T03:04:05Z"}'; rec "$LCC" "$DEADP" "$DEADT" running 0 '{}'
+{ [ "$(lst_state la)" = running ] && [ "$(lst_state lb)" = waiting ] && [ "$(lst_state lc)" = ended ]; } \
+  && ok "STATE: a live runner is running, or waiting when its record says waiting_since; a runner that is gone is ended" || no "state: $(./bin/qargi local list --scratch "$T/ls")"
+rec "$LA" "$SLP" 1 running 0 '{}'; rec "$LB" "$SLP" "$SLT" ok 0 '{}'; echo 'not json' > "$LCC/dispatch.json"
+{ [ "$(lst_state la)" = ended ] && [ "$(lst_state lb)" = ended ] && [ "$(lst_state lc)" = unknown ]; } \
+  && ok "STATE: a pid that another process has now (another start token) is no runner, a finished record is ended, a record that cannot be read is unknown" || no "state: $(./bin/qargi local list --scratch "$T/ls")"
+rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" running 2.3 '{waiting_since:"2026-01-02T03:04:05Z"}'; rec "$LCC" "$DEADP" "$DEADT" running 0 '{}'
+./bin/qargi local list --scratch "$T/ls" --json > "$T/lj.json" 2> "$T/lj.err"; rcj=$?
+{ [ $rcj = 0 ] && [ ! -s "$T/lj.err" ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj.json" \
+  && [ "$(jq -r '.mode + " " + (.runs | length | tostring)' "$T/lj.json")" = "runs 3" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "la") | [.state, .role, .applied, .merged, .runtime == null, .lock_wait_s, .directory_gone, .run == "'"$LA"'", .repo_path_lead_stated == "'"$T/r6"'"] | join(" ")' "$T/lj.json")" = "running build yes yes true 0 false true true" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "lb") | [.state, .applied, .merged, .lock_wait_s] | join(" ")' "$T/lj.json")" = "waiting yes no 3" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "lc") | .state' "$T/lj.json")" = ended ] && [ "$(jq '[.runs[] | .age_seconds | type] | unique' -c "$T/lj.json")" = '["number"]' ]; } \
+  && ok "list --json: one document of the kind qargi-local-list that the registry file accepts: run, role, slug, age, applied, merged, runtime, state, lock_wait_s (whole seconds, rounded up) and the repository path the lead recorded" || no "list --json (rc=$rcj): $(head -c 600 "$T/lj.json") $(cat "$T/lj.err")"
+./bin/qargi local list --lanes --json > "$T/lj2.json" 2>&1; rcj=$?
+{ [ $rcj = 0 ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj2.json" && [ "$(jq -r '.mode + " " + (.lanes | length | tostring) + " " + (has("runs") | tostring)' "$T/lj2.json")" = "lanes 0 false" ]; } \
+  && ok "list --lanes --json: the lanes under their own key of the same kind (none here: no runtime shares a sign-in lock)" || no "list --lanes --json (rc=$rcj): $(cat "$T/lj2.json")"
+out=$(./bin/qargi local list --lanes --scratch "$T/ls" --json 2>&1); rcj=$?
+{ [ $rcj = 2 ] && grep -qF -e '--lanes takes no other option' <<<"$out"; } && ok "--json with --lanes takes no other option either" || no "lanes with --scratch and --json: rc=$rcj $out"
+out=$(./bin/qargi local list --scratch "$T/nonexistent" --json 2>&1); rcj=$?
+{ [ $rcj != 0 ] && ! grep -q '"kind"' <<<"$out"; } && ok "list --json of a directory that does not exist prints no document" || no "json of a missing directory: rc=$rcj $out"
+kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json" "$T/lj.json" "$T/lj2.json" "$T/lj.err"
+# --timings: verify and clean print one timings: line only when asked; the seconds of each phase are recorded in the run's registry line either way (it outlives the run directory)
+read -r TMR _ <<<"$(mkc timings)"; echo '{}' > "$TMR/out/manifest.json"
+PH='[0-9]+\.[0-9]{3}s'
+out=$(./bin/qargi local verify "$TMR" 2>&1); rcv=$?
+{ [ $rcv = 0 ] && ! grep -q 'timings' <<<"$out" && grep -qE "^checks=$PH registry=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$(jq -r --arg r "$TMR" 'select(.run == $r) | .verify_timings // ""' "$T/s/local-runs.jsonl")"; } \
+  && ok "verify says nothing of timings unless asked, and records the seconds of its phases (checks, registry, snapshot, compare, save) in the run's registry line" || no "verify timings (rc=$rcv): $out $(jq -c --arg r "$TMR" 'select(.run == $r)' "$T/s/local-runs.jsonl")"
+out=$(./bin/qargi local verify "$TMR" --timings 2>&1); rcv=$?
+{ [ $rcv = 0 ] && [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: checks=$PH registry=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$out"; } \
+  && ok "verify --timings prints one timings: line" || no "verify --timings (rc=$rcv): $out"
+out=$(./bin/qargi local clean "$TMR" --timings 2>&1); rcc=$?
+{ [ $rcc = 0 ] && [ ! -e "$TMR" ] && [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: checks=$PH removal=$PH prune=$PH\$" <<<"$out" \
+  && grep -qE "^checks=$PH removal=$PH prune=$PH\$" <<<"$(jq -r --arg r "$TMR" 'select(.run == $r) | .clean_timings // ""' "$T/s/local-runs.jsonl")"; } \
+  && ok "clean --timings prints one timings: line (checks, removal, prune), and the registry line of the removed run keeps the seconds" || no "clean --timings (rc=$rcc): $out $(jq -c --arg r "$TMR" 'select(.run == $r)' "$T/s/local-runs.jsonl")"
 ./bin/qargi local list --scratch "$T/nonexistent" >/dev/null 2>&1 && no "list accepted a missing directory" || ok "list refuses a directory that does not exist"
 for bad in "--applied" "--applied --scratch $T/ls $LA" "--applied --discard --scratch $T/ls" "--scratch $T/ls $LA" "--applied --scratch $T/nonexistent"; do
   # shellcheck disable=SC2086
