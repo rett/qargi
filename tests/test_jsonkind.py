@@ -61,15 +61,15 @@ def task(**over):
 
 def status_doc(**over):
     row = dict(feature_row(), tasks=[task()], agent_branches=["agent/s"], worktrees=[{"path": "/w", "branch": "agent/s"}], overlap={"other": ["a.txt"]})
-    d = {"schema": 1, "kind": "qargi-marshal-status", "project": "proj", "backend": "refs", "remote": "checked", "features": [row],
+    d = {"schema": 2, "kind": "qargi-marshal-status", "project": "proj", "integrity": "off", "backend": "refs", "remote": "checked", "features": [row],
          "agent_unattributed": [{"branch": "agent/x", "base": ""}]}
     d.update(over)
     return d
 
 
 def check_doc(**over):
-    d = {"schema": 1, "kind": "qargi-marshal-check", "project": "proj", "backend": "local", "remote": "none", "feature": "demo", "answer": "free-stale",
-         "lead": dict(LEAD), "warnings": ["the lead is stale"]}
+    d = {"schema": 2, "kind": "qargi-marshal-check", "project": "proj", "integrity": "off", "backend": "local", "remote": "none", "feature": "demo", "answer": "free-stale",
+         "lead": dict(LEAD), "warnings": [{"text": "the lead is stale", "severity": "info"}]}
     d.update(over)
     return d
 
@@ -184,9 +184,20 @@ class ParserHooks(unittest.TestCase):
 
 
 class Documents(unittest.TestCase):
-    """The rules of a document, each broken once, on the status kind (schema 1)."""
+    """The rules of a document, each broken once, on the status kind (schema 2)."""
     def check(self, text, kind="qargi-marshal-status"):
         return J.validate(os.path.join(KINDS, kind + ".json"), text)
+
+    def test_the_integrity_and_the_severity_of_a_check_are_closed_enums(self):
+        for word in ("off", "advisory", "strict"):
+            self.assertEqual(self.check(dump(check_doc(integrity=word)), "qargi-marshal-check"), [], word)
+        self.assertEqual(rules(self.check(dump(check_doc(integrity="on")), "qargi-marshal-check")), {"enum-unknown"})
+        self.assertEqual(rules(self.check(dump({k: v for k, v in check_doc().items() if k != "integrity"}), "qargi-marshal-check")), {"required-missing"})
+        for word in ("info", "damaging"):
+            self.assertEqual(self.check(dump(check_doc(warnings=[{"text": "x", "severity": word}])), "qargi-marshal-check"), [], word)
+        for bad, rule in ((check_doc(warnings=[{"text": "x", "severity": "fatal"}]), "enum-unknown"), (check_doc(warnings=["a sentence"]), "type-wrong"),
+                          (check_doc(warnings=[{"text": "x"}]), "required-missing")):
+            self.assertEqual(rules(self.check(dump(bad), "qargi-marshal-check")), {rule}, rule)
 
     def test_every_rule_of_a_document_has_a_broken_case(self):
         good = dump(status_doc())
@@ -197,8 +208,8 @@ class Documents(unittest.TestCase):
             "not-an-object": "[1, 2]",
             "schema-missing": dump({k: v for k, v in status_doc().items() if k != "schema"}),
             "schema-string": dump(status_doc(schema="1")),
-            "schema-float": good.replace('"schema": 1,', '"schema": 1.0,', 1),
-            "schema-unknown": dump(status_doc(schema=2)),
+            "schema-float": good.replace('"schema": 2,', '"schema": 2.0,', 1),
+            "schema-unknown": dump(status_doc(schema=3)),
             "kind-missing": dump({k: v for k, v in status_doc().items() if k != "kind"}),
             "kind-wrong": dump(status_doc(kind="qargi-marshal-check")),
             "required-missing": dump({k: v for k, v in status_doc().items() if k != "project"}),
@@ -297,7 +308,10 @@ class Documents(unittest.TestCase):
 class RegistryFormat(Tmp):
     """The rules of the registry format, each broken once on a copy of a real file."""
     def reg(self):
-        return copy.deepcopy(registry("qargi-marshal-check"))
+        r = copy.deepcopy(registry("qargi-marshal-check"))
+        r["schema"], r["history"] = 1, r["history"][:1]      # a copy at its first integer, so that each test breaks the one rule it names
+        r["document"]["properties"]["schema"] = {"const": 1}
+        return r
 
     def test_the_real_files_are_well_formed(self):
         self.assertEqual(J.check_dir(), [])
@@ -417,6 +431,45 @@ class RegistryFormat(Tmp):
         fs = J.check_dir(self.dir)
         self.assertEqual([(f.where, f.rule) for f in fs], [("qargi-second.json", "type-number")])
 
+    def test_the_manifest_lists_each_kind_with_the_digest_of_its_file(self):
+        import hashlib
+        self.put("qargi-marshal-check.json", self.reg())
+        r = self.reg()
+        r["kind"], r["status"] = "qargi-second", "draft"
+        r["document"]["properties"]["kind"] = {"const": "qargi-second"}
+        self.put("qargi-second.json", r)
+        text, fs = J.manifest(self.dir)
+        self.assertEqual(fs, [])
+        def digest(k):
+            with open(os.path.join(self.dir, k + ".json"), "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        want = [{"kind": k, "status": st, "schema": 1, "sha256": digest(k)} for k, st in (("qargi-marshal-check", "pinned"), ("qargi-second", "draft"))]
+        self.assertEqual(json.loads(text), {"manifest": 1, "kinds": want})
+        self.assertTrue(text.endswith("}\n"))
+        # the manifest is no registry file: the directory check leaves it alone, and it does not change the manifest
+        self.put("MANIFEST.json", text)
+        self.assertEqual(J.check_dir(self.dir), [])
+        self.assertEqual(J.manifest(self.dir), (text, []))
+        self.assertEqual(J.manifest_digest(self.dir), hashlib.sha256(text.encode()).hexdigest())
+        # a symlink of that name is still a file the directory does not allow, and a broken registry file gives no manifest
+        os.remove(os.path.join(self.dir, "MANIFEST.json"))
+        os.symlink(os.path.join(self.dir, "qargi-second.json"), os.path.join(self.dir, "MANIFEST.json"))
+        self.assertEqual([(f.where, f.rule) for f in J.check_dir(self.dir)], [("MANIFEST.json", "directory-entry")])
+        os.remove(os.path.join(self.dir, "MANIFEST.json"))
+        self.put("qargi-second.json", "{}")
+        text, fs = J.manifest(self.dir)
+        self.assertIsNone(text)
+        self.assertTrue(fs)
+        self.assertIsNone(J.manifest_digest(self.dir))
+
+    def test_the_committed_manifest_is_what_the_registry_files_make(self):
+        text, fs = J.manifest()
+        self.assertEqual(fs, [])
+        with open(os.path.join(KINDS, "MANIFEST.json"), encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), text)
+        self.assertEqual(run("manifest")[:2], (0, text))
+        self.assertEqual(run("manifest", "--check"), (0, "", ""))
+
     def test_every_rule_has_a_sentence(self):
         for r in RULE_NAMES:
             self.assertTrue(J.RULES[r].strip(), r)
@@ -425,7 +478,8 @@ class RegistryFormat(Tmp):
         self.assertEqual(J.kind_names(), sorted(FIRST_KINDS + DRAFT_KINDS))
         for kind in FIRST_KINDS:
             r = registry(kind)
-            self.assertEqual((r["registry"], r["schema"], r["status"], r["since"]), (1, 1, "pinned", "0.3.9"), kind)
+            schema = 2 if kind in ("qargi-marshal-status", "qargi-marshal-check") else 1      # 0.3.10: the required `integrity`
+            self.assertEqual((r["registry"], r["schema"], r["status"], r["since"]), (1, schema, "pinned", "0.3.9"), kind)
 
     def test_the_run_plan_kinds_are_drafts_of_the_release_that_adds_them(self):
         for kind in DRAFT_KINDS:

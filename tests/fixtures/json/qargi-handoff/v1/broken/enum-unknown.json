@@ -27,7 +27,7 @@
  },
  "gates": [
   {
-   "tier": "not-a-listed-word",
+   "tier": "feature",
    "name": "unit",
    "command": "make test"
   },
@@ -68,7 +68,7 @@
    "tasks": [],
    "overlap": {},
    "record": {
-    "status": "active",
+    "status": "not-a-listed-word",
     "lease": "stale",
     "minutes_since_renewal": 90,
     "ttl_minutes": 15,

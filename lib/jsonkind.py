@@ -4,6 +4,12 @@
   jsonkind.py check                    every file of lib/kinds/ is a well-formed registry file, and the kinds are unique
   jsonkind.py check FILE|-             one registry file (- reads standard input)
   jsonkind.py validate KIND FILE|-     a document against the registry file lib/kinds/KIND.json (- reads standard input)
+  jsonkind.py manifest                 the manifest of the registry files (what lib/kinds/MANIFEST.json holds) on standard output
+  jsonkind.py manifest --check         exit 0 when lib/kinds/MANIFEST.json is what `manifest` prints now, 1 when it is not
+
+The manifest (lib/kinds/MANIFEST.json, format 1) lists each kind with its status, its schema integer and the sha256 of its registry file, sorted by
+kind, so that a program that pins the sha256 of the manifest pins every registry file and every integer at once. It is not a registry file: the
+directory check leaves it alone, and tests/test_json_registry.py fails when the committed file is not what `manifest` prints now.
 
 A registry file (format 1) has an envelope of qargi's own keys (registry, kind, schema, status, since, stream (stdout, stderr, or none for a
 draft that a verb reads and never prints), verbs, about, writes, history) and `document`, the shape of the document in the keyword subset that lib/provider.py reads for provider definitions: type, enum,
@@ -23,6 +29,7 @@ command line prints one line per finding on standard error, `LABEL: RULE PATH: s
 
 Exit status: 0 valid, 1 invalid (a finding per line on stderr), 2 usage, an unreadable input, an unknown kind or a registry file that is
 not well formed. Run as python3 -I lib/jsonkind.py, standard library only."""
+import hashlib
 import json
 import os
 import re
@@ -31,6 +38,8 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 KINDS_DIR = os.path.join(HERE, "kinds")
 REGISTRY_FORMAT = 1
+MANIFEST_NAME = "MANIFEST.json"
+MANIFEST_FORMAT = 1
 MAX_INT = 2 ** 53 - 1                 # R-J5: a reader that holds numbers as 64-bit floats loses nothing
 MAX_FINDINGS = 100
 MAX_DEPTH = 64                        # nesting of a registry shape
@@ -527,6 +536,8 @@ def check_dir(d=KINDS_DIR):
     kinds = {}
     for n in names:
         p = os.path.join(d, n)
+        if n == MANIFEST_NAME and not os.path.islink(p) and os.path.isfile(p):      # the manifest of the registry files, no registry file itself
+            continue
         if not n.endswith(".json") or n.startswith(".") or os.path.islink(p) or not os.path.isfile(p):
             out.append(Finding("directory-entry", "$", "%s is not a plain .json file" % q(n), n))
             continue
@@ -548,6 +559,30 @@ def check_dir(d=KINDS_DIR):
                 out.append(Finding("kind-duplicate", "$.kind", "%s is also the kind of %s" % (q(kind), kinds[kind]), n))
             kinds.setdefault(kind, n)
     return out
+
+
+def manifest(d=KINDS_DIR):
+    """-> (text, findings): the manifest of the registry files of d as the file lib/kinds/MANIFEST.json holds it (text is None when a registry file is
+    not well formed or d holds none: the findings say which). One entry for each kind, sorted by kind: {kind, status, schema, sha256 of the file's bytes}."""
+    fs = check_dir(d)
+    if fs:
+        return None, fs
+    entries = []
+    for kind in kind_names(d):
+        with open(registry_path(kind, d), "rb") as f:
+            raw = f.read()
+        reg, _ = check_text(raw)
+        entries.append({"kind": kind, "status": reg["status"], "schema": reg["schema"], "sha256": hashlib.sha256(raw).hexdigest()})
+    return json.dumps({"manifest": MANIFEST_FORMAT, "kinds": entries}, indent=1) + "\n", []
+
+
+def manifest_digest(d=KINDS_DIR):
+    """The sha256 of the committed manifest file of d, or None when there is none: the value a consumer pins."""
+    try:
+        with open(os.path.join(d, MANIFEST_NAME), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
 
 
 def kind_names(d=KINDS_DIR):
@@ -661,7 +696,7 @@ def validate(kind_file, text):
 
 # ---- the command line -----------------------------------------------------------------------------------------------------
 
-USAGE = "usage: jsonkind.py check | check FILE|- | validate KIND FILE|-"
+USAGE = "usage: jsonkind.py check | check FILE|- | validate KIND FILE|- | manifest [--check]"
 
 
 def say(*a):
@@ -694,6 +729,24 @@ def main(argv):
             reg, fs = check_text(read_input(argv[1]))
             report(fs, argv[1])
             return 1 if fs else 0
+        if argv in (["manifest"], ["manifest", "--check"]):
+            text, fs = manifest()
+            if text is None:
+                report(fs, "lib/kinds")
+                return 1
+            if argv == ["manifest"]:
+                sys.stdout.write(text)
+                return 0
+            try:
+                with open(os.path.join(KINDS_DIR, MANIFEST_NAME), encoding="utf-8", newline="") as f:
+                    held = f.read()
+            except OSError as e:
+                say("cannot read %s: %s" % (MANIFEST_NAME, e.strerror or "error"))
+                return 1
+            if held != text:
+                say("%s is not what `manifest` prints now: python3 lib/jsonkind.py manifest > MANIFEST.new && mv MANIFEST.new lib/kinds/%s (from the top of the checkout, never with the new file inside lib/kinds)" % (MANIFEST_NAME, MANIFEST_NAME))
+                return 1
+            return 0
         if len(argv) == 3 and argv[0] == "validate":
             kind, name = argv[1], argv[2]
             if not KIND_RE.match(kind) or not os.path.isfile(registry_path(kind)):

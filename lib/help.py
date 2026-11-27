@@ -344,6 +344,9 @@ def show_json_list():
     for k in kinds:
         reg = json_load(k)
         out.append(fill("(schema %d, %s) %s" % (reg["schema"], reg["status"], json_first_sentence(reg["about"])), width(), "  " + k.ljust(w), "  " + " " * w))
+    digest = K.manifest_digest()
+    if digest:
+        out += ["", wrap("Manifest of the registry files, lib/kinds/MANIFEST.json (each kind with its status, schema and the sha256 of its file): sha256 %s" % digest, 2)]
     return "\n".join(out), 0
 
 
