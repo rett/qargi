@@ -483,6 +483,21 @@ class Verb(Base):
         self.assertIn("report_sha256: " + "e" * 64, out)
         self.assertIn("tests_run: python3 tests/test_x.py", out)
 
+    def test_show_says_that_a_pruned_log_is_gone(self):
+        e = self.write_suite()
+        rc, out, _ = self.run_cli("history", "show", e["id"], "--project", "demo")
+        self.assertIn("log: " + e["log"] + "\n", out)
+        os.unlink(e["log"])
+        rc, out, _ = self.run_cli("history", "show", e["id"], "--project", "demo")
+        self.assertIn("log: " + e["log"] + " (the file is gone)\n", out)
+        rc, out, _ = self.run_cli("history", "show", e["id"], "--project", "demo", "--json")
+        self.assertEqual(json.loads(out)["log"], e["log"])
+
+    def test_show_names_the_whole_range_of_an_id_prefix(self):
+        rc, _, err = self.run_cli("history", "show", "abc", "--project", "demo")
+        self.assertEqual(rc, 2)
+        self.assertIn("4 to 64 digits", err)
+
     def test_show_escapes_control_characters_of_a_test_name(self):
         e = self.write_suite(result="fail", names=["FAIL \x1b[31mred\x1b[0m"])
         rc, out, _ = self.run_cli("history", "show", e["id"], "--project", "demo")

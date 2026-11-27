@@ -18,12 +18,12 @@ The state directory is `~/.qargi/state` unless `QARGI_STATE` says otherwise. The
 - **Tolerant to read.** A line that cannot be read (a torn last line is the one to expect) is skipped, with one warning on standard error and the number of lines skipped (`skipped` in the document); it is never an error.
 - **Never a failure of a verb.** If an entry cannot be written (a full disk, a file that is a link), the verb says so on standard error and goes on with the verdict it has.
 - **Attempt.** The `attempt` of a suite entry is 1 plus the number of earlier suite entries of the project with the same head, tree, command and `verify.environment` id. It is worked out under the same lock as the append, so two runs at once get two numbers.
-- **Logs.** Each run's log is kept as `suite-logs/runs/ID.log`, besides the last-run file. A project keeps the newest 20 of them; the oldest are removed as a new entry is appended, except the log of the latest pass of each branch. An entry whose log was removed keeps its `log` path, and `qargi history show` says the file is gone.
+- **Logs.** Each run's log is kept as `suite-logs/runs/ID.log`, besides the last-run file. A project keeps the newest 20 of them; the oldest are removed as a new entry is appended, except the log of the latest pass of each branch. An entry whose log was removed keeps its `log` path, and `qargi history show` says so after the path (`(the file is gone)`).
 - **Lead side only.** The writers are the lead's verbs, and a member's guard refuses `qargi history`, the script behind it and a write into the state's `history/` and `suite-logs/` directories.
 
 ## What is recorded
 
-A **suite entry** (`entry_kind` `suite`) is added when a `feature verify` or a `release verify` ends, pass or fail, and also when the verb is stopped by a signal after the suite started (`result` `interrupted`; the per-branch record is not written then, as before).
+A **suite entry** (`entry_kind` `suite`) is added when a `feature verify` or a `release verify` ends, pass or fail, and also when the verb is stopped by a signal after the suite started (`result` `interrupted`; the per-branch record is not written then, as before). A run that the `verify.environment` launcher refused, or that left no report, is no suite run: nothing is recorded for it, and it does not count as an attempt.
 
 | Field | Meaning |
 | --- | --- |

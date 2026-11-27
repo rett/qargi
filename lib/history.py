@@ -425,12 +425,17 @@ SHOW_ORDER = ("id", "entry_kind", "project", "time", "verb", "name", "branch", "
               "class", "runtime", "model", "vendor", "tests_run")
 
 
+def log_note(path):
+    """What `show` adds to the log line: a pruned log is said to be gone (the entry keeps its path)."""
+    return "" if not isinstance(path, str) or os.path.isfile(path) else " (the file is gone)"
+
+
 def show_text(e):
     lines = []
     for k in SHOW_ORDER:
         if k in e and k not in ("gates", "failing_tests"):
             v = e[k]
-            lines.append("%s: %s" % (k, cell(", ".join(map(str, v)) if isinstance(v, list) else v)))
+            lines.append("%s: %s%s" % (k, cell(", ".join(map(str, v)) if isinstance(v, list) else v), log_note(v) if k == "log" else ""))
     for k, v in sorted(e.items()):
         if k not in SHOW_ORDER and k not in ("schema", "kind", "gates", "failing_tests", "failing_total"):
             lines.append("%s: %s" % (vis(k), cell(json.dumps(v, sort_keys=True) if isinstance(v, (list, dict)) else v)))
@@ -502,7 +507,7 @@ def read_main(argv):
         entries, skipped = read(project)
         if a.action == "show":
             if not HEX_RE.match(a.id):
-                p.error("ID is a hex prefix of an entry id, 4 to 16 digits")
+                p.error("ID is a hex prefix of an entry id, 4 to 64 digits")
             found = [e for e in entries if e["id"].startswith(a.id)]
             if len(found) != 1:
                 print("qargi: %s" % ("no history entry of %s has the id %s" % (project, a.id) if not found else "%d history entries of %s start with %s: give more of the id" % (len(found), project, a.id)), file=sys.stderr)
