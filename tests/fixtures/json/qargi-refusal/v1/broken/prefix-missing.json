@@ -1,0 +1,1 @@
+{"code":"marshal-feature-held","exit":1,"verb":"marshal check","project":"app","role":null,"epoch":null,"state":null,"tx":null,"detail":"feature=sha256:3f524cdc07a1 lead=sha256:2bd806c97f0e minutes=0 ttl=15","schema":1,"kind":"qargi-refusal"}

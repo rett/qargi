@@ -333,7 +333,20 @@ def _home(definition):
     if not isinstance(h, dict):
         return None
     links = [l for l in h.get("link") if isinstance(l, dict)] if isinstance(h.get("link"), list) else []
-    return {"env": str(h.get("env")), "dir": str(h.get("dir")), "links": ["%s as %s" % (l.get("from"), l.get("to")) for l in links]}
+    return {"env": str(h.get("env")), "dir": str(h.get("dir")), "links": [_home_link(l) for l in links]}
+
+
+def _home_link(l):
+    """One link of the run home as the review says it: "FROM as TO", and for a private link what it makes of the file (a copy, the paths it puts a placeholder
+    at, the path its expiry is read at, and the margin), so the owner approves a copy knowingly."""
+    text = "%s as %s" % (l.get("from"), l.get("to"))
+    pv = l.get("private")
+    if not isinstance(pv, dict):
+        return text
+    st = pv.get("set") if isinstance(pv.get("set"), dict) else {}
+    ex = pv.get("expiry") if isinstance(pv.get("expiry"), dict) else {}
+    return ("%s (a private copy, not a link: a placeholder is put at %s; the run is refused when the value at %s, read as %s, ends within its bound plus %s s)"
+            % (text, ", ".join(str(k) for k in st) or "no path", ex.get("path"), ex.get("encoding"), ex.get("margin_seconds", 900)))
 
 
 def scan(root, definition=None):

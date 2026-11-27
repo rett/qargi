@@ -21,6 +21,10 @@ writes the clock cache nor the acceptance marks), and a record whose branch is g
 one thing it may write is the file named by --write: it must not exist, it is made with mode 600, and it may not lie inside a
 git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout, and
 $STATE/handoff/PROJECT.json remembers when and where it was written (the age `qargi lead compact-check` compares with the last merge).
+With --json and --write the document is the output: it is written to standard output and flushed first, then the file is made, then the sentence goes to
+standard error, so a stdout that cannot take the document leaves no file. --json prints one object of the kind qargi-handoff (lib/kinds/qargi-handoff.json),
+checked against that file before anything is written; it says `remote` (none on the local backend, not-asked on the shared one: the handoff never fetches)
+and `backend_fallback` (true when the shared records could not be used and the local records are shown).
 A feature that this identity leads gets a "next lead" line: the claim --as-successor-of command a restarted session runs.
 
 The goal, plan, note and purpose of a record are DATA written by a lead: they are printed under a line that says so, indented,
@@ -43,7 +47,8 @@ repository documents and successor lines of read_first) from the end, and lists_
 have them whole: do_not_assume, where, packs, environment and the fields of a record; they are a few KiB unless a path in them is very long, and
 only they are not bounded.
 
-Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
+Exit status: 0 ok, 1 refused or failed (message on stderr; a refusal prints the contract line and the block of lib/refusals.json first), 2 usage,
+70 the --json document breaks its registry file or is no JSON (nothing is printed on standard output).
 Run through lib/marshal.sh; python3 -I, standard library only."""
 import argparse, contextlib, importlib.util, io, json, os, re, socket, subprocess, sys
 
@@ -382,6 +387,11 @@ def packs_facts(state, project, repo, qargi_bin, name):
     return p
 
 
+ENV_TYPES = {"verdict": str, "exit": int, "missing": int, "expected": int, "time": str, "head": str, "doctor_command": str, "builtin_minimum": bool,
+             "command": str, "allow_root": bool}       # the types lib/kinds/qargi-handoff.json declares for the keys of an env check and an env apply
+INT_MAX = 2 ** 53 - 1
+
+
 def environment_facts(state, project, repo_head):
     """The last env check and env apply recorded for the project (state/env/PROJECT.json, written by qargi env check and apply): what
     they said, when, at which commit, and whether that is the commit of the repository now. Read only; a file that is not there or not
@@ -398,8 +408,9 @@ def environment_facts(state, project, repo_head):
     def pick(entry, keys):
         if not isinstance(entry, dict):
             return None
-        r = {k: (line(entry[k], 160) if isinstance(entry.get(k), str) else entry[k]) for k in keys
-             if isinstance(entry.get(k), (str, int, float, bool))}
+        # only a value of the declared type is taken: a damaged record cannot put a float, a boolean for a number or a number beyond what a reader holds into the note
+        r = {k: (line(entry[k], 160) if ENV_TYPES[k] is str else entry[k]) for k in keys
+             if type(entry.get(k)) is ENV_TYPES[k] and (ENV_TYPES[k] is not int or abs(entry[k]) <= INT_MAX)}
         head = r.get("head") if isinstance(r.get("head"), str) else ""
         r["head"] = head[:40]
         r["at_head"] = bool(head and repo_head and head == repo_head)
@@ -461,9 +472,11 @@ def collect(a, argv_name):
     ns = argparse.Namespace(state=a.state, project=a.project, repo=a.repo, conf=a.conf, name=argv_name, ttl=a.ttl, as_id=a.as_id,
                             no_fetch=True, backend=None, remote=None)
     be = M.LocalBackend()
+    fallback = False
     try:
         be = read_only_backend(M, ns)
     except M.Refuse as e:
+        fallback = True
         notes.append("the marshal switch cannot be used (%s): the local records of this host are shown" % line(str(e), 200))
     ctx = M.Ctx(ns, be)
     if be.refs:
@@ -487,16 +500,17 @@ def collect(a, argv_name):
             M.check_name(argv_name)
             rec = ctx.be.get(ctx, argv_name)
             if rec is None and not M.branch_exists(ctx, argv_name):
-                raise M.Refuse("no feature %s in %s (no branch feature/%s and no record)" % (argv_name, ctx.project, argv_name))
+                raise M.Refuse("no feature %s in %s (no branch feature/%s and no record)" % (argv_name, ctx.project, argv_name), "marshal-feature-unknown", [("feature", argv_name)])
             return [argv_name]
         return [n for n in ctx.be.names(ctx, False)
                 if M.is_open(M.describe(ctx, n, M.unled(ctx, n, ctx.be.get(ctx, n)), {}, derived=False))]
     try:
         names = get_features(ctx)
     except M.Refuse as e:
-        if argv_name and str(e).startswith("no feature "):
+        if argv_name and e.code == "marshal-feature-unknown":
             raise
         notes.append("the shared records cannot be read (%s): the local records of this host are shown" % line(str(e), 200))
+        fallback = True
         ns.backend = "local"
         ctx = M.Ctx(ns, M.LocalBackend())
         names = get_features(ctx)
@@ -526,7 +540,7 @@ def collect(a, argv_name):
                      % (len(norec), " ".join(shown), " (and %d more)" % (len(norec) - len(shown)) if len(shown) < len(norec) else ""))
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
-            "where": where, "gates": gate_rows, "deviations": deviation_facts(answers, repo) if present else None, "features": feats, "worktrees_unattributed": wts_other, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
+            "where": where, "gates": gate_rows, "deviations": deviation_facts(answers, repo) if present else None, "features": feats, "worktrees_unattributed": wts_other, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "remote": M.remote_of(ctx), "backend_fallback": fallback, "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
@@ -970,6 +984,16 @@ def cut_lists(G, dump):
     return render()
 
 
+def json_text(M, F):
+    """The text of --json: the object cut to its size by render_json, and checked against the registry file of qargi-handoff before anything is printed or written
+    (a value that is no JSON, or one the document does not allow, is a defect: exit 70, no document)."""
+    try:
+        text = render_json(F)
+    except (ValueError, TypeError) as e:
+        raise M.Defect("the document of qargi-handoff cannot be written as JSON (%s); a record holds a value that is no JSON number or text" % e)
+    return M.checked_text("qargi-handoff", text)
+
+
 def render_json(F):
     """The JSON within CAP_BYTES, the newline that ends it counted. What no feature owns goes first (the work trees and the agent branches of
     no feature), then the features from the last: the detail of the last feature (commits, tasks, work trees, overlap), then the feature
@@ -981,7 +1005,7 @@ def render_json(F):
     (cut_lists: the notes, the accepted deviations, the gates, then the memory tiers, repository documents and successor lines of read_first),
     and lists_left_out counts what each lost. Not cut: do_not_assume, where, packs, environment and the fields of the record, which a successor
     needs whole."""
-    dump = lambda d: json.dumps(d, indent=1)
+    dump = lambda d: json.dumps(d, indent=1, allow_nan=False)
     if len(dump(F)) + 1 <= CAP_BYTES:
         return dump(F) + "\n"
     F = dict(F, truncated=True)         # a copy: the caller's object (the handoff record is made from it) keeps every feature
@@ -1059,6 +1083,8 @@ def write_refusal(path, conf, state, repo=""):
     parent = os.path.realpath(os.path.dirname(os.path.abspath(path)) or ".")
     if not os.path.isdir(parent):
         return "the directory of %s does not exist" % path
+    if not os.access(parent, os.W_OK | os.X_OK):
+        return "the directory of %s is not writable by you" % path
     real = os.path.join(parent, os.path.basename(path))
     for label, d in (("configuration", conf), ("state", state)):
         if d:
@@ -1120,19 +1146,34 @@ def main(argv):
         if a.write:
             why = write_refusal(a.write, a.conf, a.state, a.repo)
             if why:
-                raise M.Refuse(why)
+                raise M.Refuse(why, "marshal-handoff-file")
         F = collect(a, a.name)
-        text = render_json(F) if a.json else render_text(F)
+        text = json_text(M, F) if a.json else render_text(F)
+        if a.json:
+            M.write_stdout(text)         # first: a stdout that cannot take the document leaves no file behind
         if a.write:
             try:
                 write_note(a.write, text)
             except OSError as e:
-                raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e))
+                if a.json:
+                    # the document is on standard output already: a refusal promises an empty standard output, so this is a plain sentence and exit 1 (write_refusal
+                    # catches what can be known before the document is printed)
+                    print("qargi: cannot write %s: %s (the document was printed on standard output; no file was made)" % (a.write, e.strerror or e), file=sys.stderr)
+                    return 1
+                raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e), "marshal-handoff-file")
             record_written(a, M, F, text)
-            print("wrote %s (%d bytes, mode 600); read it, add your own lines marked as the lead's addition, and give it to the new session" % (a.write, len(text.encode())))
-        else:
+            # with --json the document is the output, so the sentence goes to standard error, after the file is made
+            print("wrote %s (%d bytes, mode 600); read it, add your own lines marked as the lead's addition, and give it to the new session" % (a.write, len(text.encode())),
+                  file=sys.stderr if a.json else sys.stdout)
+        elif not a.json:
             sys.stdout.write(text)
     except M.Refuse as e:
+        M.report_refusal(e, a, "marshal handoff")        # the contract line and the block, then the sentence; the status is the exception's
+        return 3 if isinstance(e, M.Unreachable) else 1
+    except M.Defect as e:
+        print("qargi: defect: %s" % e, file=sys.stderr)
+        return 70
+    except M.Unwritable as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
     except pv().NoProvider as e:

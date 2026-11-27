@@ -516,6 +516,26 @@
       "message": "the run was prepared for the runtime {name}, which it can no longer start on ({why})",
       "next": {"lead": "prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare", "host": "prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare"}
     },
+    "runtime-signin-expiring": {
+      "rule": "A member run starts only when its private copy of the sign-in outlasts the run",
+      "why": "a private copy of a sign-in cannot be refreshed by the runtime (it holds a placeholder in place of the refresh token, so that runs sharing one sign-in do not race on it), only the real sign-in is, by the refresh the runtime declares or by a login; a run that outlived the token in the copy would fail half way, after its member had spent its time",
+      "class": "state",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label", "path": "path", "left": "count", "bound": "count", "bound_from": "enum:timeout-option,definition,default", "margin": "count", "cause": "enum:margin,bound-exceeds,refresh-failed", "login": "name"},
+      "message": "the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s (set by {bound_from}) plus a margin of {margin} s ({cause}): no member is started",
+      "next": {"lead": "sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said", "host": "sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said"}
+    },
+    "lane-busy": {
+      "rule": "A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then",
+      "why": "the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue (for that lock, and for the lock the refresh of a private sign-in takes before the run is recorded), and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again",
+      "class": "state",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label", "lock": "path", "wait": "count", "holder": "name", "age": "count"},
+      "message": "the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded",
+      "next": {"lead": "start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again", "host": "start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again"}
+    },
     "runtime-hidden-path": {
       "rule": "A member sees its clone, contract and OUT",
       "why": "a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in",
@@ -1056,6 +1076,56 @@
       "fields": {"name": "label", "what": "name-list", "fix": "name-list"},
       "message": "project remove is refused: {name} cannot be checked, because it could not be read: {what}",
       "next": {"lead": "fix it, one item at a time: {fix}; then run project remove again", "host": "fix it, one item at a time: {fix}; then run project remove again"}
+    },
+    "marshal-feature-unknown": {
+      "rule": "A feature the marshal is asked about exists",
+      "why": "a feature that has neither a branch feature/NAME nor a marshal record is not a feature of the project, so an answer about it would be a guess (most often a typo)",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {"feature": "name"},
+      "message": "no feature {feature}: there is no branch feature/{feature} and no marshal record for it",
+      "next": {"lead": "qargi marshal status --all lists the open features; a new feature is started with the feature start verb", "host": "qargi marshal status --all lists the open features; a new feature is started with the feature start verb"}
+    },
+    "marshal-feature-held": {
+      "rule": "A feature another live lead holds is not changed or taken",
+      "why": "a lead whose lease is live may still be working on the feature, so a second session on it would overwrite or duplicate that work",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {"feature": "name", "lead": "name", "minutes": "count", "ttl": "count"},
+      "message": "feature {feature} is led by {lead}, whose lease is live ({minutes} min since the last renewal, ttl {ttl} min)",
+      "next": {"lead": "wait until the lease is stale, or ask the lead to release the feature; with the owner's approval a stale lease is taken over with qargi marshal takeover {feature} --approved WORDS", "host": "wait until the lease is stale, or ask the lead to release the feature; with the owner's approval a stale lease is taken over with qargi marshal takeover {feature} --approved WORDS"}
+    },
+    "marshal-handoff-file": {
+      "rule": "A handoff note is written only to a new file outside every repository and the qargi directories, and never by a member",
+      "why": "a note may hold goals and plans that must not end up in a repository, a note that overwrote a file could destroy the lead's own work, and a member returns its findings in its task output",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {},
+      "message": "the handoff note was not written: the file is refused or cannot be made",
+      "next": {"lead": "name a new file in a scratch directory outside every repository and outside the qargi directories; the sentence after this block says what was wrong with the file", "host": "name a new file in a scratch directory outside every repository and outside the qargi directories; the sentence after this block says what was wrong with the file"}
+    },
+    "marshal-refused": {
+      "rule": "The marshal answers a call only when its own conditions hold",
+      "why": "the marshal keeps who leads which feature, and a call whose name, record, switch, identity, clock or repository is not usable would give an answer nobody can rely on",
+      "class": "marshal",
+      "exit": 1,
+      "status": "live",
+      "fields": {},
+      "message": "the marshal refused this call: the sentence after this block says why",
+      "next": {"lead": "read the sentence after this block and fix what it names; qargi marshal status shows the records", "host": "read the sentence after this block and fix what it names; qargi marshal status shows the records"}
+    },
+    "marshal-remote-unreachable": {
+      "rule": "A verb that needs the answer of the shared records does not go on from a cache without being told to",
+      "why": "the answer would come from what this machine fetched last, which may be out of date, and another lead may hold the feature on the remote",
+      "class": "marshal-remote",
+      "exit": 3,
+      "status": "live",
+      "fields": {"feature": "name"},
+      "message": "the remote of the shared marshal records could not be asked (feature: {feature}), so nothing was changed and the answer is not known",
+      "next": {"lead": "try again when the remote is reachable; if you know no other lead holds the feature, go on without the remote with --assume-unreachable-ok (audited as marshal:unreachable-ok)", "host": "try again when the remote is reachable; if you know no other lead holds the feature, go on without the remote with --assume-unreachable-ok (audited as marshal:unreachable-ok)"}
     }
   }
 }

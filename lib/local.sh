@@ -26,9 +26,11 @@
 #                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
 #                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
 #                                        every row when a filter is given, ends with actor=LABEL feature=NAME
-#   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
+#   local.sh list --lanes                read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py)
+#   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--wait SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
-#                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
+#                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused; --wait SECONDS bounds the wait for
+#                                        a busy lane (refused as lane-busy at the bound; 0 does not wait)
 #
 # The disabled origin and wrapper obstruct ordinary pushes through those paths. Runtime sandbox
 # protection is separate. Verify compares observed snapshots and rejects unaccepted differences;
@@ -66,8 +68,8 @@ NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so
 
 # home_residue RUN -> what a start of `local run` left in the run home (dispatch.home), one line each, nothing while a runner of the run is alive. RUN/dispatch.json
 # (the start record, or the end record of a run that ended) names the run home's directory and its links; each that is still a link, and a run home that is a link
-# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it. The record is a member's to write, so this only reports; local run
-# --again replaces the links and local clean removes the run with them.
+# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it; so is a private copy (home.private, a regular file, found by its name, or by its sha256 when it was renamed). The record is a
+# member's to write, so this only reports; local run --again replaces the links and copies and local clean removes the run with them.
 home_residue() {
   local d=$1 rec dir r n
   rec=$d/dispatch.json
@@ -82,6 +84,23 @@ home_residue() {
     [ ! -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a link a start of qargi local run left: its runner did not end)"
     [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, which qargi never writes to your file: compare it with yours and reconcile it yourself)"
   done < <(jq -r '.home.links[]? | strings' "$rec" 2>/dev/null)
+  # a private copy of a sign-in (home.private) is a regular file the runner removes when the run ends: one that is still there was left by a runner that did not end
+  while IFS= read -r n; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
+    [ ! -f "$d/home/$dir/$n" ] || [ -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a private copy of a sign-in that a start of qargi local run left: its runner did not end)"
+  done < <(jq -r '.home.private[]? | .to | strings' "$rec" 2>/dev/null)
+  # a copy the runtime or the member renamed inside the run home: a regular file under it with the sha256 the start record names (home.private[].sha256, the copy as
+  # written; the record holds no content), found by content under another name; no link is followed, files over 1 MiB are not read, and at most 5000 files are looked at
+  local s f
+  while IFS=$'\t' read -r n s; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [[ $s =~ ^[0-9a-f]{64}$ ]] || continue
+    while IFS= read -r -d '' f; do
+      [ "$f" != "$d/home/$dir/$n" ] || continue
+      if [ "$(sha256sum < "$f" 2>/dev/null | cut -c1-64)" = "$s" ]; then
+        echo "$f (a private copy of a sign-in, moved from $n inside the run home, that a start of qargi local run left: its runner did not end)"
+      fi
+    done < <(find -P "$d/home" -type f -size -1048577c -print0 2>/dev/null | head -z -n 5000)
+  done < <(jq -r '.home.private[]? | select((.to | type) == "string" and (.sha256 | type) == "string") | [.to, .sha256] | @tsv' "$rec" 2>/dev/null)
 }
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
@@ -1100,7 +1119,7 @@ case $verb in
           fi
           [ "$mrc" -ne 1 ] || exit 1   # another live lead holds the feature: the message is printed, no run is made
           [ "$mrc" -eq 0 ] || echo "qargi: warning: the marshal could not be asked (status $mrc); the run goes on" >&2
-          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.lead.id // empty' 2>/dev/null) || LEAD=''
+          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.features[0].lead.id // empty' 2>/dev/null) || LEAD=''
         fi;;
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
@@ -1775,9 +1794,17 @@ $vout}"
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
-    SCR='' WANT_ACTOR='' WANT_FEATURE=''
+    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES=''
+    [ "${1:-}" != --lanes ] || LANES=1
+    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without taking any lock
+    # (the holder from /proc/locks and the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    if [ -n "$LANES" ]; then
+      [ $# = 1 ] || usage_die "list: --lanes takes no other option or argument"
+      exec python3 -I "$(dirname "$0")/lane.py" list
+    fi
     while [ $# -gt 0 ]; do
       case $1 in
+        --lanes) usage_die "list: --lanes takes no other option or argument";;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         --actor) need_val "$1" $#; WANT_ACTOR=$2; [ -n "$WANT_ACTOR" ] || usage_die "list: --actor takes a coordinator label, or a prefix of one that ends at a colon"; shift 2;;
         --feature) need_val "$1" $#; WANT_FEATURE=$2; [ -n "$WANT_FEATURE" ] || usage_die "list: --feature takes a feature name"; shift 2;;

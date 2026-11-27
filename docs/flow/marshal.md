@@ -15,6 +15,8 @@ qargi marshal claim NAME --goal "..."
 qargi marshal release NAME --note "..."
 ```
 
+A program reads `marshal status`, `check` and `handoff` with `--json`: each prints one document of a pinned kind, and `--no-write` makes status and check write and fetch nothing. The rule, the kinds and what each verb writes are on [JSON output](../reference/json-output.md).
+
 A lead holds a lease of `marshal.lease_minutes` minutes (a whole number from 1 to 1440, default 15; `qargi project set
 PROJECT marshal.lease_minutes 90`) that its actions renew. Raise it when the lead waits on a run for longer than 15 minutes
 without a marshal action, or the lease goes stale and another session may take the feature. When a lead went quiet, `qargi marshal takeover NAME --approved "<your words>"`

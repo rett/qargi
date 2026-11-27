@@ -9,14 +9,17 @@ verb refuses it.
 On standard error, the contract line first, then the human lines:
 
 ```
-qargi-refusal/1 {"code":"plan-stale","exit":1,"verb":"release push","project":"acme","role":null,"epoch":null,"state":null,"tx":null,"detail":"moved=head"}
+qargi-refusal/1 {"code":"plan-stale","exit":1,"verb":"release push","project":"acme","role":null,"epoch":null,"state":null,"tx":null,"detail":"moved=head","schema":1,"kind":"qargi-refusal"}
 qargi: refused [plan-stale] ...
   why: ...
   next: ...
 ```
 
 `detail` is qargi's own text: the typed fields as `key=value`. A value that a lead chose (a ref, a path or a name) appears in the human
-lines only; in `detail` it is a digest of 12 hex digits. A list prints three items and `+N`. The line stays under 4 KiB. `notice`
+lines only; in `detail` it is a digest of 12 hex digits. A list prints three items and `+N`. The line stays under 4 KiB. The object names
+its document with `schema` (an integer, 1; equal to the number in the prefix) and `kind` (`qargi-refusal`), its last two keys; a new field
+after them keeps the integer. `exit` is the exit status of the process: 1 for a refusal, 2 for a guard's deny or a verb that does not
+apply, 3 for a remote of the shared records that could not be asked (the class `marshal-remote`), 77 for a refusal of the lead seat. `notice`
 prints `qargi: note [code] ...` and a `next:` line, with no contract line, and exits 0: the verb did its work and names a rule that
 will apply later.
 
@@ -57,6 +60,11 @@ compares them with that page.
 | [`member-push`](#member-push) | guard | 2 | live | A member never pushes |
 | [`member-lead-verb`](#member-lead-verb) | guard | 2 | live | A member does not run the lead's verbs |
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
+| [`marshal-feature-unknown`](#marshal-feature-unknown) | marshal | 1 | live | A feature the marshal is asked about exists |
+| [`marshal-feature-held`](#marshal-feature-held) | marshal | 1 | live | A feature another live lead holds is not changed or taken |
+| [`marshal-handoff-file`](#marshal-handoff-file) | marshal | 1 | live | A handoff note is written only to a new file outside every repository and the qargi directories, and never by a member |
+| [`marshal-refused`](#marshal-refused) | marshal | 1 | live | The marshal answers a call only when its own conditions hold |
+| [`marshal-remote-unreachable`](#marshal-remote-unreachable) | marshal-remote | 3 | live | A verb that needs the answer of the shared records does not go on from a cache without being told to |
 | [`methodology-no-flow`](#methodology-no-flow) | methodology | 2 | live | A verb of the git-flow shape runs only on a project whose methodology has that flow |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
@@ -114,6 +122,8 @@ compares them with that page.
 | [`caretaker-denied`](#caretaker-denied) | seat-gate | 77 | planned | A caretaker runs no lead verb that writes (R63) |
 | [`gate-error`](#gate-error) | seat-gate | 77 | planned | A gate that cannot answer refuses (R67) |
 | [`runtime-drift`](#runtime-drift) | state | 1 | live | A run starts on the runtime it was prepared for |
+| [`runtime-signin-expiring`](#runtime-signin-expiring) | state | 1 | live | A member run starts only when its private copy of the sign-in outlasts the run |
+| [`lane-busy`](#lane-busy) | state | 1 | live | A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then |
 | [`verify-env-invalid`](#verify-env-invalid) | verify-environment | 1 | live | The verify.environment answer is a valid declaration |
 | [`verify-env-change-unapproved`](#verify-env-change-unapproved) | verify-environment | 1 | live | A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted |
 | [`verify-env-cpu-no-systemd-run`](#verify-env-cpu-no-systemd-run) | verify-environment | 1 | live | With the cpu part on, the suite runs in a scope made by systemd-run |
@@ -259,6 +269,55 @@ compares them with that page.
 - Message: `a member may not write this run record`
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
 - Printed at 4 sites; `qargi help guard` says what a member's guard refuses.
+
+## Class marshal
+
+### marshal-feature-unknown
+
+- Rule: A feature the marshal is asked about exists.
+- Why: a feature that has neither a branch feature/NAME nor a marshal record is not a feature of the project, so an answer about it would be a guess (most often a typo).
+- Exit 1, live.
+- Fields: `feature` (name).
+- Message: `no feature {feature}: there is no branch feature/{feature} and no marshal record for it`
+- Next, for a lead: qargi marshal status --all lists the open features; a new feature is started with the feature start verb
+
+### marshal-feature-held
+
+- Rule: A feature another live lead holds is not changed or taken.
+- Why: a lead whose lease is live may still be working on the feature, so a second session on it would overwrite or duplicate that work.
+- Exit 1, live.
+- Fields: `feature` (name), `lead` (name), `minutes` (count), `ttl` (count).
+- Message: `feature {feature} is led by {lead}, whose lease is live ({minutes} min since the last renewal, ttl {ttl} min)`
+- Next, for a lead: wait until the lease is stale, or ask the lead to release the feature; with the owner's approval a stale lease is taken over with qargi marshal takeover {feature} --approved WORDS
+
+### marshal-handoff-file
+
+- Rule: A handoff note is written only to a new file outside every repository and the qargi directories, and never by a member.
+- Why: a note may hold goals and plans that must not end up in a repository, a note that overwrote a file could destroy the lead's own work, and a member returns its findings in its task output.
+- Exit 1, live.
+- Fields: none.
+- Message: `the handoff note was not written: the file is refused or cannot be made`
+- Next, for a lead: name a new file in a scratch directory outside every repository and outside the qargi directories; the sentence after this block says what was wrong with the file
+
+### marshal-refused
+
+- Rule: The marshal answers a call only when its own conditions hold.
+- Why: the marshal keeps who leads which feature, and a call whose name, record, switch, identity, clock or repository is not usable would give an answer nobody can rely on.
+- Exit 1, live.
+- Fields: none.
+- Message: `the marshal refused this call: the sentence after this block says why`
+- Next, for a lead: read the sentence after this block and fix what it names; qargi marshal status shows the records
+
+## Class marshal-remote
+
+### marshal-remote-unreachable
+
+- Rule: A verb that needs the answer of the shared records does not go on from a cache without being told to.
+- Why: the answer would come from what this machine fetched last, which may be out of date, and another lead may hold the feature on the remote.
+- Exit 3, live.
+- Fields: `feature` (name).
+- Message: `the remote of the shared marshal records could not be asked (feature: {feature}), so nothing was changed and the answer is not known`
+- Next, for a lead: try again when the remote is reachable; if you know no other lead holds the feature, go on without the remote with --assume-unreachable-ok (audited as marshal:unreachable-ok)
 
 ## Class methodology
 
@@ -795,6 +854,24 @@ compares them with that page.
 - Fields: `verb` (verb), `name` (label), `why` (enum:not-enabled,not-usable,changed).
 - Message: `the run was prepared for the runtime {name}, which it can no longer start on ({why})`
 - Next, for a lead: prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare
+
+### runtime-signin-expiring
+
+- Rule: A member run starts only when its private copy of the sign-in outlasts the run.
+- Why: a private copy of a sign-in cannot be refreshed by the runtime (it holds a placeholder in place of the refresh token, so that runs sharing one sign-in do not race on it), only the real sign-in is, by the refresh the runtime declares or by a login; a run that outlived the token in the copy would fail half way, after its member had spent its time.
+- Exit 1, live.
+- Fields: `name` (label), `path` (path), `left` (count), `bound` (count), `bound_from` (enum:timeout-option,definition,default), `margin` (count), `cause` (enum:margin,bound-exceeds,refresh-failed), `login` (name).
+- Message: `the sign-in {path} for {name} member runs ends in {left} s, less than the run's bound of {bound} s (set by {bound_from}) plus a margin of {margin} s ({cause}): no member is started`
+- Next, for a lead: sign in again for members with {login}, which makes a new sign-in, then start the run again (qargi local run); cause bound-exceeds: the bound alone is longer than the time left, and a new sign-in lasts only as long as the runtime gives one, so lower --timeout; the bound is --timeout, else the definition's timeout_s; cause refresh-failed: the runtime declares a refresh of the real sign-in, which qargi ran once (or could not run) and which did not make the token last, so sign in again as said
+
+### lane-busy
+
+- Rule: A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then.
+- Why: the runs that share a plain sign-in link run one at a time, one holding the lock beside the sign-in for as long as its member runs (an hour for codex); a run started with --wait SECONDS has said how long it will queue (for that lock, and for the lock the refresh of a private sign-in takes before the run is recorded), and when the lane is still held at the bound it refuses before anything is recorded or made, so the lead can start it later or elsewhere without --again.
+- Exit 1, live.
+- Fields: `name` (label), `lock` (path), `wait` (count), `holder` (name), `age` (count).
+- Message: `the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded`
+- Next, for a lead: start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again
 
 ## Class verify-environment
 

@@ -17,9 +17,9 @@ fast | par | 300 | 5 | bash tests/test_canon_reach.sh | lib/canon.sh lib/canon.p
 full | par | 300 | 21 | python3 tests/test_tiers.py | lib/tiers.py
 full | par | 300 | 33 | bash tests/test_models.sh
 full | par | 366 | 158 | bash tests/test_no_default_provider.sh
-full | par | 654 | 244 | python3 tests/test_provider.py | lib/provider.sh lib/provider.py
+full | par | 654 | 244 | python3 tests/test_provider.py | lib/provider.sh lib/provider.py tests/dummy_signin.py
 # Member snapshots: 48 snapshot/ownership cases measured 198.246s by the native lead; ceil = 199s, budget ceil(199 * 1.10) = 219s, timeout 480s.
-full | par | 480 | 219 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* lib/packs_check.py lib/packs_compat.py lib/packs_mcp.py lib/packs_render.py lib/conformance/review.py lib/prepared_request.py lib/paths.py lib/linker.py lib/role.py lib/agent.sh lib/lib.sh lib/model-defaults.json lib/project_profile.py lib/render.py lib/procenv.py roles/*/* agents/member* contract/*.md tests/prepared_request_cases.py tests/member_skills_fixture.py tests/attempt_fixture.py tests/hermetic.py tests/hermetic.sh
+full | par | 480 | 219 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* lib/packs_check.py lib/packs_compat.py lib/packs_mcp.py lib/packs_render.py lib/conformance/review.py lib/prepared_request.py lib/paths.py lib/linker.py lib/role.py lib/agent.sh lib/lib.sh lib/model-defaults.json lib/project_profile.py lib/render.py lib/procenv.py roles/*/* agents/member* contract/*.md tests/prepared_request_cases.py tests/member_skills_fixture.py tests/attempt_fixture.py tests/hermetic.py tests/hermetic.sh tests/dummy_signin.py
 fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py
@@ -27,9 +27,9 @@ fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib
 fast | par | 300 | 38 | bash tests/test_runtime_enable.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/lib.sh lib/guard.py tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
 fast | par | 300 | 19 | bash tests/test_runtime_resolve.sh | lib/agent.sh lib/prepared_request.py lib/refusals.json tests/prepared_request_cases.py tests/fixtures/runtime-no-extras/*
 # Run options of a command runtime (dispatch.run_config.options): the gate, the profile key, validate, prepare, the run file and drift (the shell test), and the request without options against a golden of the head before them (the python one). Measured 65s and 43s on a loaded machine; budgets +10%.
-full | par | 600 | 150 | bash tests/test_run_options.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/agent.sh lib/local.sh lib/local_run.py lib/prepared_request.py lib/refusals.json lib/commands.py tests/fakeprov.sh
+full | par | 600 | 150 | bash tests/test_run_options.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/agent.sh lib/local.sh lib/local_run.py lib/prepared_request.py lib/refusals.json lib/commands.py tests/fakeprov.sh tests/dummy_signin.py
 full | par | 300 | 48 | python3 tests/test_run_options.py | lib/prepared_request.py lib/local_run.py lib/local.sh lib/provider.py lib/providers/* lib/agent.sh tests/prepared_request_cases.py tests/golden/run-options-request.json
-fast | par | 600 | 250 | bash tests/test_runtime_run.sh | lib/local.sh lib/review.sh lib/attempts.py lib/local_run.py lib/member_skills.py lib/refusals.json tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
+fast | par | 600 | 250 | bash tests/test_runtime_run.sh | lib/local.sh lib/review.sh lib/attempts.py lib/local_run.py lib/member_skills.py lib/refusals.json tests/fakeprov.sh tests/fixtures/runtime-no-extras/* tests/dummy_signin.py
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
 fast | par | 300 | 8 | bash tests/conformance.sh claude-platform
 fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json lib/local.sh lib/lib.sh lib/attempts.py
@@ -115,7 +115,7 @@ full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/
 full | par | 300 | 62 | bash tests/test_local_bulk.sh | lib/local.sh lib/lib.sh lib/merged.py lib/legacy_runs.py lib/commands.py tests/test_local_bulk.sh
 fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/local_run.py lib/prepared_request.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi tests/attempt_fixture.py
 # Measured by a member on this host (not the reference machine): 590 s alone, with TMPDIR on disk. A whole run beside other steps took 790 s (as the lead saw it), too near the old timeout of 900 s, so the timeout is raised to 1200 s. The budget stays at 195 s: the time limit of the CI jobs (.github/workflows/test.yml, checked by tests/test_ci.py) has no room for a larger one until the workflow follows.
-full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attempts.py lib/local.sh lib/local_run.py lib/lib.sh lib/review.sh lib/lead_usage.py lib/marshal.sh tests/attempt_fixture.py
+full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attempts.py lib/local.sh lib/local_run.py lib/lib.sh lib/review.sh lib/lead_usage.py lib/marshal.sh tests/attempt_fixture.py tests/dummy_signin.py
 # Checkpoint1 e77c682: local_run exceeded 975s without assertion failures; the unchanged-tree
 # reduced-concurrency reproduction passed all cases in 748.49s. Serial scheduling mitigates contention
 # with a longer serial tail; it is neither a root-cause finding nor a universal performance guarantee.
@@ -123,6 +123,8 @@ full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attemp
 # The whole run stopped it at 975 s, so the timeout is 2x the measure rounded up (2400 s). The budget stays at 222 s (the rule would give ceil(1173 * 1.10) = 1291 s): with it the CI jobs
 # would ask for 72 min of the 65-minute limit (tests/test_ci.py), so it follows when the limit is raised.
 full | serial | 2400 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
+# A private copy of the members' sign-in (dispatch.home.link[].private), its automatic refresh, the lane lock of a plain link (it outlives a killed runner, a replaced file is noticed), the holder line, --wait and local list --lanes: 94 cases, about 100 local prepare and run starts; 345 s alone on this host (not the reference machine) before the review rework of the lane, 410 s after it with a little load beside it, so the budget (380 s, unchanged here) is re-recorded from the next whole run; the timeout 1200 s.
+full | par | 1200 | 380 | bash tests/test_signin_copy.sh | lib/local*.sh lib/local*.py lib/lane.py lib/provider.py lib/providers/* lib/refusals.json lib/refusal.py tests/fixtures.sh tests/attempt_fixture.py
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
@@ -203,6 +205,14 @@ fast | par | 300 | 4 | bash tests/test_readonly_init.sh | lib/lib.sh
 fast | par | 300 | 1 | python3 tests/test_seat_contract.py | docs/reference/lead-seat.md tests/test_seat_contract.py
 # Refusal catalogue: 55 tests measured 5.0s in a member run (not the reference machine); recorded 5s, budget ceil(5 * 1.10) = 6s.
 fast | par | 300 | 6 | python3 tests/test_refusals.py | lib/refusals.json lib/refusal.py lib/*.sh docs/reference/refusals.md docs/reference/lead-seat.md tests/refusal-sites.txt
+# The JSON kinds (lib/kinds, tests/fixtures/json), measured by a member on this host (not the reference machine): the validator 2.0s, the static lint 0.3s and its self-test 5.0s, the help verb 2.7s; budgets ceil(2.0 * 1.10) = 3s, 1s, ceil(5.0 * 1.10) = 6s and ceil(2.7 * 1.10) = 3s.
+fast | par | 300 | 3 | python3 tests/test_jsonkind.py | lib/jsonkind.py lib/kinds/*
+fast | par | 300 | 1 | python3 tests/test_json_registry.py | lib/jsonkind.py lib/kinds/* tests/fixtures/json/* tests/test_json_registry.py
+fast | par | 300 | 6 | python3 tests/test_json_registry.py --self-test | lib/jsonkind.py lib/kinds/* tests/fixtures/json/* tests/test_json_registry.py
+fast | par | 300 | 3 | python3 tests/test_help_json.py | lib/help.py lib/jsonkind.py lib/kinds/* lib/commands.py
+# The documents of marshal status, check and handoff (--json) and their refusals: 72s alone on this host (not the reference machine); budget ceil(72 * 1.10) = 80s. The live lint runs the fixed scenario and both backends: 53s alone; budget ceil(53 * 1.10) = 59s.
+full | par | 300 | 80 | bash tests/test_marshal_json.sh | lib/marshal*.sh lib/marshal*.py lib/jsonkind.py lib/kinds/* lib/refusal.py lib/refusals.json lib/local.sh lib/commands.py
+full | par | 300 | 59 | bash tests/test_json_live.sh | lib/marshal*.sh lib/marshal*.py lib/jsonkind.py lib/kinds/* lib/refusal.py lib/refusals.json lib/commands.py docs/reference/json-output.md tests/fixtures/json/* tests/test_json_registry.py
 # The stored plan record: 23 unit cases measured 8.5s (python) and the five verbs of a scratch repository 20.9s (shell) in a member run (not the reference machine); budgets ceil(8.5 * 1.10) = 10s and ceil(20.9 * 1.10) = 24s.
 fast | par | 300 | 10 | python3 tests/test_plan_record.py | lib/refusal.py lib/plan.py lib/refusals.json lib/lib.sh bin/qargi lib/commands.py
 fast | par | 300 | 24 | bash tests/test_plan_record.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/branch.sh lib/feature.sh lib/release.sh

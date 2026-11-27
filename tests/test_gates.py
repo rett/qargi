@@ -404,7 +404,8 @@ class ActorVerbTable(unittest.TestCase):
             self.assertIn("the lead runs it", err)
 
     def test_the_label_is_not_an_identity_the_verbs_compare(self):
-        # nothing of the marshal, the leases or the approvals reads it: only help.py (the gate and its parser), lib.sh (actor_label) and local.sh (the run's record) name it
+        # nothing of the marshal, the leases or the approvals reads it: only help.py (the gate and its parser), lib.sh (actor_label) and local.sh (the run's record) name it,
+        # and lane.py, which reads it only to name the holder in the lane record and the waiters' files, for display: the holder check compares pid and start token, never the label
         import glob
         users = []
         for f in glob.glob(os.path.join(ROOT, "lib", "*")):
@@ -413,7 +414,7 @@ class ActorVerbTable(unittest.TestCase):
                     if "QARGI_ACTOR" in h.read():
                         users.append(os.path.basename(f))
         users.sort()
-        self.assertEqual(users, ["commands.py", "help.py", "lib.sh", "local.sh"])
+        self.assertEqual(users, ["commands.py", "help.py", "lane.py", "lib.sh", "local.sh"])
 
 
 class ActorFeatureNarrowing(unittest.TestCase):

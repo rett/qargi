@@ -444,7 +444,7 @@ XE a marshal finish dn1 --as alice; rc=$?
 OG update-ref -d refs/qargi/done/dn1
 
 # ============================================================ (20) wrong types in a remote record never crash a reader
-for spec in 'tnull|.status = null' 'tnum|.status = 5' 'tlist|.status = ["a"]' 'pnum|.purpose = 5' 'rnum|.renewed_at = 5' 'fnum|.finished_at = [1]'; do
+for spec in 'tnull|.status = null' 'tnum|.status = 5' 'tlist|.status = ["a"]' 'pnum|.purpose = 5' 'rnum|.renewed_at = 5' 'fnum|.finished_at = [1]' 'rbig|.rev = 9007199254740992'; do
   plant "refs/qargi/features/${spec%%|*}" "$(tree 100644 blob "$(blob "$(VALID "${spec%%|*}" | jq -c "${spec#*|}")")" record.json)"
 done
 plant refs/qargi/features/wgood "$(tree 100644 blob "$(blob "$(VALID wgood | jq -c '.lead.id = "dora"')")" record.json)"
@@ -458,11 +458,11 @@ if [ $rc1 = 0 ] && [ $rc2 = 0 ] && [ $js = 0 ] && [ $rc3 = 0 ] && ! grep -q Trac
   ok "wrong types: status --brief/--json, check and the session hook still work (exit 0, no traceback), the valid record is listed"
 else no "SPEC no read verb may exit 70 on remote data: brief rc=$rc1, json rc=$rc2 (valid json: $js), check rc=$rc3, hook: ${hk:0:120} ($(hookwhy b)): $(head -c 600 "$T/e.all")"; fi
 miss=''
-for n in tnull tnum tlist pnum rnum fnum; do
+for n in tnull tnum tlist pnum rnum fnum rbig; do
   grep -qi warn "$T/e.all" && grep -qF -e "refs/qargi/features/$n" "$T/e.all" && ! grep -q "^$n " "$T/o.brief" || miss="$miss $n"
 done
-[ -z "$miss" ] && ok "wrong types: a status that is not a known one and a purpose, renewed_at or finished_at that is not text are ignored with a warning naming the ref" || no "SPEC wrong-typed records must be ignored with a warning; not ignored/named:$miss (stderr: $(head -c 800 "$T/e.all"))"
-for n in tnull tnum tlist pnum rnum fnum wgood; do OG update-ref -d "refs/qargi/features/$n"; done
+[ -z "$miss" ] && ok "wrong types: a status that is not a known one, a purpose, renewed_at or finished_at that is not text and a rev beyond 2^53 - 1 are ignored with a warning naming the ref" || no "SPEC wrong-typed records must be ignored with a warning; not ignored/named:$miss (stderr: $(head -c 800 "$T/e.all"))"
+for n in tnull tnum tlist pnum rnum fnum rbig wgood; do OG update-ref -d "refs/qargi/features/$n"; done
 
 # ============================================================ (21) a provisional claim cannot be taken over
 fb pv1

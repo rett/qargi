@@ -31,7 +31,7 @@ NOHIDE='.dispatch.hidden_paths.prefixes = ["'"$HID"'"]'
 export PATH=$TOOL/stubs:$PATH          # a runtime's command is found by name on PATH
 mkfake() { # NAME FILTER: a fake command runtime (the shipped codex definition under another name, with its option), its command a stub by name
   fake_command_runtime "$SRC" "$TOOL" "$1" ".dispatch.argv[0] = \"$1\" | $NOHIDE | ${2:-.}"
-  mkdir -p "$HOME/.$1-members"; echo '{}' > "$HOME/.$1-members/auth.json"
+  mkdir -p "$HOME/.$1-members"; python3 tests/dummy_signin.py > "$HOME/.$1-members/auth.json"
 }
 OPT=image_generation
 PHRASE='hosted image generation runs outside the sandbox'

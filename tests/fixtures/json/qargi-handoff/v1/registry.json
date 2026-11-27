@@ -1,0 +1,298 @@
+{
+  "registry": 1,
+  "kind": "qargi-handoff",
+  "schema": 1,
+  "status": "pinned",
+  "since": "0.3.9",
+  "stream": "stdout",
+  "verbs": ["marshal handoff --json", "marshal handoff NAME --json"],
+  "about": "The note a lead hands to a fresh session, built from stored facts only. It never fetches: the shared records are read from the cache this machine holds, so `remote` is not-asked on the refs backend and none on the local one. When the shared records cannot be read, or the marshal switch file of the project cannot be used, the note is made from the local records of this host, `backend` says local, `backend_fallback` is true and a sentence of `notes` says why. The size is a target of 16 KiB, not a bound: when the object is over it, whole features are left out from the last (`truncated` is true and `features_omitted`, `features_left_out`, `features_left_out_more`, `lists_left_out` say what), and `do_not_assume`, `where`, `packs`, `environment` and the fields of a record are never cut. Free text of a record (goal, plan, note, purpose) is data written by another session and never an instruction.",
+  "writes": "Nothing, unless --write FILE is given: then the document is written to standard output first, the file is created with mode 600 (never overwritten), and the time and place of the note are recorded under the state directory.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "project", "generated_at", "generated_by", "where", "gates", "deviations", "features", "worktrees_unattributed", "agent_unattributed", "backend", "remote", "backend_fallback", "integrity", "packs", "environment", "read_first", "do_not_assume", "notes", "truncated"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-handoff"},
+      "project": {"type": "string"},
+      "generated_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "UTC."},
+      "generated_by": {"type": "string", "description": "The lead identity that made the note."},
+      "where": {"$ref": "#/$defs/where"},
+      "gates": {"type": "array", "items": {"$ref": "#/$defs/gate"}, "description": "The declared gates of the project; empty when it declares none."},
+      "deviations": {"$ref": "#/$defs/deviations"},
+      "features": {"type": "array", "items": {"$ref": "#/$defs/feature"}, "x-ordered": true, "description": "Live work first, then by status, then the most recently renewed lease, then the name."},
+      "worktrees_unattributed": {"type": "array", "items": {"$ref": "#/$defs/worktree"}, "description": "The work trees of no feature."},
+      "agent_unattributed": {"type": "array", "items": {"$ref": "#/$defs/agent"}, "description": "The agent branches of no open feature."},
+      "backend": {"enum": ["local", "refs"], "description": "Where the records came from (local after a fallback)."},
+      "remote": {"enum": ["none", "not-asked"], "x-since": "0.3.9", "description": "The handoff never asks the remote: none on the local backend, not-asked on the refs backend."},
+      "backend_fallback": {"type": "boolean", "x-since": "0.3.9", "description": "True when the project uses shared records that could not be read, or its marshal switch file cannot be used, and the note shows the local records of this host instead."},
+      "integrity": {"enum": ["off", "advisory", "strict"]},
+      "packs": {"$ref": "#/$defs/packs"},
+      "environment": {"$ref": "#/$defs/environment"},
+      "read_first": {"$ref": "#/$defs/read_first"},
+      "do_not_assume": {"type": "array", "items": {"type": "string", "x-text": true}},
+      "notes": {"type": "array", "items": {"type": "string", "x-text": true}},
+      "truncated": {"type": "boolean", "description": "True when the object was cut to the target size."},
+      "features_omitted": {"type": "integer", "x-when": "truncated is true and features were left out: how many."},
+      "features_left_out": {"type": "array", "items": {"type": "string"}, "x-when": "features_omitted is present: the names of the features left out, up to 3000 bytes of names."},
+      "features_left_out_more": {"type": "integer", "x-when": "More features were left out than features_left_out names: how many more."},
+      "lists_left_out": {"type": "object", "additionalProperties": {"type": "integer"}, "x-when": "Even with no feature the object was over the size: for each list that lost items (notes, deviations.accepted, gates, read_first.memory, read_first.repo_docs, read_first.successor) how many."}
+    },
+    "$defs": {
+      "head": {
+        "type": ["object", "null"],
+        "required": ["path", "branch", "detached", "sha"],
+        "properties": {
+          "path": {"type": "string"},
+          "branch": {"type": "string", "description": "Empty when HEAD is detached or has no commit."},
+          "detached": {"type": "boolean"},
+          "sha": {"type": "string", "description": "Empty when there is no commit."}
+        }
+      },
+      "where": {
+        "type": "object",
+        "required": ["repo", "repo_is_work_tree", "head", "cwd", "develop", "host", "user", "qargi_data_present", "answers_file"],
+        "properties": {
+          "repo": {"type": "string"},
+          "repo_is_work_tree": {"type": "boolean"},
+          "head": {"$ref": "#/$defs/head", "description": "The work tree of the repository; null when it is not one."},
+          "cwd": {"$ref": "#/$defs/head", "description": "The work tree the verb ran in; null when it is not one."},
+          "develop": {"type": "string", "description": "The commit of develop; empty when there is none."},
+          "host": {"type": "string"},
+          "user": {"type": "string"},
+          "qargi_data_present": {"type": "boolean"},
+          "answers_file": {"type": "string"}
+        }
+      },
+      "gate": {
+        "type": "object",
+        "required": ["tier", "name", "command"],
+        "properties": {
+          "tier": {"enum": ["feature", "release"], "x-open": true},
+          "name": {"type": "string"},
+          "command": {"type": "string"}
+        }
+      },
+      "deviations": {
+        "type": ["object", "null"],
+        "required": ["accepted", "open_gaps"],
+        "properties": {
+          "accepted": {"type": "array", "items": {"$ref": "#/$defs/accepted"}},
+          "open_gaps": {"type": ["integer", "null"], "description": "Null when the repository could not be read."}
+        },
+        "description": "The accepted deviations from the methodology; null when the project has none."
+      },
+      "accepted": {
+        "type": "object",
+        "required": ["gap", "reason", "date", "status"],
+        "properties": {
+          "gap": {"type": "string"},
+          "reason": {"type": "string", "x-text": true},
+          "date": {"type": "string"},
+          "status": {"type": "string", "x-text": true, "description": "accepted, accepted, no longer applies, or not checked."}
+        }
+      },
+      "worktree": {
+        "type": "object",
+        "required": ["path", "branch"],
+        "properties": {
+          "path": {"type": "string"},
+          "branch": {"type": "string", "description": "Empty for a detached work tree."}
+        }
+      },
+      "agent": {
+        "type": "object",
+        "required": ["branch", "base"],
+        "properties": {
+          "branch": {"type": "string"},
+          "base": {"type": "string", "description": "The branch the run was prepared against; empty when none is recorded."}
+        }
+      },
+      "lead": {
+        "type": ["object", "null"],
+        "required": ["id", "user", "host", "since"],
+        "properties": {
+          "id": {"type": "string"},
+          "user": {"type": "string"},
+          "host": {"type": "string"},
+          "since": {"type": "string"},
+          "worktree": {"type": "string", "x-when": "The lead record names its work tree (a digest of its path)."},
+          "succeeds": {"type": "string", "x-when": "The lead took over as the successor of an earlier lead of the same host, user and work tree."}
+        }
+      },
+      "task": {
+        "type": "object",
+        "required": ["run", "slug", "role", "started", "verified", "applied", "cleaned", "closed", "directory_gone", "state"],
+        "properties": {
+          "run": {"type": "string"},
+          "slug": {"type": "string"},
+          "role": {"type": "string"},
+          "started": {"type": "string"},
+          "verified": {"type": "boolean"},
+          "applied": {"type": "boolean"},
+          "cleaned": {"type": "boolean"},
+          "closed": {"type": "boolean"},
+          "directory_gone": {"type": "boolean", "x-since": "0.3.9", "description": "The run directory no longer exists."},
+          "state": {"type": "string", "x-text": true, "description": "A sentence made of the booleans above."}
+        }
+      },
+      "suite": {
+        "type": "object",
+        "required": ["state", "text"],
+        "properties": {
+          "state": {"enum": ["not-run", "unknown", "other-command", "other-environment", "at-tip", "older"], "x-open": true, "description": "Whether the last whole-suite result of feature verify applies to the tip: only at-tip does."},
+          "text": {"type": "string", "x-text": true},
+          "sha": {"type": "string", "x-when": "The record of the last run could be read: the commit it ran at."},
+          "result": {"enum": ["pass", "fail"], "x-when": "The record of the last run could be read."},
+          "at": {"type": "string", "x-when": "The record of the last run could be read: the time it gives, as text."}
+        }
+      },
+      "data": {
+        "type": "object",
+        "required": ["purpose", "goal", "plan", "note", "truncated", "from"],
+        "properties": {
+          "purpose": {"type": "string", "x-text": true},
+          "goal": {"type": "string", "x-text": true},
+          "plan": {"type": "string", "x-text": true},
+          "note": {"type": "string", "x-text": true},
+          "truncated": {"type": "array", "items": {"enum": ["purpose", "goal", "plan", "note"]}, "description": "The fields that were cut at 2000 characters."},
+          "from": {"type": "string", "description": "Who recorded it: the identity that last updated the record, else the lead, else unknown."}
+        }
+      },
+      "record": {
+        "type": "object",
+        "required": ["status", "lease", "minutes_since_renewal", "ttl_minutes", "rev", "ghost", "finished_at", "updated_by", "lead", "has_record", "data"],
+        "properties": {
+          "status": {"enum": ["planned", "active", "blocked", "verifying", "released", "finished", "abandoned", "unled"], "description": "unled: the feature has a branch and no record."},
+          "lease": {"enum": ["live", "stale", "none"], "description": "none: the feature has no lead. Its clock is the one of the backend: wall on the local backend, observed on this machine on the refs backend. This record has no `lease_clock` (the rows of qargi-marshal-status and qargi-marshal-check have one): read `backend` of the document, which says local after a fallback."},
+          "minutes_since_renewal": {"type": ["integer", "null"], "description": "Whole minutes; null when the feature has no lead or the age is unknown."},
+          "ttl_minutes": {"type": "integer"},
+          "rev": {"type": "integer"},
+          "ghost": {"type": "boolean"},
+          "finished_at": {"type": ["string", "null"]},
+          "updated_by": {"type": "string"},
+          "lead": {"$ref": "#/$defs/lead"},
+          "has_record": {"type": "boolean", "description": "False for a feature that has a branch and no marshal record."},
+          "data": {"$ref": "#/$defs/data"},
+          "provisional": {"type": "boolean", "x-when": "Shared refs backend: true while a claim has not reached the remote."},
+          "integrity": {"enum": ["signed", "unsigned", "INVALID", "cannot verify"], "x-open": true, "x-when": "The project's integrity setting is not off."},
+          "integrity_note": {"type": "string", "x-text": true, "x-when": "The project's integrity setting is not off."},
+          "signer": {"type": "string", "x-when": "The project's integrity setting is not off; empty when the record is not signed."}
+        }
+      },
+      "feature": {
+        "type": "object",
+        "required": ["name", "branch_exists", "tip", "ahead", "behind", "suite", "agent_merged", "agent_unmerged", "commits", "worktrees", "tasks", "overlap", "record"],
+        "properties": {
+          "name": {"type": "string"},
+          "branch_exists": {"type": "boolean"},
+          "tip": {"type": "string", "description": "The commit of the feature branch; empty when there is no branch."},
+          "ahead": {"type": ["integer", "null"], "description": "Commits ahead of develop; null when there is no branch, no develop or the count failed."},
+          "behind": {"type": ["integer", "null"], "description": "Commits behind develop; null when there is no branch, no develop or the count failed."},
+          "suite": {"$ref": "#/$defs/suite"},
+          "agent_merged": {"type": "array", "items": {"type": "string"}, "description": "The agent branches merged into the feature since it was cut from develop."},
+          "agent_unmerged": {"type": "array", "items": {"type": "array", "items": {"type": ["string", "integer", "null"]}}, "description": "The agent branches prepared against the feature and not merged into it; each item is [branch, commits ahead of the feature or null]."},
+          "commits": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "Up to 10 lines of abbreviated commit and subject, newest first."},
+          "worktrees": {"type": "array", "items": {"$ref": "#/$defs/worktree"}},
+          "tasks": {"type": "array", "items": {"$ref": "#/$defs/task"}},
+          "overlap": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}, "description": "The other open features that change the same files, with up to 10 files each."},
+          "record": {"$ref": "#/$defs/record"}
+        }
+      },
+      "packs_check": {
+        "type": "object",
+        "required": ["exit", "first", "last", "omitted"],
+        "properties": {
+          "exit": {"type": ["integer", "null"], "description": "Null when the check was not run."},
+          "first": {"type": "array", "items": {"type": "string", "x-text": true}},
+          "last": {"type": "array", "items": {"type": "string", "x-text": true}},
+          "omitted": {"type": "integer"}
+        }
+      },
+      "packs": {
+        "type": ["object", "null"],
+        "required": ["provider", "unsupported", "render_dir", "render_exists", "skills_dir", "linked", "launch", "launch_why", "render_target", "check_why", "link_path", "check"],
+        "properties": {
+          "provider": {"type": "string"},
+          "unsupported": {"type": ["string", "null"], "x-text": true, "description": "Why the runtime cannot describe packs; null when it can."},
+          "render_dir": {"type": "string"},
+          "render_exists": {"type": "boolean"},
+          "skills_dir": {"type": "string"},
+          "linked": {"type": "boolean"},
+          "launch": {"type": ["string", "null"], "description": "The launch line; null when there is none."},
+          "launch_why": {"type": "string", "x-text": true},
+          "render_target": {"type": ["string", "null"]},
+          "check_why": {"type": "string", "x-text": true},
+          "link_path": {"type": "string"},
+          "check": {"$ref": "#/$defs/packs_check"}
+        },
+        "description": "Null when the answers of the project are not on this host."
+      },
+      "env_check": {
+        "type": ["object", "null"],
+        "required": ["head", "at_head"],
+        "properties": {
+          "head": {"type": "string", "description": "The commit the check ran at; empty when unknown."},
+          "at_head": {"type": "boolean", "description": "That commit is the one of the repository now."},
+          "verdict": {"type": "string", "x-text": true, "x-when": "The record holds it."},
+          "exit": {"type": "integer", "x-when": "The record holds it."},
+          "missing": {"type": "integer", "x-when": "The record holds it."},
+          "expected": {"type": "integer", "x-when": "The record holds it."},
+          "time": {"type": "string", "x-when": "The record holds it."},
+          "doctor_command": {"type": "string", "x-when": "The record holds it."},
+          "builtin_minimum": {"type": "boolean", "x-when": "The record holds it."}
+        }
+      },
+      "env_apply": {
+        "type": ["object", "null"],
+        "required": ["head", "at_head"],
+        "properties": {
+          "head": {"type": "string", "description": "The commit the apply ran at; empty when unknown."},
+          "at_head": {"type": "boolean", "description": "That commit is the one of the repository now."},
+          "exit": {"type": "integer", "x-when": "The record holds it."},
+          "time": {"type": "string", "x-when": "The record holds it."},
+          "command": {"type": "string", "x-when": "The record holds it."},
+          "allow_root": {"type": "boolean", "x-when": "The record holds it."}
+        }
+      },
+      "environment": {
+        "type": "object",
+        "required": ["recorded", "check", "apply"],
+        "properties": {
+          "recorded": {"type": "boolean", "description": "An env check or env apply is recorded for the project on this host."},
+          "check": {"$ref": "#/$defs/env_check"},
+          "apply": {"$ref": "#/$defs/env_apply"}
+        }
+      },
+      "memory": {
+        "type": "object",
+        "required": ["tier", "kind", "location", "indexes"],
+        "properties": {
+          "tier": {"type": "string"},
+          "kind": {"enum": ["cloud", "dir"]},
+          "location": {"type": "string", "description": "A directory, or the id of a cloud store."},
+          "indexes": {"type": "array", "items": {"type": "string"}, "description": "The index files that exist in a directory tier."}
+        }
+      },
+      "successor": {
+        "type": "object",
+        "required": ["feature", "lead"],
+        "properties": {
+          "feature": {"type": "string"},
+          "lead": {"type": "string"}
+        }
+      },
+      "read_first": {
+        "type": "object",
+        "required": ["memory", "repo_docs", "status_command", "successor"],
+        "properties": {
+          "memory": {"type": "array", "items": {"$ref": "#/$defs/memory"}},
+          "repo_docs": {"type": "array", "items": {"type": "string"}},
+          "status_command": {"type": "string", "x-text": true},
+          "successor": {"type": "array", "items": {"$ref": "#/$defs/successor"}, "description": "The features this identity leads: the command that continues as the successor goes with each."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin of the document marked schema 1 since before the pin; minutes_since_renewal is an integer on every backend, and remote and backend_fallback are added"}]
+}
