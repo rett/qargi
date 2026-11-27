@@ -787,6 +787,8 @@ run_suite_cmd() {
 suite_env_settle() {
   local codes route parts
   [ -n "${SUITE_ENV:-}" ] && [ -n "${ENV_DIR:-}" ] || return 0
+  # a run that ends here has no verdict and is no entry of the history either (the exit trap would append it as interrupted)
+  if [ -s "$ENV_DIR/refused" ] || [ -s "$ENV_DIR/noreport" ]; then HIST_PENDING=''; fi
   if [ -s "$ENV_DIR/refused" ]; then
     codes=$(tr ' ' '\n' < "$ENV_DIR/refused" | awk 'NF && !s[$0]++' | tr '\n' ' '); codes=${codes% }
     parts=$({ jq -r '(.details // [])[] | select(.part != null) | .part' "$ENV_DIR"/*.json 2>/dev/null; tr , '\n' <<<"${ENV_WAIVE:-}"; } | awk 'NF && !s[$0]++' | LC_ALL=C sort | paste -sd, -)
