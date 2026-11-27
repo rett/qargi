@@ -343,6 +343,7 @@ $REL verify 0.6.0 >/dev/null 2>&1
 out=$($REL plan 0.6.0 --date 2026-04-01 2>&1); st=$(tok <<<"$out")
 grep -q "^4. site: build the documentation site of the tag 0.6.0" <<<"$out" && grep -q "^publish is not in this cut" <<<"$out" && ! grep -q "^[0-9]*\. publish" <<<"$out" && ok "site plan: site is a step of the cut, publish is not" || no "site cut plan: $out"
 grep -qx "   merge into: master, then the tag into develop; push: no, master and develop stay local (no origin)" <<<"$out" && ok "the cut plan of a project with no origin says where finish merges and that nothing is pushed" || no "cut plan facts: $out"
+grep -q "^3. finish: .*, delete release/0.6.0. Nothing is pushed: the repository has no origin. THIS IS THE TAG GATE: " <<<"$out" && ! grep -q "push master\|PUSH AND TAG" <<<"$out" && ! grep "^3. finish: " <<<"$out" | grep -q "pull request\|that was pushed" && grep "^3. finish: " <<<"$out" | grep -q "Needs a passing local whole-suite run at the head of release/0.6.0 (qargi release verify 0.6.0) and the branch still at that head\." && ok "the cut plan of a project with no origin: step 3 says nothing is pushed, needs the local whole-suite run (no pull request) and is the tag gate, not the push and tag gate" || no "cut plan step 3 without origin: $out"
 $REL plan 0.6.0 --date 2026-04-01 --plan "$st" --approved "ship the site too" >/dev/null 2>&1
 [ "$(sstate)" = "start:pending finish:pending site:pending" ] && ok "the recorded cut has start, finish and site (no origin, no push)" || no "site cut steps: $(sstate)"
 $REL start 0.6.0 --plan "$st" >/dev/null 2>&1; $REL verify 0.6.0 >/dev/null 2>&1
@@ -402,6 +403,7 @@ w=$($REL fix 1.0.1 --hotfix | sed -n 's/^worktree: //p')
 printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n- the fix\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$w/CHANGELOG.md"; git -C "$w" commit -q -am "record the fix"
 out=$($REL finish 1.0.1 --hotfix 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "changelog check (built in)" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: with an entry committed under the heading the plan is made, and says the check is built in" || no "finish with an entry: rc=$rc $out"
+grep -qx "push: no, master and develop stay local (the repository has no origin)" <<<"$out" && ! grep -q ", push master" <<<"$out" && grep -q "^finish hotfix 1.0.1 of hfin: merge hotfix/1.0.1 into master with --no-ff" <<<"$out" && ok "the finish plan of a project with no origin does not say it pushes" || no "finish plan without origin says push: $out"
 [ "$(git -C "$R" rev-parse master)" = "$m0" ] && ! git -C "$R" rev-parse -q --verify refs/tags/1.0.1 >/dev/null && ok "hotfix finish: the refusals changed nothing (master, no tag)" || no "the refused finish moved something"
 $REL verify 1.0.1 --hotfix >/dev/null 2>&1; t=$(tok <<<"$out")
 out=$($REL finish 1.0.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
