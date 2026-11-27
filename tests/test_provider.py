@@ -3182,10 +3182,62 @@ class RunHome(LibraryBase):
     def with_home(self, home, **disp):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
-    def test_the_codex_runtime_links_only_its_sign_in(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]})
-        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
+    def test_the_codex_runtime_links_only_its_sign_in_as_a_private_copy(self):
+        home = copy.deepcopy(shipped("codex.json")["dispatch"]["home"])
+        refresh = home["link"][0]["private"].pop("refresh")
+        self.assertEqual(home, {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [
+            {"from": "~/.codex-members/auth.json", "to": "auth.json",
+             "private": {"set": {"tokens.refresh_token": "qargi-no-refresh"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}}}]})
+        self.assertEqual(refresh["argv"][:2], ["codex", "exec"])                                  # the runtime's own command, read-only, in a scratch directory
+        self.assertIn("{scratch}", refresh["argv"])
+        self.assertIn("read-only", refresh["argv"])
+        self.assertEqual(refresh["timeout_seconds"], 120)
+        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"], command="codex"), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
+
+    REFRESH = {"argv": ["fakecli", "exec", "-C", "{scratch}", "-m", "{model}"], "prompt": "ok", "timeout_seconds": 60, "min_remaining_seconds": 600}
+
+    def test_a_private_link_may_declare_the_refresh_of_the_real_sign_in(self):
+        """private.refresh: {argv, prompt, timeout_seconds, min_remaining_seconds?}; its shape is stated in schema-2.json and in provider.refresh_problems, and
+        argv[0] must be the runtime's own command (dispatch.argv[0]: fakecli here), so the approval of an executable covers it."""
+        def link(**rf):
+            r = dict(self.REFRESH, **rf)
+            for k in [k for k, v in rf.items() if v is None]:
+                r.pop(k)
+            pv = dict(self.PRIVATE, refresh=r)
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": pv}]}
+        self.assertEqual(P.home_problems(link(), command="fakecli"), [])
+        self.assertEqual([m for m in fails(self.with_home(link()), "fakecli") if "dispatch.home" in m], [])
+        self.assertEqual(P.home_problems(link(min_remaining_seconds=None), command="fakecli"), [])           # min_remaining_seconds is optional
+        cases = (
+            (link(extra=1), "private.refresh.extra: additional property is not allowed"),
+            (link(argv=None), "private.refresh: missing required property 'argv'"),
+            (link(prompt=None), "private.refresh: missing required property 'prompt'"),
+            (link(timeout_seconds=None), "private.refresh: missing required property 'timeout_seconds'"),
+            (link(argv=[]), "private.refresh.argv: [] is not a list of one to 40"),
+            (link(argv="fakecli exec"), "private.refresh.argv: 'fakecli exec' is not a list"),
+            (link(argv=["fakecli", 5]), "private.refresh.argv: [\"fakecli\", 5] is not a list"),
+            (link(argv=["fakecli", "a\nb"]), "private.refresh.argv:"),
+            (link(argv=["fakecli", "{secret}"]), "private.refresh.argv: {secret} is not a placeholder here ({model}, {scratch})"),
+            (link(argv=["fakecli", "{clone}"]), "private.refresh.argv: {clone} is not a placeholder here"),
+            (link(argv=["othercli", "exec"]), "is not the runtime's own command 'fakecli'"),
+            (link(prompt=""), "private.refresh.prompt: '' is not 1 to 200 printable characters on one line"),
+            (link(prompt="a\nb"), "private.refresh.prompt:"),
+            (link(timeout_seconds=0), "private.refresh.timeout_seconds: 0 is not a whole number of seconds from 1 to 600"),
+            (link(timeout_seconds=601), "private.refresh.timeout_seconds: 601 is not a whole number of seconds from 1 to 600"),
+            (link(timeout_seconds=True), "private.refresh.timeout_seconds: true is not a whole number"),
+            (link(min_remaining_seconds=-1), "private.refresh.min_remaining_seconds: -1 is not a whole number of seconds from 0 to 86400"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": dict(self.PRIVATE, refresh=[])}]},
+             "private.refresh: [] is not an object"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                self.assertTrue(any(needle in m for m in P.home_problems(home, command="fakecli")), P.home_problems(home, command="fakecli"))
+                if "own command" not in needle:                                                               # the schema states the shape, the command rule is the validator's
+                    f = fails(self.with_home(home), "fakecli")
+                    self.assertTrue(any("dispatch.home" in m for m in f), f)
+        f = fails(self.with_home(link(argv=["othercli", "exec"])), "fakecli")                             # and provider check asks the command rule too
+        self.assertTrue(any("is not the runtime's own command 'fakecli'" in m for m in f), f)
 
     def test_refusals(self):
         ok_link = [{"from": "~/.fakecli/auth.json", "to": "auth.json"}]
@@ -3233,6 +3285,80 @@ class RunHome(LibraryBase):
                 self.assertTrue(any(needle in m for m in f), f)
                 self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))     # what qargi local run asks too
         self.assertEqual([m for m in fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link})) if "dispatch.home" in m], [])
+
+    PRIVATE = {"set": {"tokens.refresh_token": "placeholder"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp"}}
+
+    def test_a_private_link_is_a_copy_with_a_placeholder_and_an_expiry(self):
+        """A link entry may carry private: {set, expiry}. The shape is refused by the definition check and again by qargi local run (home_problems)."""
+        def link(**private):
+            pv = dict(self.PRIVATE, **private)
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": pv}]}
+        good = link()
+        self.assertEqual(P.home_problems(good), [])
+        self.assertEqual([m for m in fails(self.with_home(good), "fakecli") if "dispatch.home" in m], [])
+        self.assertEqual(P.home_problems(link(expiry={"path": "tokens.access_token", "encoding": "jwt-exp", "margin_seconds": 0})), [])     # the margin is optional, 0 included
+        cases = (
+            (link(extra=1), "dispatch.home.link[0].private.extra: additional property is not allowed"),
+            (link(set={}), "private.set: {} is not an object of one to 8"),
+            (link(set={"tokens..x": "a"}), "is not a dotted path of keys"),
+            (link(set={"tokens.refresh_token": "caf\u00e9"}), "the text is not 1 to 64 printable characters"),
+            (link(set={"tokens.refresh_token": "x" * 65}), "the text is not 1 to 64 printable characters"),
+            (link(set={"tokens.refresh_token": 5}), "the text is not 1 to 64 printable characters"),
+            (link(expiry={"path": "tokens.access_token", "encoding": "pem"}), "private.expiry.encoding: 'pem' is not one of jwt-exp"),
+            (link(expiry={"path": "tokens.access_token"}), "private.expiry: missing required property 'encoding'"),
+            (link(expiry={"path": "a b", "encoding": "jwt-exp"}), "private.expiry.path: 'a b' is not a dotted path of keys"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "skew": 1}), "private.expiry.skew: additional property is not allowed"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": -1}), "private.expiry.margin_seconds: -1 is not a whole number of seconds from 0 to 86400"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": 86401}), "private.expiry.margin_seconds: 86401 is not a whole number of seconds from 0 to 86400"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": True}), "private.expiry.margin_seconds: true is not a whole number of seconds"),
+            (link(expiry={"path": "a", "encoding": "jwt-exp", "margin_seconds": "900"}), "private.expiry.margin_seconds: '900' is not a whole number of seconds"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": {"set": self.PRIVATE["set"]}}]}, "private: missing required property 'expiry'"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "private": []}]}, "private: [] is not an object {set, expiry}"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.yaml", "to": "auth.yaml", "private": self.PRIVATE}]}, "the source '~/.fakecli/auth.yaml' of a private copy is a JSON file"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                f = fails(self.with_home(home), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))
+        # a private link meets the same rules as a plain one: the source in the user's own directory, and a credential store, stay refused
+        for frm in ("~/.codex/auth.json", "~/.ssh/id_ed25519.json"):
+            with self.subTest(frm):
+                home = {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": frm, "to": "auth.json", "private": self.PRIVATE}]}
+                self.assertTrue(P.home_problems(home) or P.home_source_forbidden(self.with_home(home), "fakecli"))
+
+    def test_a_placeholder_may_not_replace_the_token_the_expiry_is_read_from(self):
+        """A `set` path equal to expiry.path, or a dotted prefix of it, would put the placeholder where the expiry token is: refused by the definition check
+        and by qargi local run. A sibling or a longer path is not that."""
+        def link(st, path="tokens.access_token"):
+            return {"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json",
+                                                                    "private": {"set": st, "expiry": {"path": path, "encoding": "jwt-exp"}}}]}
+        for st, path in (({"tokens.access_token": "x"}, "tokens.access_token"), ({"tokens": "x"}, "tokens.access_token"),
+                         ({"tokens.refresh_token": "x", "tokens": "x"}, "tokens.access_token"), ({"a": "x"}, "a")):
+            with self.subTest(set=st):
+                home = link(st, path)
+                needle = "the placeholder would replace the token at expiry.path"
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))
+                f = fails(self.with_home(home), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+        for st, path in (({"tokens.refresh_token": "x"}, "tokens.access_token"), ({"tokens.access_token.x": "x"}, "tokens.access_token"),
+                         ({"tokens.refresh": "x"}, "tokens.refresh_token"), ({"token": "x"}, "tokens.access_token")):
+            with self.subTest(fine=st):
+                self.assertEqual([m for m in P.home_problems(link(st, path)) if "expiry.path" in m], [])
+
+    def test_the_expiry_is_read_from_the_source_before_a_placeholder_is_put_in(self):
+        """prepare_copies reads the value at expiry.path from the parsed source first, so the order of `set` can never hide the token."""
+        import local_run as L
+        sys.path.insert(0, HERE)
+        from dummy_signin import signin
+        spec = {"set": {"tokens.access_token": "qargi-placeholder"}, "expiry": {"path": "tokens.access_token", "encoding": "jwt-exp", "margin_seconds": 0}}
+        home = {"copies": [("auth.json", "/nowhere/auth.json")], "from": {"auth.json": "~/.fakecli/auth.json"}, "private": {"auth.json": spec}, "expires": {},
+                "runtime": "fakecli", "env": "FAKECLI_HOME", "doc": {}}
+        with mock.patch.object(L, "read_source", lambda *a: signin(3000).encode()):
+            out = L.prepare_copies(home, {"timeout_s": 60})
+        doc = json.loads(out["auth.json"].decode())
+        self.assertEqual(doc["tokens"]["access_token"], "qargi-placeholder")         # the placeholder is in the copy, though the expiry was read from the same path
+        self.assertTrue(2900 < home["expires"]["auth.json"] <= 3000, home["expires"])
 
     def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
         d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
@@ -4589,8 +4715,10 @@ class Review(unittest.TestCase):
 
     def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
         rv, got = self.home_lines(shipped("codex.json"))
-        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex-members/auth.json as auth.json"]})
-        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex-members/auth.json as auth.json"])
+        copy = ("~/.codex-members/auth.json as auth.json (a private copy, not a link: a placeholder is put at tokens.refresh_token; the run is refused when the value at "
+                "tokens.access_token, read as jwt-exp, ends within its bound plus 900 s)")
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": [copy]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: " + copy])
         two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
         self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
                                                    "~/.f/a.json as a.json, ~/.f/b as b"])

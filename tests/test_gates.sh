@@ -312,7 +312,7 @@ for bad in 'x' 'lead-one:coord:alpha' 'lead-one:coord:alpha:0' 'lead-one/x:coord
   [ $rc = 2 ] && grep -qF '<lead-id>:coord:<feature>:<n>' <<<"$out" && [ "$before" = "$(snap)" ] && ok "malformed label '$bad' is a usage error (exit 2) and nothing changed" || no "malformed label $bad rc=$rc: $out"
 done
 # the label is attribution: the marshal still knows the lead by QARGI_LEAD, and no record, lease, ref or audit line holds the label
-[ "$($DA marshal status alpha --json 2>/dev/null | jq -r '.lead.id')" = lead-one ] && ok "the lead identity is QARGI_LEAD, as before" || no "lead id: $($DA marshal status alpha --json 2>&1)"
+[ "$($DA marshal status alpha --json 2>/dev/null | jq -r '.features[0].lead.id')" = lead-one ] && ok "the lead identity is QARGI_LEAD, as before" || no "lead id: $($DA marshal status alpha --json 2>&1)"
 ! grep -rqF "coord:" "$T/s" "$T/c" && ! git -C "$R" for-each-ref --format='%(refname)' | grep -q coord && ok "no record, ref or audit line of the state holds the label" || no "the label leaked into: $(grep -rlF 'coord:' "$T/s" "$T/c")"
 
 # the narrowing is enforced where the target is resolved: the scripts check the run, the feature or the base they act on, after their own parse, so a command line that the gate

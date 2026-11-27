@@ -1,0 +1,11 @@
+{
+ "schema": 1,
+ "kind": "qargi-marshal-check",
+ "project": "app",
+ "backend": "refs",
+ "remote": "checked",
+ "feature": "r1",
+ "answer": "yours",
+ "lead": null,
+ "warnings": []
+}

@@ -18,7 +18,9 @@ mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
 CXHID=$(realpath "$T")/cxhid
 copy_tool . "$T/tool"
 # Only the offline fake claims verified overrides; the shipped runtime stays unverified.
-jq --arg h "$CXHID" '.dispatch.hidden_paths.prefixes = [$h] | .capabilities.per_dispatch_model_override.verified_on = "2026-11-02" | .capabilities.per_dispatch_effort_override.verified_on = "2026-11-02"' lib/providers/codex.json > "$T/tool/lib/providers/codex.json"
+# The shipped codex declares its sign-in as a private copy; the cases of this file are about the link of a run home (its lock, the file a runtime puts in place
+# of it, a write through it), so the copy of the tool declares it as a plain link. A private copy is tested in tests/test_signin_copy.sh.
+jq --arg h "$CXHID" 'del(.dispatch.home.link[0].private) | .dispatch.hidden_paths.prefixes = [$h] | .capabilities.per_dispatch_model_override.verified_on = "2026-11-02" | .capabilities.per_dispatch_effort_override.verified_on = "2026-11-02"' lib/providers/codex.json > "$T/tool/lib/providers/codex.json"
 CX=$T/tool/lib/providers/codex.json
 DA=$T/tool/bin/qargi
 LC="git -c user.name=t -c user.email=t@example.net"

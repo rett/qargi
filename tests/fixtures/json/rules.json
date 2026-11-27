@@ -1,0 +1,130 @@
+{
+ "rules": [
+  {
+   "id": "not-an-object",
+   "sentence": "the document is an array",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "truncated",
+   "sentence": "the text ends before the object closes",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "two-documents",
+   "sentence": "a second object follows the first",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "schema-missing",
+   "sentence": "no `schema`",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "schema-string",
+   "sentence": "`schema` is the string \"1\"",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "schema-unknown",
+   "sentence": "`schema` is one above the pinned number",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "kind-missing",
+   "sentence": "no `kind`",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "kind-wrong",
+   "sentence": "`kind` names another registered kind",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "required-missing",
+   "sentence": "one required field removed",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "type-wrong",
+   "sentence": "a string field holds an object",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "integer-string",
+   "sentence": "an integer field written as a string",
+   "applies": "both",
+   "needs": "integer"
+  },
+  {
+   "id": "enum-unknown",
+   "sentence": "a word outside a closed enum",
+   "applies": "both",
+   "needs": "enum"
+  },
+  {
+   "id": "null-not-allowed",
+   "sentence": "null in a field that is not nullable",
+   "applies": "both",
+   "needs": null
+  },
+  {
+   "id": "pattern-mismatch",
+   "sentence": "a string that does not match its pattern",
+   "applies": "both",
+   "needs": "pattern"
+  },
+  {
+   "id": "schema-float",
+   "sentence": "`schema` written as 1.0",
+   "applies": "writer",
+   "needs": null
+  },
+  {
+   "id": "integer-float",
+   "sentence": "an integer field written with a fraction (3.0)",
+   "applies": "writer",
+   "needs": "integer"
+  },
+  {
+   "id": "integer-range",
+   "sentence": "an integer field of 9007199254740992",
+   "applies": "writer",
+   "needs": "integer"
+  },
+  {
+   "id": "non-finite",
+   "sentence": "an integer field written as NaN",
+   "applies": "writer",
+   "needs": "integer"
+  },
+  {
+   "id": "duplicate-key",
+   "sentence": "a key written twice",
+   "applies": "writer",
+   "needs": null
+  },
+  {
+   "id": "prefix-missing",
+   "sentence": "the line has no `qargi-refusal/1 ` prefix",
+   "applies": "both",
+   "needs": "line"
+  },
+  {
+   "id": "prefix-number-differs",
+   "sentence": "the number in the prefix is not the `schema` of the object",
+   "applies": "both",
+   "needs": "line"
+  }
+ ]
+}

@@ -432,6 +432,20 @@ HOME_KEYS = ("env", "dir", "link", "skills_dir")
 HOME_ENV_SET = ("LANG", "LC_ALL", "TZ", "TERM")          # set by qargi local run for every member, beside what env_pass_problem refuses
 HOME_LINK_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 HOME_LINKS_MAX = 8
+PRIVATE_KEYS = ("set", "expiry")                        # a link entry may carry private: {set, expiry}; a private link is a copy, not a link
+PRIVATE_OPTIONAL = ("refresh",)                         # private.refresh: the command that makes the runtime refresh the real sign-in (REFRESH_KEYS)
+REFRESH_KEYS = ("argv", "prompt", "min_remaining_seconds", "timeout_seconds")
+REFRESH_REQUIRED = ("argv", "prompt", "timeout_seconds")
+REFRESH_PLACEHOLDERS = ("model", "scratch")              # the words an element of private.refresh.argv may name: {model} (the definition's default model), {scratch} (its working directory)
+REFRESH_TEXT = re.compile(r"^[ -~]{1,200}$")            # an element of the refresh argv and its prompt: printable, one line
+REFRESH_ARGV_MAX = 40
+REFRESH_TIMEOUT_MAX = 600
+PRIVATE_ENCODINGS = ("jwt-exp",)                        # how the value at expiry.path tells when it ends: the exp claim of a JWT, read without a signature check
+PRIVATE_PATH = re.compile(r"^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,5}$")   # a dotted path of keys in a JSON object
+PRIVATE_TEXT = re.compile(r"^[ -~]{1,64}$")             # the plain text a private copy is given at a path: short, printable, one line
+PRIVATE_MAX = 8
+PRIVATE_MARGIN = 900                                    # expiry.margin_seconds when a definition names none: the seconds a copy's token must outlast a run's bound by
+PRIVATE_MARGIN_MAX = 86400
 HOME_LINK_DENIED = (                                    # under the user's home: never linked into a run, whatever the runtime says
     (".qargi", "qargi's own configuration, state and credentials"), (".ssh", "the user's ssh keys"), (".gnupg", "the user's keys"),
     (".netrc", "the user's stored logins"), (".git-credentials", "the user's stored git logins"), (".gitconfig", "the user's git configuration"),
@@ -464,12 +478,92 @@ def home_link_problem(src):
     return None
 
 
-def home_problems(home, env_pass=(), shape=True):
+def refresh_problems(rf, where, command=None):
+    """The findings of private.refresh: {argv, prompt, timeout_seconds, min_remaining_seconds?}, the command qargi local run runs, once and under the source's lock, to make
+    the runtime use (and so refresh) the real sign-in when the copy's token would end inside a run: argv is a list of printable one-line words (element 0 the
+    runtime's own command, the one dispatch.argv starts with when command is given, so the approval of the executable covers it; {model} and {scratch} are the
+    only placeholders), prompt the text it is given on standard input, timeout_seconds how long it may run (1 to REFRESH_TIMEOUT_MAX), min_remaining_seconds
+    (default 0) the seconds a refreshed token must have left at least, for the refresh to count: the larger of it and the run's own need (bound plus margin), not their sum."""
+    if not isinstance(rf, dict):
+        return ["%s: %s is not an object {argv, prompt, timeout_seconds}" % (where, _show(rf))]
+    bad = ["%s.%s: additional property is not allowed" % (where, k) for k in rf if k not in REFRESH_KEYS]
+    bad += ["%s: missing required property '%s'" % (where, k) for k in REFRESH_REQUIRED if k not in rf]
+    av = rf.get("argv")
+    if "argv" in rf:
+        if not isinstance(av, list) or not 1 <= len(av) <= REFRESH_ARGV_MAX or not all(isinstance(a, str) and REFRESH_TEXT.match(a) for a in av):
+            bad.append("%s.argv: %s is not a list of one to %d printable one-line texts" % (where, _show(av), REFRESH_ARGV_MAX))
+        else:
+            if command is not None and av[0] != command:
+                bad.append("%s.argv: the command %s is not the runtime's own command %s (dispatch.argv[0]): the approval of an executable covers that one" % (where, _show(av[0]), _show(command)))
+            for a in av:
+                for m in re.findall(r"\{([^{}]*)\}", a):
+                    if m not in REFRESH_PLACEHOLDERS:
+                        bad.append("%s.argv: {%s} is not a placeholder here (%s)" % (where, m, ", ".join("{%s}" % n for n in REFRESH_PLACEHOLDERS)))
+    if "prompt" in rf and (not isinstance(rf["prompt"], str) or not REFRESH_TEXT.match(rf["prompt"])):
+        bad.append("%s.prompt: %s is not 1 to 200 printable characters on one line" % (where, _show(rf["prompt"])))
+    t = rf.get("timeout_seconds")
+    if "timeout_seconds" in rf and (type(t) is not int or not 1 <= t <= REFRESH_TIMEOUT_MAX):
+        bad.append("%s.timeout_seconds: %s is not a whole number of seconds from 1 to %d" % (where, _show(t), REFRESH_TIMEOUT_MAX))
+    m = rf.get("min_remaining_seconds", 0)
+    if type(m) is not int or not 0 <= m <= PRIVATE_MARGIN_MAX:
+        bad.append("%s.min_remaining_seconds: %s is not a whole number of seconds from 0 to %d" % (where, _show(m), PRIVATE_MARGIN_MAX))
+    return bad
+
+
+def private_problems(ln, at, command=None):
+    """The findings of the `private` of one link entry (at names it, dispatch.home.link[N]): {set: {PATH: TEXT}, expiry: {path, encoding}}. The link is then
+    a private copy: qargi local run reads the source (a JSON object), puts each TEXT at its dotted PATH, checks that the value at expiry.path (read by
+    expiry.encoding) outlasts the run's bound plus expiry.margin_seconds (default PRIVATE_MARGIN), and writes the result as a file of the run home that it removes when the run ends; the source is never
+    written. Both keys are required: a copy that cannot refresh must say how long it lasts."""
+    pv = ln.get("private")
+    where = "%s.private" % at
+    if not isinstance(pv, dict):
+        return ["%s: %s is not an object {set, expiry}" % (where, _show(pv))]
+    bad = ["%s.%s: additional property is not allowed" % (where, k) for k in pv if k not in PRIVATE_KEYS + PRIVATE_OPTIONAL]
+    bad += ["%s: missing required property '%s'" % (where, k) for k in PRIVATE_KEYS if k not in pv]
+    st = pv.get("set")
+    if "set" in pv:
+        if not isinstance(st, dict) or not st or len(st) > PRIVATE_MAX:
+            bad.append("%s.set: %s is not an object of one to %d {PATH: TEXT}" % (where, _show(st), PRIVATE_MAX))
+        else:
+            for k, v in st.items():
+                if not isinstance(k, str) or not PRIVATE_PATH.match(k):
+                    bad.append("%s.set: %s is not a dotted path of keys (letters, digits, _ and -, at most 6 parts)" % (where, _show(k)))
+                if not isinstance(v, str) or not PRIVATE_TEXT.match(v):
+                    bad.append("%s.set[%s]: the text is not 1 to 64 printable characters on one line" % (where, _show(k)))
+    ex = pv.get("expiry")
+    if "expiry" in pv:
+        if not isinstance(ex, dict):
+            bad.append("%s.expiry: %s is not an object {path, encoding}" % (where, _show(ex)))
+        else:
+            bad += ["%s.expiry.%s: additional property is not allowed" % (where, k) for k in ex if k not in ("path", "encoding", "margin_seconds")]
+            bad += ["%s.expiry: missing required property '%s'" % (where, k) for k in ("path", "encoding") if k not in ex]
+            if "path" in ex and (not isinstance(ex["path"], str) or not PRIVATE_PATH.match(ex["path"])):
+                bad.append("%s.expiry.path: %s is not a dotted path of keys" % (where, _show(ex["path"])))
+            m = ex.get("margin_seconds", PRIVATE_MARGIN)
+            if type(m) is not int or not 0 <= m <= PRIVATE_MARGIN_MAX:
+                bad.append("%s.expiry.margin_seconds: %s is not a whole number of seconds from 0 to %d" % (where, _show(m), PRIVATE_MARGIN_MAX))
+            if "encoding" in ex and ex["encoding"] not in PRIVATE_ENCODINGS:
+                bad.append("%s.expiry.encoding: %s is not one of %s" % (where, _show(ex["encoding"]), ", ".join(PRIVATE_ENCODINGS)))
+    if isinstance(st, dict) and isinstance(ex, dict) and isinstance(ex.get("path"), str):
+        for k in st:                                     # a placeholder put at the expiry path, or at a part of it, would replace the token the expiry is read from
+            if isinstance(k, str) and (ex["path"] == k or ex["path"].startswith(k + ".")):
+                bad.append("%s.set[%s]: the placeholder would replace the token at expiry.path %s (a set path is neither the expiry path nor a part of it)" % (where, _show(k), _show(ex["path"])))
+    if "refresh" in pv:
+        bad += refresh_problems(pv["refresh"], where + ".refresh", command)
+    frm = ln.get("from")
+    if isinstance(frm, str) and not frm.endswith(".json"):
+        bad.append("%s: the source %s of a private copy is a JSON file (its name ends in .json)" % (where, _show(frm)))
+    return bad
+
+
+def home_problems(home, env_pass=(), shape=True, command=None):
     """The findings of a runtime's dispatch.home, as messages: {env, dir, link: [{from, to}]} gives the member a home directory of its own,
     RUN/home/DIR, named by the variable env, with the files of link linked into it for the length of the run. env must be a variable a
     runtime may set (env_pass_problem, not one qargi local run sets, not one of env_pass); dir a relative path inside the run home; from a file
     under the user's home (home_link_problem); to a plain file name, each once. shape: also the types and keys (the schema states them too;
-    qargi local run, which reads a definition without the schema, asks for them)."""
+    qargi local run, which reads a definition without the schema, asks for them). command: the runtime's own command (dispatch.argv[0]), which a
+    private.refresh must start with."""
     if home is None:
         return []
     if not isinstance(home, dict):
@@ -506,12 +600,14 @@ def home_problems(home, env_pass=(), shape=True):
             bad += ["dispatch.home.link[%d]: %s is not an object {from, to}" % (i, _show(ln))] if shape else []
             continue
         if shape:
-            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to")]
+            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to", "private")]
             bad += ["dispatch.home.link[%d]: missing required property '%s'" % (i, k) for k in ("from", "to") if k not in ln]
         if "from" in ln:
             why = home_link_problem(ln["from"])
             if why:
                 bad.append("dispatch.home.link[%d].from: %s" % (i, why))
+        if "private" in ln:
+            bad += private_problems(ln, "dispatch.home.link[%d]" % i, command)
         to = ln.get("to")
         if "to" in ln and (not isinstance(to, str) or not HOME_LINK_NAME.match(to) or to in (".", "..")):
             bad.append("dispatch.home.link[%d].to: %s is not a plain file name (letters, digits, . _ and -, no /)" % (i, _show(to)))
@@ -588,9 +684,14 @@ def home_source_forbidden(doc, runtime):
     return None
 
 
+def login_command(h, frm, cmd):
+    """The command that signs in again for the members' directory of the declared source frm (~/PATH): VAR=DIR COMMAND login, from the definition's own data."""
+    return "%s=%s %s login" % (h.get("env"), os.path.dirname(frm), cmd)
+
+
 def _login_how(h, frm, cmd):
-    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -p %s && chmod 700 %s && %s=%s %s login"
-            % (os.path.dirname(frm), os.path.dirname(frm), h.get("env"), os.path.dirname(frm), cmd))
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -p %s && chmod 700 %s && %s"
+            % (os.path.dirname(frm), os.path.dirname(frm), login_command(h, frm, cmd)))
 
 
 def home_source_problem(doc, runtime):
@@ -1611,7 +1712,8 @@ def validate2(d, name=None):
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     if isinstance(disp, dict) and disp.get("home") is not None:
-        out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        cmd0 = disp["argv"][0] if isinstance(disp.get("argv"), list) and disp["argv"] and isinstance(disp["argv"][0], str) else None
+        out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False, command=cmd0)]
         if not home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False):
             why = home_source_forbidden(d, d.get("provider") if isinstance(d.get("provider"), str) else name or "the runtime")
             if why:
@@ -2819,11 +2921,15 @@ def _link_lines(doc, runtime):
         one = copy.deepcopy(doc)
         one["dispatch"]["home"]["link"] = [ln]
         forbidden = home_source_forbidden(one, runtime)
-        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, state,
+        lines.append("%s: %s -> %s (real path %s): %s, %s" % ("copy" if isinstance(ln, dict) and "private" in ln else "link", frm, to, real, state,
                      "not inside ~/.codex" if forbidden is None else "refused: " + _first_line(forbidden)))
     why = ("dispatch.home: " + shape[0]) if shape else home_source_problem(doc, runtime)
     if why is None:
-        lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
+        plain = [ln for ln in links if isinstance(ln, dict) and "private" not in ln]
+        if not plain:
+            lines.append("every source is a private copy that cannot refresh the real sign-in, so the runs of %s overlap; a run that would outlive the copy's token is refused before it starts" % runtime)
+        else:
+            lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
     return lines, why
 
 

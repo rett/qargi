@@ -7,7 +7,7 @@ and a `next` for a lead and for the owner's own session (`host`). A message and 
 
   refusal.py refuse [--verb V] [--project P] [--role R] CODE [KEY=VALUE ...]
         prints the refusal on standard error and exits with the code's exit status. The first line is the contract line, `qargi-refusal/1 `
-        and one JSON object (code, exit, verb, project, role, epoch, state, tx, detail); then `qargi: refused [CODE] MESSAGE`, `  why: ...`
+        and one JSON object (code, exit, verb, project, role, epoch, state, tx, detail, schema, kind; the last two name the document, lib/kinds/qargi-refusal.json); then `qargi: refused [CODE] MESSAGE`, `  why: ...`
         and `  next: ...`. `detail` is qargi's own text: the typed fields as `key=value`, a lead-chosen value (ref, path, name and their lists)
         only as a digest of 12 hex digits, a list as three items and `+N`. An unknown code, a code that is not live, an unknown field or a
         value of the wrong type is a defect in the caller: exit 70, nothing else printed but the defect.
@@ -46,6 +46,8 @@ SITES_SEE = {"verify-environment": "[verify.environment](verify-environment.md) 
              "guard": "`qargi help guard` says what a member's guard refuses."}
 CONTRACT = "qargi-refusal/1"
 LINE_MAX = 4096
+SCHEMA = 1                          # the integer of the document kind below, equal to the number in CONTRACT
+KIND = "qargi-refusal"              # the kind the object names; lib/kinds/qargi-refusal.json declares both keys
 PLAN_DAYS = 7                       # a stored plan is kept this long
 PLAN_SCHEMA = "qargi.plan/0"        # draft: it may change without notice until a consumer publishes it as qargi.plan/1
 PLAN_KINDS = ("ref", "path", "name", "sha", "label", "count")   # what a line of a stored plan is, in the types of the catalogue; ref, path and name are lead-chosen
@@ -54,7 +56,8 @@ PLAN_MAX = 1 << 20                  # a stored plan is read up to this size
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 STATUSES = ("live", "planned", "withdrawn")
-EXITS = (1, 2, 77)                  # a refusal, a guard's deny, a verb that does not apply to the project's methodology or a removal that something holds back, a lead refusal of the seat
+EXITS = (1, 2, 3, 77)               # a refusal, a guard's deny, a verb that does not apply to the project's methodology or a removal that something holds back, a remote that could not be asked, a lead refusal of the seat
+CLASS_EXITS = {"seat-gate": 77, "guard": 2, "methodology": 2, "project-remove": 2, "marshal-remote": 3}   # every other class exits 1
 LEADS = ("lead", "host")            # the two readers of a `next`
 LEAD_CHOSEN = ("ref", "path", "name", "ref-list", "path-list", "name-list")   # text a lead wrote: only a digest of it reaches `detail`
 SEAT_CLASSES = ("seat-gate", "seat-door")
@@ -197,7 +200,7 @@ def render(cat, code, pairs, notice=False, verb=None, project=None, role=None):
     verb = values.get("verb") or (verb if verb and len(verb) <= 80 and VERB_RE.fullmatch(verb) else None)   # the caller's default is an environment value: not a verb is no verb
     detail = " ".join("%s=%s" % (k, detail_value(fields[k], values[k])) for k in fields if k in values and k != "verb")
     obj = {"code": code, "exit": e["exit"], "verb": verb, "project": project if project and PROJECT_RE.fullmatch(project) else None,
-           "role": role if role and ROLE_RE.fullmatch(role) else None, "epoch": None, "state": None, "tx": None, "detail": detail}
+           "role": role if role and ROLE_RE.fullmatch(role) else None, "epoch": None, "state": None, "tx": None, "detail": detail, "schema": SCHEMA, "kind": KIND}
     line = CONTRACT + " " + json.dumps(obj, separators=(",", ":"))
     while len(line.encode("utf-8")) >= LINE_MAX and obj["detail"]:
         obj["detail"] = obj["detail"][:max(0, len(obj["detail"]) - 64)]
@@ -551,8 +554,8 @@ def check_catalogue(cat):
             bad("why is static: no placeholder")
         if type(e["exit"]) is not int or e["exit"] not in EXITS:   # not 1.0 (it would print "exit":1.0), not true
             bad("exit is one of %s" % (EXITS,))
-        if e["exit"] != {"seat-gate": 77, "guard": 2, "methodology": 2, "project-remove": 2}.get(e["class"], 1):
-            bad("a seat-gate code exits 77, a guard, methodology or project-remove code 2 and every other code 1")
+        if e["exit"] != CLASS_EXITS.get(e["class"], 1):
+            bad("a seat-gate code exits 77, a guard, methodology or project-remove code 2, a marshal-remote code 3 and every other code 1")
         if e["status"] not in STATUSES:
             bad("status is one of %s" % (STATUSES,))
         fields = e["fields"]
@@ -686,13 +689,16 @@ def page_text(cat):
            "## What a refusal prints", "",
            "On standard error, the contract line first, then the human lines:", "",
            "```",
-           CONTRACT + ' {"code":"plan-stale","exit":1,"verb":"release push","project":"acme","role":null,"epoch":null,"state":null,"tx":null,"detail":"moved=head"}',
+           CONTRACT + ' {"code":"plan-stale","exit":1,"verb":"release push","project":"acme","role":null,"epoch":null,"state":null,"tx":null,"detail":"moved=head","schema":1,"kind":"qargi-refusal"}',
            "qargi: refused [plan-stale] ...",
            "  why: ...",
            "  next: ...",
            "```", "",
            "`detail` is qargi's own text: the typed fields as `key=value`. A value that a lead chose (a ref, a path or a name) appears in the human",
-           "lines only; in `detail` it is a digest of 12 hex digits. A list prints three items and `+N`. The line stays under 4 KiB. `notice`",
+           "lines only; in `detail` it is a digest of 12 hex digits. A list prints three items and `+N`. The line stays under 4 KiB. The object names",
+           "its document with `schema` (an integer, 1; equal to the number in the prefix) and `kind` (`qargi-refusal`), its last two keys; a new field",
+           "after them keeps the integer. `exit` is the exit status of the process: 1 for a refusal, 2 for a guard's deny or a verb that does not",
+           "apply, 3 for a remote of the shared records that could not be asked (the class `marshal-remote`), 77 for a refusal of the lead seat. `notice`",
            "prints `qargi: note [code] ...` and a `next:` line, with no contract line, and exits 0: the verb did its work and names a rule that",
            "will apply later.", "",
            "## What moved: the basis of a plan", "",

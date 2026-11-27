@@ -22,6 +22,7 @@ import attempts as A
 import local_run as R
 import lead_usage
 from attempt_fixture import wire, ForkAfterEnumeration
+from dummy_signin import signin
 
 
 # The project of these tests runs members on the shipped codex definition, which says that its sandbox hides some places from a
@@ -85,7 +86,7 @@ class Integration(unittest.TestCase):
         # the tests' home is their own, with a sign-in of nothing in it.
         self.home = self.root / "home"
         (self.home / ".codex-members").mkdir(parents=True)
-        (self.home / ".codex-members/auth.json").write_text("fixture sign-in\n")
+        (self.home / ".codex-members/auth.json").write_text(signin())   # dummy tokens: a private copy of it is made for each run
         self.env["HOME"] = str(self.home)
         # Attribution assertions must use the fixture's configured identity.
         for key in list(self.env):

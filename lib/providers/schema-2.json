@@ -77,7 +77,7 @@
           "properties": {
             "mode": {"enum": ["in-session", "command", "adapter"]},
             "home": {
-              "description": "mode command only: a home directory of the member's own, RUN/home/DIR, that qargi local run names in the variable env, with each file `from` (a file under the user's home, ~/PATH) linked into it as `to` for the length of the run. The link is made when the run starts and removed when it ends, its target is never printed by a run (--dry-run prints HOME_LINKS=NAME<-PATH, each link with the real path it points at) and the file is never copied. A source that does not exist (a link to a missing file too), is not a regular file, or whose real path lies inside the directory of the user's own sessions (~/.codex whatever the runtime, the directory of resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir, the directory the lead's environment names in the variable env or in CODEX_HOME unless it is the directory of the source itself) refuses qargi local prepare and the run (exit 2), and a source inside such a directory is refused by the definition check and the seal too; the source is checked again, and linked by its real path, once the run holds the lock of its sign-in. The runs that share a source run one at a time (an exclusive flock on .qargi-run.lock beside the source's real file). A write through the link lands in the source, which qargi cannot prevent; a file the runtime puts in place of the link is never written to the source: it is kept in the run home as TO.from-run (mode 600), named by the run's output and dispatch.json (home.residue), for the user to reconcile. env may not be a variable qargi sets or never hands on (env_pass_problem) nor one of env_pass; dir is a relative path; from may not be qargi's own directory, a credential store of the user's other tools (ssh, gpg, git, forges, clouds, keyrings), a startup file of the user's shell, desktop or services, or ~/.local/bin; to is a plain file name. At most 8 links. Absent or null: the member's home is the run's home and nothing is linked.",
+              "description": "mode command only: a home directory of the member's own, RUN/home/DIR, that qargi local run names in the variable env, with each file `from` (a file under the user's home, ~/PATH) linked into it as `to` for the length of the run. The link is made when the run starts and removed when it ends, its target is never printed by a run (--dry-run prints HOME_LINKS=NAME<-PATH, each link with the real path it points at, and HOME_COPIES=NAME<-PATH for a private link) and the file is never copied, except for a link that carries private (see the description of private). A source that does not exist (a link to a missing file too), is not a regular file, or whose real path lies inside the directory of the user's own sessions (~/.codex whatever the runtime, the directory of resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir, the directory the lead's environment names in the variable env or in CODEX_HOME unless it is the directory of the source itself) refuses qargi local prepare and the run (exit 2), and a source inside such a directory is refused by the definition check and the seal too; the source is checked again, and linked by its real path, once the run holds the lock of its sign-in. The runs that share a plain link's source run one at a time (an exclusive flock on .qargi-run.lock beside the source's real file); a private link (private) takes no lock. A write through the link lands in the source, which qargi cannot prevent; a file the runtime puts in place of the link is never written to the source: it is kept in the run home as TO.from-run (mode 600), named by the run's output and dispatch.json (home.residue), for the user to reconcile. env may not be a variable qargi sets or never hands on (env_pass_problem) nor one of env_pass; dir is a relative path; from may not be qargi's own directory, a credential store of the user's other tools (ssh, gpg, git, forges, clouds, keyrings), a startup file of the user's shell, desktop or services, or ~/.local/bin; to is a plain file name. At most 8 links. Absent or null: the member's home is the run's home and nothing is linked.",
               "type": ["object", "null"],
               "additionalProperties": false,
               "required": ["env", "dir"],
@@ -93,7 +93,38 @@
                     "required": ["from", "to"],
                     "properties": {
                       "from": {"type": "string"},
-                      "to": {"type": "string"}
+                      "to": {"type": "string"},
+                      "private": {
+                        "description": "Makes the link a private copy of a JSON source for a runtime that refreshes the sign-in it is given in place: the runs that share the source then need no lock and overlap. qargi local run reads the source, puts each text of set at its dotted path (a placeholder the runtime cannot refresh with), reads when the value at expiry.path ends (encoding jwt-exp: the exp claim of a JWT, no signature checked) and refuses the run (runtime-signin-expiring) when that is less than the run's own time bound plus expiry.margin_seconds (default 900) away. It writes the result as a regular file TO of the run home (mode 600, made exclusively, never a link) and removes it when the run ends; nothing is written back to the source, and the copy is a note when the runtime changed it. The source is a JSON object whose name ends in .json; paths are keys joined by dots.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["set", "expiry"],
+                        "properties": {
+                          "set": {"type": "object", "minProperties": 1, "maxProperties": 8, "propertyNames": {"pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,5}$"}, "additionalProperties": {"type": "string", "pattern": "^[ -~]{1,64}$"}},
+                          "expiry": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["path", "encoding"],
+                            "properties": {
+                              "path": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,5}$"},
+                              "encoding": {"enum": ["jwt-exp"]},
+                              "margin_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "seconds the token must outlast the run's own time bound by (default 900)"}
+                            }
+                          },
+                          "refresh": {
+                            "description": "The command that makes the runtime use, and so refresh, the real sign-in when the copy's token would end inside a run. qargi local run takes the lock beside the source (exclusive), reads the source again (another run may have refreshed it), and if it still would not last runs argv once, read-only, in a scratch working directory, with the scrubbed environment of a member run and the variable of dispatch.home naming the source's directory; prompt is its standard input; its output is discarded and never printed. A command that fails, times out or leaves the source unchanged, or a token that still would not last, refuses the run (runtime-signin-expiring, cause refresh-failed); there is no second try. argv[0] is the runtime's own command (dispatch.argv[0]); {model} is the definition's default model and {scratch} the working directory.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["argv", "prompt", "timeout_seconds"],
+                            "properties": {
+                              "argv": {"type": "array", "minItems": 1, "maxItems": 40, "items": {"type": "string", "pattern": "^[ -~]{1,200}$"}},
+                              "prompt": {"type": "string", "pattern": "^[ -~]{1,200}$"},
+                              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+                              "min_remaining_seconds": {"type": "integer", "minimum": 0, "maximum": 86400, "description": "seconds a refreshed token must have left at least for the refresh to count: the larger of this and the run's own need (bound plus margin), not the sum (default 0)"}
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }

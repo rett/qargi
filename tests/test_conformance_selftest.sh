@@ -124,13 +124,15 @@ declare -A CXF=(
   [nousage]='.dispatch.output.usage.select = {"/type": "no.such.event"}'
   [roinwrite]='.dispatch.argv |= (.[:2] + ["--sandbox", "read-only"] + .[2:])'
   [gitinro]='.dispatch.argv |= map(if type == "object" and .class == "read-only" then .then += ["--add-dir", "{clone}/.git"] else . end)'
+  [homewrite]='del(.dispatch.home.link[0].private)'   # the stub below writes through the sign-in file the run home links in: that is a fault of a plain link only (a private copy is the run's own file)
 )
-declare -A CXWANT=([norogroup]='11 12 14 15' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14' [nohide]='15')
+declare -A CXWANT=([norogroup]='11 12 14 15' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14' [nohide]='15' [noplaceholder]='13')
 declare -A CXWHY=([norogroup]='carries no arguments of its own' [twosandbox]='also sets --sandbox outside its read-only arguments'
   [nousage]='records no usage: dispatch.output.usage matches no line' [roinwrite]='the write run carries the arguments of the read-only class: --sandbox read-only'
   [gitinro]='a read-only run carries --add-dir /conformance/run/clone/.git of the write class'
   [homewrite]='the run changed a file of the caller.s home' [nobaseline]='the run.s configuration file home/.codex/config.toml is missing'
-  [nohide]='write, run hidden: qargi local run exited 0, not 2 .refused.')
+  [nohide]='write, run hidden: qargi local run exited 0, not 2 .refused.'
+  [noplaceholder]='the private copy auth.json still held the content of its source at a path its definition sets')
 for f in "${!CXF[@]}"; do
   mkdir -p "$T/cx.$f"; cp -R lib agents "$T/cx.$f/"
   jq "${CXF[$f]}" lib/providers/codex.json > "$T/cx.$f/lib/providers/codex.json" || no "the codex mutation $f did not apply"
@@ -144,12 +146,17 @@ cmp -s "$T/cx.nobaseline/lib/local_run.py" lib/local_run.py && no "the local run
 mkdir -p "$T/cx.nohide"; cp -R lib agents "$T/cx.nohide/"
 sed -i 's|^    if hidden:$|    if False:|' "$T/cx.nohide/lib/local_run.py"
 cmp -s "$T/cx.nohide/lib/local_run.py" lib/local_run.py && no "the local run mutation nohide changed nothing"
-# a stub that writes through the sign-in file the run home links in: the caller's own file changes
+# a qargi local run that does not put the placeholder in a private copy: the copy holds the source's content at the paths the definition sets (the refresh token would reach the member)
+mkdir -p "$T/cx.noplaceholder"; cp -R lib agents "$T/cx.noplaceholder/"
+sed -i 's|^\( *\)at\[key\] = text$|\1pass|' "$T/cx.noplaceholder/lib/local_run.py"
+cmp -s "$T/cx.noplaceholder/lib/local_run.py" lib/local_run.py && no "the local run mutation noplaceholder changed nothing"
+# a stub that writes through the sign-in file the run home links in: the caller's own file changes (on a copy of codex that declares the link plain: the shipped one declares it private, so the
+# same stub writes only to the run's own copy, which is no fault, as the case after the loop says)
 mkdir -p "$T/cxstub"; cp -R tests/providers/codex tests/providers/lib "$T/cxstub/"
 mv "$T/cxstub/codex/stub" "$T/cxstub/codex/stub.real"
 printf '#!/bin/sh\nprintf x >> "$CODEX_HOME/auth.json"\nexec "$(dirname "$0")/stub.real" "$@"\n' > "$T/cxstub/codex/stub"; chmod 755 "$T/cxstub/codex/stub"
 for f in "${!CXWANT[@]}"; do
-  if [ "$f" = homewrite ]; then args=(--stub "$T/cxstub/codex"); else args=(--tool "$T/cx.$f"); fi
+  if [ "$f" = homewrite ]; then args=(--stub "$T/cxstub/codex" --tool "$T/cx.$f"); else args=(--tool "$T/cx.$f"); fi
   ( conf codex "${args[@]}" > "$T/cx.$f.out" 2>&1; echo $? > "$T/cx.$f.rc" ) &
 done
 wait
@@ -158,6 +165,11 @@ for f in "${!CXWANT[@]}"; do
   { [ "$rc" = 1 ] && [ "$failed" = "$want" ] && grep -Eq -- "^ +- .*${CXWHY[$f]}" "$T/cx.$f.out"; } && ok "codex fault '$f' fails case(s) $want and says why" \
     || { no "codex fault '$f' does not fail exactly case(s) $want: rc=$rc, failed: ${failed:-none}"; sed 's/^/     /' "$T/cx.$f.out"; }
 done
+
+# the same stub on the shipped codex, whose sign-in is a private copy: it writes only to the copy the run made for itself, which is removed with the run, so nothing of the caller's home changes
+conf codex --stub "$T/cxstub/codex" > "$T/cx.privwrite.out" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && ! grep -q '^FAIL' "$T/cx.privwrite.out" && grep -Eq '^ok +\[13\] ' "$T/cx.privwrite.out"; } \
+  && ok "a write to the private copy of the sign-in is no fault: the caller's home is unchanged" || { no "codex private copy written: rc=$rc"; sed 's/^/     /' "$T/cx.privwrite.out"; }
 
 # a copy of codex whose barrier claim has no date counts as having no barrier; the read-only runs of cases 12 and 14 still run, on a copy
 # where the claim is dated, since what they check is what a run carries, not the claim

@@ -1,0 +1,116 @@
+{
+ "schema": 1,
+ "kind": "qargi-handoff",
+ "project": "app",
+ "generated_at": "1970-01-12T15:33:40Z",
+ "generated_by": "alice",
+ "where": {
+  "repo": "/work/l/app",
+  "repo_is_work_tree": true,
+  "head": null,
+  "cwd": null,
+  "develop": "6c5c9f49a0f530c68d91ec38d5911570914353c7",
+  "host": "host",
+  "user": "user",
+  "qargi_data_present": true,
+  "answers_file": "/work/l/c/projects/app.json"
+ },
+ "gates": [
+  {
+   "tier": "feature",
+   "name": "unit",
+   "command": "make test"
+  }
+ ],
+ "deviations": null,
+ "features": [
+  {
+   "name": "f2",
+   "branch_exists": true,
+   "tip": "6159ea62a885b16208a7851a665351a547d473bc",
+   "ahead": null,
+   "behind": null,
+   "suite": {
+    "state": "not-run",
+    "text": "not run on this branch"
+   },
+   "agent_merged": [],
+   "agent_unmerged": [],
+   "commits": [
+    "6159ea6 f2: a change"
+   ],
+   "worktrees": [],
+   "tasks": [],
+   "overlap": {},
+   "record": {
+    "status": "active",
+    "lease": "stale",
+    "minutes_since_renewal": null,
+    "ttl_minutes": 15,
+    "rev": 2,
+    "ghost": false,
+    "finished_at": null,
+    "updated_by": "dora-2",
+    "lead": null,
+    "has_record": true,
+    "data": {
+     "purpose": "",
+     "goal": "the second goal",
+     "plan": "",
+     "note": "",
+     "truncated": [],
+     "from": "dora-2"
+    }
+   }
+  }
+ ],
+ "worktrees_unattributed": [
+  {
+   "path": "/work/l/app",
+   "branch": "parked"
+  }
+ ],
+ "agent_unattributed": [
+  {
+   "branch": "agent/x1",
+   "base": "feature/none"
+  }
+ ],
+ "backend": "local",
+ "remote": "none",
+ "backend_fallback": false,
+ "integrity": "off",
+ "packs": null,
+ "environment": {
+  "recorded": true,
+  "check": null,
+  "apply": null
+ },
+ "read_first": {
+  "memory": [
+   {
+    "tier": "cloud",
+    "kind": "cloud",
+    "location": "memstore_0000000000000000000000",
+    "indexes": []
+   }
+  ],
+  "repo_docs": [
+   "/work/l/app/AGENTS.md"
+  ],
+  "status_command": "qargi marshal status --all --history --project app",
+  "successor": [
+   {
+    "feature": "f1",
+    "lead": "alice"
+   }
+  ]
+ },
+ "do_not_assume": [
+  "Approvals and plan tokens do not carry over: every approval you were told about was given for one action in another session; ask the owner again."
+ ],
+ "notes": [
+  "the shared marshal is off for app: the record is local to this host, a lead on another host is not visible here"
+ ],
+ "truncated": false
+}
