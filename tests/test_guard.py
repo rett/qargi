@@ -2236,6 +2236,40 @@ class Marshal(HookCase):
                 for c in ("echo qargi flow plan check", "cat lib/run_plan.py", "grep -n 'flow plan' lib/commands.py", "qargi help flow", "python3 lib/run_plan.py plan check plan.json"):
                     self.assertEqual(self.bash(c).returncode, 0, c)
 
+    def test_history_cli_is_the_leads_for_build_and_review(self):
+        for role in ("build", "review"):
+            with self.subTest(role=role):
+                with open(os.path.join(self.run_dir, "ability"), "w") as f:
+                    f.write(role)
+                for c in ("qargi history", "qargi history --json", "qargi history show 0123abcd", "/opt/q/bin/qargi history --kind suite", "bin/qargi history",
+                          "env FOO=1 qargi history", "true && qargi history", "bash -c 'qargi history show abcd'"):
+                    result = self.bash(c)
+                    self.assertEqual(result.returncode, 2, (c, result.stderr))
+                    self.assertIn("qargi history is a read-only query reserved for the lead", result.stderr)
+                # Reading about it is not running it.
+                for c in ("echo qargi history", "cat lib/history.py", "grep -n 'history' lib/commands.py", "qargi help history", "cat docs/reference/history.md"):
+                    self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_the_history_and_the_run_logs_are_protected_and_readable(self):
+        """$STATE/history holds the lead's evidence of the whole-suite runs and the review reports and $STATE/suite-logs the logs it cites; a member who could write them
+        would plant a pass."""
+        for d, name in (("history", "demo.jsonl"), ("suite-logs", "runs/0123456789abcdef.log")):
+            p = os.path.join(self.state, d)
+            os.makedirs(os.path.dirname(os.path.join(p, name)))
+            with open(os.path.join(p, name), "w") as f:
+                f.write("{}\n")
+            for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
+                res = self.hook([], {"tool_name": tool, "tool_input": {key: os.path.join(p, name)}, "cwd": self.clone}, self.env())
+                self.assertEqual(res.returncode, 2, (tool, d, res.stderr))
+                self.assertIn("history of the whole-suite runs", res.stderr)
+            for c in ("echo h >> %s/%s" % (p, name), "echo h > $QARGI_STATE/%s/new.jsonl" % d, "rm -f %s/%s" % (p, name), "cp a.txt %s/x.log" % p):
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 2, (c, res.stderr))
+                self.assertIn("history of the whole-suite runs", res.stderr, c)
+            for c in ("cat %s/%s" % (p, name), "ls %s" % p):
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_ref_record_is_the_leads(self):
         """qargi ref record --rewrite moves an agent branch of the lead's repository and writes the lead's ref journal, which local verify trusts."""
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",
@@ -5005,6 +5039,35 @@ class InstallRecordScript(HookCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
         r = self.bash("python3 -I lib/install_record.py uninstall", cwd=self.proj)    # a project's own, with no lib of the tool
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class HistoryScripts(HookCase):
+    """lib/history.py reads the lead's history of the whole-suite runs and the review reports and lib/history_write.py appends to it; run directly they are the verb
+    `qargi history`, which a member does not run. Their names are common, so only the files of the tool are refused: a history.py of a project, or of the clone a member
+    works in, is its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    LIB = LibraryScripts.LIB
+    WHY = "qargi history is a read-only query reserved for the lead"
+
+    def test_refuses_the_tools_own_scripts(self):
+        lib = self.LIB
+        for c in ("python3 %s/history.py --project demo", "python3 -I %s/history.py show 0123abcd", "%s/history.py", "python3 %s/history_write.py suite --project demo",
+                  "python3 -I %s/history_write.py review --project demo", "bash -c 'python3 -I %s/history_write.py suite'", "env X=1 python3 %s/history.py",
+                  "cd src && python3 %s/history.py", "python3 %s/../lib/history_write.py suite", "sudo python3 %s/history.py --json"):
+            self.refused(c % lib, self.WHY)
+        self.refused("python3 history.py --json", self.WHY, cwd=lib)
+        self.refused("python3 lib/history_write.py suite", self.WHY, cwd=os.path.dirname(lib))
+
+    def test_a_history_py_that_is_not_the_tools_is_not_refused(self):
+        os.makedirs(os.path.join(self.clone, "lib"))
+        for name in ("history.py", "history_write.py"):
+            with open(os.path.join(self.clone, "lib", name), "w") as f:
+                f.write("")
+        for c in ("python3 lib/history.py --json", "python3 -I lib/history_write.py suite", "cd lib && python3 history.py", "cat %s/history.py" % self.LIB,
+                  "grep -n def %s/history_write.py" % self.LIB, "echo python3 %s/history.py" % self.LIB, "python3 -m unittest tests/test_history.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
 
 
 class InterpreterOptions(HookCase):

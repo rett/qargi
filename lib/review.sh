@@ -174,7 +174,7 @@ if [ "$verb" = check ]; then
       if [ "$(reg_json "$CLASS_RUN" 'has("lifecycle")')" = true ]; then hsha=$(lc_base_sha "$CLASS_RUN" 2>/dev/null) || hsha=''
       else hsha=$(awk -v b="refs/heads/$(reg_get "$CLASS_RUN" base)" '$1=="local" && $2==b {print $3}' "$CLASS_RUN/refs.before" 2>/dev/null | head -n 1); fi
       if [ -n "$hproj" ]; then
-        python3 -I "$(dirname "$0")/history.py" write review --project "$hproj" --run "${CLASS_RUN##*/}" --slug "$(reg_get "$CLASS_RUN" slug)" --facts "$HFACTS" \
+        python3 -I "$(dirname "$0")/history_write.py" review --project "$hproj" --run "${CLASS_RUN##*/}" --slug "$(reg_get "$CLASS_RUN" slug)" --facts "$HFACTS" \
           --base="$(reg_get "$CLASS_RUN" base)" --base-sha="$hsha" --role="$(reg_get "$CLASS_RUN" ability)" --class="$RCLASS" --runtime="$(reg_get "$CLASS_RUN" runtime)" \
           --model="$(reg_get "$CLASS_RUN" model)" || true
       fi

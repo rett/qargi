@@ -8,7 +8,7 @@
   "verbs": [
     "history show ID --json"
   ],
-  "about": "One line of the history file of a project (history/PROJECT.jsonl): the record of a whole-suite run of feature verify or release verify (`entry_kind` suite), or of the report of a report-only run that qargi review check read (`review`). It is evidence, never a gate: no verb decides from it. A line is written once and never changed. `qargi history show ID --json` prints one entry, in the form it was stored. The fields marked with x-when belong to one entry_kind; a reader ignores a field it does not know. A number is a JSON integer, so a load average is the text of /proc/loadavg.",
+  "about": "One line of the history file of a project: the record of a run of the whole suite by feature verify or release verify (`entry_kind` suite), or of the report that qargi review check read from a run that returns a report (`review`). The file is history/PROJECT.jsonl in the state. It is evidence, never a gate: no verb decides from it. A line is written once and never changed. `qargi history show ID --json` prints one entry, in the form it was stored. The fields marked with x-when belong to one entry_kind; a reader ignores a field it does not know. A number is a JSON integer, so a load average is the text of /proc/loadavg.",
   "writes": "Nothing: `history show` only reads the file. (The entries are written by feature verify, release verify and review check; see the reference page of the history.)",
   "document": {
     "type": "object",

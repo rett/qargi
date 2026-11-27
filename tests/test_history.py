@@ -20,6 +20,7 @@ LIB = os.path.join(ROOT, "lib")
 BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import history as H  # noqa: E402
+import history_write as W  # noqa: E402
 import jsonkind as K  # noqa: E402
 
 HEAD = "a" * 40
@@ -90,7 +91,7 @@ class Base(unittest.TestCase):
             with open(g, "w") as f:
                 f.write("".join(json.dumps(x) + "\n" for x in gates))
             args += ["--gates", g]
-        rc = H.write_main(args)
+        rc = W.write_main(args)
         self.assertEqual(rc, 0)
         return H.read(project, warn=False)[0][-1]
 
@@ -154,7 +155,7 @@ class AppendOnly(Base):
         os.symlink(os.path.join(self.tmp, "elsewhere"), os.path.join(self.state, "history"))
         buf = io.StringIO()
         with redirect_stderr(buf):
-            self.assertEqual(H.write_main(["suite", "--project", "demo", "--verb", "feature verify", "--name", "x", "--branch", "b", "--head", HEAD, "--tree", TREE,
+            self.assertEqual(W.write_main(["suite", "--project", "demo", "--verb", "feature verify", "--name", "x", "--branch", "b", "--head", HEAD, "--tree", TREE,
                                            "--command=c", "--result", "pass", "--started", "2026-11-27T01:02:03Z", "--seconds", "1"]), 1)
         self.assertIn("is a link", buf.getvalue())
         self.assertEqual(os.listdir(os.path.join(self.tmp, "elsewhere")), [])
@@ -166,8 +167,8 @@ class AppendOnly(Base):
         self.assertFalse(os.path.exists(self.path()))
 
     def test_concurrent_appends_get_distinct_attempts(self):
-        code = ("import sys; sys.path.insert(0, %r); import history as H; "
-                "sys.exit(H.write_main(['suite', '--project', 'demo', '--verb', 'feature verify', '--name', 'x', '--branch', 'b', '--head', %r, '--tree', %r, "
+        code = ("import sys; sys.path.insert(0, %r); import history_write as W; import history as H; "
+                "sys.exit(W.write_main(['suite', '--project', 'demo', '--verb', 'feature verify', '--name', 'x', '--branch', 'b', '--head', %r, '--tree', %r, "
                 "'--command=' + %r, '--result', 'pass', '--started', '2026-11-27T01:02:03Z', '--seconds', '1']))" % (LIB, HEAD, TREE, CMD))
         procs = [subprocess.Popen([sys.executable, "-I", "-c", code]) for _ in range(4)]
         self.assertEqual([p.wait(timeout=60) for p in procs], [0, 0, 0, 0])
@@ -302,8 +303,8 @@ class Suite(Base):
         self.assertEqual((len(e["failing_tests"]), e["failing_total"], e["failing_tests"][0], e["failing_tests"][-1]), (200, 250, "FAIL case 0", "FAIL case 199"))
 
     def test_the_failing_names_may_come_on_standard_input(self):
-        code = ("import sys; sys.path.insert(0, %r); import history as H; "
-                "sys.exit(H.write_main(['suite', '--project', 'demo', '--verb', 'release verify', '--name', '1.0.0', '--branch', 'release/1.0.0', '--head', %r, '--tree', %r, "
+        code = ("import sys; sys.path.insert(0, %r); import history_write as W; import history as H; "
+                "sys.exit(W.write_main(['suite', '--project', 'demo', '--verb', 'release verify', '--name', '1.0.0', '--branch', 'release/1.0.0', '--head', %r, '--tree', %r, "
                 "'--command=c', '--result', 'fail', '--started', '2026-11-27T01:02:03Z', '--seconds', '1', '--names', '-']))" % (LIB, HEAD, TREE))
         p = subprocess.run([sys.executable, "-I", "-c", code], input="FAIL one\n--- FAIL: two (0.00s)\n\n", universal_newlines=True, capture_output=True, timeout=60)
         self.assertEqual((p.returncode, p.stderr), (0, ""))
@@ -341,7 +342,7 @@ class Review(Base):
     def write_review(self, facts=None, runtime="", **over):
         args = ["review", "--project", "demo", "--run", "qargi.abc123", "--slug", "check-it", "--facts", facts or self.facts(), "--base", "develop",
                 "--base-sha", "1" * 40, "--role", "review", "--class", "read-only", "--runtime=" + runtime, "--model=m1"]
-        self.assertEqual(H.write_main(args), 0)
+        self.assertEqual(W.write_main(args), 0)
         return H.read("demo", warn=False)[0][-1]
 
     def test_a_review_entry_holds_the_verdict_the_hash_and_the_registry_facts_but_no_text(self):
@@ -370,9 +371,182 @@ class Review(Base):
         for bad in ({"verdict": "maybe", "report_sha256": "f" * 64}, {"verdict": "accept", "report_sha256": "xyz"}):
             buf = io.StringIO()
             with redirect_stderr(buf):
-                self.assertEqual(H.write_main(["review", "--project", "demo", "--run", "r", "--slug", "s", "--facts", self.facts(**bad)]), 1)
+                self.assertEqual(W.write_main(["review", "--project", "demo", "--run", "r", "--slug", "s", "--facts", self.facts(**bad)]), 1)
             self.assertIn("no entry was written", buf.getvalue())
         self.assertFalse(os.path.exists(self.path()))
+
+
+class Verb(Base):
+    """qargi history, through bin/qargi: the text table, --json against the kind, show, the filters and the exit statuses."""
+
+    def populate(self):
+        self.a = self.write_suite(name="alpha", head="1a2b3c4d" + "0" * 32, tree="9f8e7d6c" + "0" * 32, result="pass", seconds=30)
+        self.b = self.write_suite(name="alpha", head="1a2b3c4d" + "0" * 32, tree="9f8e7d6c" + "0" * 32, result="fail", seconds=41, names=["FAIL: a case", "--- FAIL: TestB (0.00s)"])
+        facts = os.path.join(self.tmp, "facts.json")
+        with open(facts, "w") as f:
+            json.dump({"verdict": "revise", "report_sha256": "e" * 64, "tests_run": ["python3 tests/test_x.py"]}, f)
+        self.assertEqual(W.write_main(["review", "--project", "demo", "--run", "qargi.zzz999", "--slug", "look", "--facts", facts, "--base", "develop",
+                                       "--base-sha", "7a0be12" + "0" * 33, "--role", "review", "--class", "read-only", "--runtime=", "--model=m"]), 0)
+        self.c = H.read("demo", warn=False)[0][-1]
+        self.d = self.write_suite(name="beta", head="5c5c5c5c" + "0" * 32, tree="aaaaaaaa" + "0" * 32, result="pass", seconds=5)
+
+    def test_the_text_is_newest_first_with_the_columns_of_the_table(self):
+        self.populate()
+        rc, out, err = self.run_cli("history", "--project", "demo")
+        self.assertEqual((rc, err), (0, ""))
+        lines = out.splitlines()
+        self.assertEqual(lines[0].split(), ["TIME", "KIND", "NAME", "HEAD", "TREE", "RESULT", "SECONDS", "ATTEMPT", "ID"])
+        rows = [l.split() for l in lines[1:]]
+        self.assertEqual([r[-1] for r in rows], [self.d["id"], self.c["id"], self.b["id"], self.a["id"]])          # newest first
+        self.assertEqual(rows[0][1:8], ["suite", "beta", "5c5c5c5c", "aaaaaaaa", "pass", "5", "1"])
+        self.assertEqual(rows[1][1:8], ["review", "look", "7a0be120", "-", "revise", "-", "-"])
+        self.assertEqual(rows[2][1:8], ["suite", "alpha", "1a2b3c4d", "9f8e7d6c", "fail", "41", "2"])
+        self.assertEqual(rows[3][1:8], ["suite", "alpha", "1a2b3c4d", "9f8e7d6c", "pass", "30", "1"])
+        self.assertTrue(all(re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", r[0]) for r in rows))
+
+    def test_the_filters(self):
+        self.populate()
+        ids = lambda *args: [l.split()[-1] for l in self.run_cli("history", "--project", "demo", *args)[1].splitlines()[1:]]
+        self.assertEqual(ids("--kind", "review"), [self.c["id"]])
+        self.assertEqual(ids("--kind", "suite"), [self.d["id"], self.b["id"], self.a["id"]])
+        self.assertEqual(ids("--head", "1a2b"), [self.b["id"], self.a["id"]])
+        self.assertEqual(ids("--head", "7a0b"), [self.c["id"]])                 # the base of a review entry counts as its head
+        self.assertEqual(ids("--head", "1a2b", "--kind", "review"), [])
+        rc, out, _ = self.run_cli("history", "--project", "demo", "--limit", "1")
+        self.assertEqual((rc, out.count("\n")), (0, 3))
+        self.assertIn("(3 more; --limit N shows more)", out)
+
+    def test_no_entry_is_a_line_and_exit_0(self):
+        rc, out, err = self.run_cli("history", "--project", "demo")
+        self.assertEqual((rc, out, err), (0, "no history entry of demo\n", ""))
+        self.populate()
+        rc, out, _ = self.run_cli("history", "--project", "demo", "--head", "ffff")
+        self.assertEqual((rc, out), (0, "no history entry of demo matches\n"))
+
+    def test_json_is_one_document_of_the_kind_qargi_history(self):
+        self.populate()
+        rc, out, err = self.run_cli("history", "--project", "demo", "--json")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(errors(K.validate(K.registry_path("qargi-history"), out)), [])
+        doc = json.loads(out)
+        self.assertEqual((doc["schema"], doc["kind"], doc["project"], doc["matched"], doc["skipped"]), (1, "qargi-history", "demo", 4, 0))
+        self.assertEqual([e["id"] for e in doc["entries"]], [self.d["id"], self.c["id"], self.b["id"], self.a["id"]])
+        self.assertEqual(doc["entries"][2]["failing_tests"], ["FAIL: a case", "--- FAIL: TestB (0.00s)"])
+        self.assertEqual(doc["entries"][1]["tests_run"], ["python3 tests/test_x.py"])
+        self.assertTrue(out.endswith("}\n") and out.count("\n") > 10)
+        rc, out, _ = self.run_cli("history", "--project", "demo", "--json", "--kind", "suite", "--limit", "2")
+        doc = json.loads(out)
+        self.assertEqual((rc, doc["matched"], len(doc["entries"])), (0, 3, 2))
+
+    def test_json_with_nothing_to_list_is_still_a_document(self):
+        rc, out, _ = self.run_cli("history", "--project", "demo", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(errors(K.validate(K.registry_path("qargi-history"), out)), [])
+        self.assertEqual((json.loads(out)["entries"], json.loads(out)["matched"]), ([], 0))
+
+    def test_an_unreadable_line_is_counted_and_warned_about(self):
+        self.populate()
+        with open(self.path(), "ab") as f:
+            f.write(b'{"torn":')
+        rc, out, err = self.run_cli("history", "--project", "demo", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual((json.loads(out)["skipped"], json.loads(out)["matched"]), (1, 4))
+        self.assertIn("skipped 1 line(s)", err)
+        rc, out, err = self.run_cli("history", "--project", "demo")
+        self.assertEqual(rc, 0)
+        self.assertIn("skipped 1 line(s)", err)
+
+    def test_a_document_that_fails_its_registry_file_is_exit_70_and_prints_nothing(self):
+        os.makedirs(os.path.dirname(self.path()), mode=0o700)
+        with open(self.path(), "w") as f:
+            f.write(json.dumps({"schema": 1, "kind": "qargi-history-entry", "entry_kind": "suite", "id": "0123456789abcdef", "project": "demo",
+                                "time": "2026-11-27T01:02:03Z", "seconds": "slow"}) + "\n")
+        rc, out, err = self.run_cli("history", "--project", "demo", "--json")
+        self.assertEqual((rc, out), (70, ""))
+        self.assertIn("a defect of qargi", err)
+        rc, out, _ = self.run_cli("history", "--project", "demo")                  # the text form does not go through the registry file
+        self.assertEqual(rc, 0)
+
+    def test_show_prints_every_field_and_with_json_the_entry_as_stored(self):
+        self.populate()
+        rc, out, err = self.run_cli("history", "show", self.b["id"][:6], "--project", "demo")
+        self.assertEqual((rc, err), (0, ""))
+        for want in ("id: " + self.b["id"], "entry_kind: suite", "verb: feature verify", "name: alpha", "result: fail", "attempt: 2", "head: 1a2b3c4d",
+                     "command: " + CMD, "environment_id: -", "gates:" if self.b["gates"] else "failing tests: 2", "  FAIL: a case", "  --- FAIL: TestB (0.00s)"):
+            self.assertIn(want, out)
+        rc, out, _ = self.run_cli("history", "show", self.b["id"], "--project", "demo", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), self.b)
+        self.assertEqual(errors(K.validate(K.registry_path("qargi-history-entry"), out)), [])
+        rc, out, _ = self.run_cli("history", "show", self.c["id"], "--project", "demo")
+        self.assertIn("verdict: revise", out)
+        self.assertIn("report_sha256: " + "e" * 64, out)
+        self.assertIn("tests_run: python3 tests/test_x.py", out)
+
+    def test_show_escapes_control_characters_of_a_test_name(self):
+        e = self.write_suite(result="fail", names=["FAIL \x1b[31mred\x1b[0m"])
+        rc, out, _ = self.run_cli("history", "show", e["id"], "--project", "demo")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("\x1b", out)
+        self.assertIn("FAIL \\x1b[31mred\\x1b[0m", out)
+
+    def test_show_of_no_entry_or_of_two_is_exit_1(self):
+        self.populate()
+        rc, out, err = self.run_cli("history", "show", "ffffffff", "--project", "demo")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("no history entry of demo has the id ffffffff", err)
+        os.makedirs(os.path.dirname(self.path()), mode=0o700, exist_ok=True)
+        with open(self.path(), "a") as f:
+            for tail in ("1" * 12, "2" * 12):
+                f.write(json.dumps({"schema": 1, "kind": "qargi-history-entry", "entry_kind": "review", "id": "abcd" + tail, "project": "demo", "time": "2026-11-27T01:02:03Z"}) + "\n")
+        rc, out, err = self.run_cli("history", "show", "abcd", "--project", "demo")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("2 history entries of demo start with abcd", err)
+
+    def test_a_wrong_call_is_exit_2(self):
+        for args in (["--limit", "0"], ["--limit", "1001"], ["--limit", "x"], ["--kind", "other"], ["--head", "zz"], ["--head", "abc"], ["show"], ["show", "xyz"], ["show", "abcd", "--kind", "suite"],
+                     ["bogus"], ["abcd", "show"]):
+            rc, out, err = self.run_cli("history", "--project", "demo", *args)
+            self.assertEqual((rc, out), (2, ""), args)
+            self.assertTrue(err.strip(), args)
+
+    def test_without_a_project_it_says_so(self):
+        rc, out, err = self.run_cli("history", cwd=self.tmp)
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("name a project with --project P", err)
+
+    def test_the_project_is_the_one_in_effect(self):
+        self.populate()
+        os.makedirs(os.path.join(os.environ["QARGI_CONF"], "projects"), exist_ok=True)
+        env = dict(os.environ, QARGI_PROJECT="demo")
+        rc, out, _ = self.run_cli("history", "--kind", "review", env=env)
+        self.assertEqual((rc, len(out.splitlines())), (0, 2))
+
+    def test_the_help_forms(self):
+        for args in (["history", "--help"], ["history", "show", "--help"], ["history", "-h"], ["help", "history"]):
+            rc, out, _ = self.run_cli(*args)
+            self.assertEqual(rc, 0, args)
+            self.assertIn("qargi history", out)
+            self.assertIn("evidence", out)
+        rc, out, _ = self.run_cli("help", "json", "qargi-history-entry")
+        self.assertEqual(rc, 0)
+        self.assertIn("Printed by: qargi history show ID --json on stdout.", out)
+
+    def test_it_writes_nothing(self):
+        self.populate()
+        before = {}
+        for d, _, files in os.walk(self.state):
+            for f in files:
+                p = os.path.join(d, f)
+                before[p] = (os.stat(p).st_mtime_ns, os.stat(p).st_size)
+        for args in (["history", "--project", "demo"], ["history", "--project", "demo", "--json"], ["history", "show", self.a["id"], "--project", "demo"]):
+            self.run_cli(*args)
+        after = {}
+        for d, _, files in os.walk(self.state):
+            for f in files:
+                p = os.path.join(d, f)
+                after[p] = (os.stat(p).st_mtime_ns, os.stat(p).st_size)
+        self.assertEqual(before, after)
 
 
 class Kinds(unittest.TestCase):

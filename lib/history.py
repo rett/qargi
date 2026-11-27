@@ -22,14 +22,11 @@ As a library (import history; standard library and lib/jsonkind.py only, no recu
   keep_logs(project, state=None, keep=KEEP_LOGS)
                                         removes the logs the cap leaves out, never the log of the latest pass of a branch
 
-Command line (lib/history.py read ... is `qargi history ...`; write is what the verbs of lib/gitflow.sh and lib/review.sh call):
-  history.py read [--project P] [--kind suite|review] [--head SHA] [--limit N] [--json]
-  history.py read show ID [--project P] [--json]
-  history.py write suite  --project P --verb V --name N --branch B --head H --tree T --command=C [--env-id=E] --result R --started S --seconds N
-                          [--load-start X] [--log FILE] [--gates FILE] [--names FILE|-]
-  history.py write review --project P --run ID --slug S --facts FILE [--base B] [--base-sha H] [--role R] [--class C] [--runtime=R] [--model=M]
-Exit status of read: 0, 1 for an ID that no entry has, 2 a wrong call, 70 a document that fails its registry file (a defect, nothing printed). Exit status of
-write: 0, or 1 with a line on standard error when nothing could be written (the caller goes on: the history is evidence, not a gate)."""
+Command line: `qargi history` is lib/history.py (read: the list and show); lib/history_write.py is what the verbs of lib/gitflow.sh and lib/review.sh call to append.
+  history.py [--project P] [--kind suite|review] [--head SHA] [--limit N] [--json]
+  history.py show ID [--project P] [--json]
+Exit status: 0, 1 for an ID that no entry has or a history that cannot be read, 2 a wrong call, 70 a document that fails its registry file (a defect, nothing printed).
+"""
 import argparse
 import errno
 import fcntl
@@ -402,53 +399,6 @@ def review_entry(project, a):
     return entry
 
 
-# ---- the write command --------------------------------------------------------------------------------------------------------
-
-def write_main(argv):
-    p = argparse.ArgumentParser(prog="history.py write", allow_abbrev=False)
-    sub = p.add_subparsers(dest="what", required=True)
-    s = sub.add_parser("suite")
-    s.add_argument("--project", required=True)
-    s.add_argument("--verb", required=True, choices=VERBS)
-    s.add_argument("--name", required=True)
-    s.add_argument("--branch", required=True)
-    s.add_argument("--head", required=True)
-    s.add_argument("--tree", required=True)
-    s.add_argument("--command", required=True)
-    s.add_argument("--env-id", default="")
-    s.add_argument("--result", required=True, choices=RESULTS)
-    s.add_argument("--started", required=True)
-    s.add_argument("--seconds", required=True, type=int)
-    s.add_argument("--load-start", default="")
-    s.add_argument("--log", default="")
-    s.add_argument("--gates", default="")
-    s.add_argument("--names", default="")
-    r = sub.add_parser("review")
-    r.add_argument("--project", required=True)
-    r.add_argument("--run", required=True)
-    r.add_argument("--slug", required=True)
-    r.add_argument("--facts", required=True)
-    r.add_argument("--base", default="")
-    r.add_argument("--base-sha", default="")
-    r.add_argument("--role", default="")
-    r.add_argument("--class", dest="cls", default="")
-    r.add_argument("--runtime", default="")
-    r.add_argument("--model", default="")
-    a = p.parse_args(argv)
-    try:
-        project = check_project(a.project)
-        if a.what == "suite":
-            entry, number = suite_entry(project, a)
-            append(project, entry, prepare=number)
-            keep_logs(project)
-        else:
-            append(project, review_entry(project, a))
-    except HistoryError as e:
-        print("qargi: warning: history: %s; no entry was written" % e, file=sys.stderr)
-        return 1
-    return 0
-
-
 # ---- the read command ---------------------------------------------------------------------------------------------------------
 
 def short(sha):
@@ -577,12 +527,7 @@ def read_main(argv):
 
 
 def main(argv):
-    if argv[:1] == ["read"]:
-        return read_main(argv[1:])
-    if argv[:1] == ["write"]:
-        return write_main(argv[1:])
-    print("usage: history.py read ... | write suite|review ... (qargi history is read)", file=sys.stderr)
-    return 2
+    return read_main(argv)
 
 
 if __name__ == "__main__":

@@ -173,4 +173,4 @@
 53 bash tests/test_json_live.sh
 345 bash tests/test_signin_copy.sh
 6 python3 tests/test_run_plan.py
-1 python3 tests/test_history.py
+5 python3 tests/test_history.py

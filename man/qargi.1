@@ -3232,6 +3232,41 @@ print one document of the kind qargi\-run\-plan\-check (qargi help json qargi\-r
 .RE
 .RE
 .TP
+.B qargi history
+The history of the whole\-suite runs and of the review reports of a project: evidence, newest first.
+.PP
+Every run of qargi feature verify and qargi release verify leaves one entry in the history of its project when it ends, pass or fail (and as interrupted when the verb is stopped before it had a verdict), and every qargi review check of a report\-only run of the lead's registry leaves one for the report. The file is STATE/history/PROJECT.jsonl: one JSON object a line, appended and never rewritten (mode 600 in a directory of mode 700). An entry is evidence and no gate: no verb decides from it, and what a verify means is still the record of the branch. A suite entry names the verb, the feature or version, the branch, the head and the tree of the head, the command and the id of verify.environment it ran under, each gate with its result and seconds, the result, the times, the failing tests (the lines the failure report prints, at most 200), the load average at the start and the end, the attempt (1 plus the earlier runs of the same head, tree and command) and the path of its log, kept under STATE/suite\-logs/runs/ID.log (the newest 20 of a project, and the latest pass of each branch). A review entry names the run, the verdict word, the sha256 of the report (never its text), the base, and the role, class, runtime, model and vendor (the family the runtime's descriptor gives) as the lead's registry records them. Lead only under the current member guard, as qargi backlog graph is. The page docs/reference/history.md describes the file; qargi help json qargi\-history\-entry and qargi\-history show the fields.
+.RS
+.nf
+qargi history [ACTION] [ID]
+.fi
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+only entries of this kind: suite or review (a list, not show).
+.RE
+.RS
+.TP
+.BI "\-\-head " "SHA"
+only entries of this commit, a prefix of 4 to 64 hex digits of the head of a suite entry or the base of a review entry (a list, not show).
+.RE
+.RS
+.TP
+.BI "\-\-limit " "N"
+at most N entries, 1 to 1000 (default 20; a list, not show).
+.RE
+.RS
+.TP
+.B \-\-json
+print one document of the kind qargi\-history (qargi help json qargi\-history): project, matched, skipped and the entries; with show, the entry as stored (qargi\-history\-entry).
+.RE
+.TP
 .B qargi campaign
 Record and inspect local campaign declarations.
 .PP

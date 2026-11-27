@@ -857,7 +857,7 @@ run_suite_logged() {
 #   history_prepare VERB NAME BRANCH HEAD   what the run is (VERB: feature verify | release verify; NAME: the feature or the version); nothing is recorded yet
 #   history_arm                             the suite starts now: its start, its load average and the pending entry that the exit trap completes
 #   history_end RESULT                      pass | fail | interrupted: appends the entry and, with it, keeps the log of the run
-HIST=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/history.py
+HISTW=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/history_write.py
 HIST_PENDING='' HIST_VERB='' HIST_NAME='' HIST_BRANCH='' HIST_HEAD='' HIST_TREE='' HIST_START='' HIST_T0=0 HIST_LOAD0=''
 history_prepare() {
   HIST_VERB=$1 HIST_NAME=$2 HIST_BRANCH=$3 HIST_HEAD=$4
@@ -873,7 +873,7 @@ history_end() {
   [ -n "${HIST_PENDING:-}" ] || return 0
   HIST_PENDING=''
   [ -n "$HIST_TREE" ] || { echo "qargi: warning: history: the tree of $HIST_HEAD is not known; no entry was written" >&2; return 0; }
-  { [ -z "${SUITE_LOG:-}" ] || [ ! -f "$SUITE_LOG" ] || suite_failing_names "$SUITE_LOG"; } | python3 -I "$HIST" write suite --project "$PROJ" --verb="$HIST_VERB" --name="$HIST_NAME" \
+  { [ -z "${SUITE_LOG:-}" ] || [ ! -f "$SUITE_LOG" ] || suite_failing_names "$SUITE_LOG"; } | python3 -I "$HISTW" suite --project "$PROJ" --verb="$HIST_VERB" --name="$HIST_NAME" \
     --branch="$HIST_BRANCH" --head="$HIST_HEAD" --tree="$HIST_TREE" --command="$TESTCMD" --env-id="${SUITE_ENV_ID:-}" --result="$1" --started="$HIST_START" \
     --seconds="$((SECONDS - HIST_T0))" --load-start="$HIST_LOAD0" --log="${SUITE_LOG:-}" --gates="${GATES_FILE:-}" --names=- || true
 }
