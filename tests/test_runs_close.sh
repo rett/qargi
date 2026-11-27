@@ -527,7 +527,7 @@ git -C "$A" branch worktree-bridge-settle "$R3T"; git -C "$A" branch rt-settle "
 out=$($F finish fn 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "applied, not merged" <<<"$out" && ok "a bridge branch and an owned-ref branch at the applied tip do not settle the run as merged" || no "settled by bridge/owned: rc=$rc $out"
 out=$($DA local list --scratch "$T/scr" 2>&1)
-grep -E "applied-run +[0-9a-z?]+ +yes +no +$R3" <<<"$out" >/dev/null && ok "local list agrees (merged: no)" || no "list merged: $out"
+grep -E "applied-run +[0-9a-z?]+ +yes +no +[a-z]+ +$R3" <<<"$out" >/dev/null && ok "local list agrees (merged: no)" || no "list merged: $out"
 git -C "$A" branch -D worktree-bridge-settle rt-settle >/dev/null
 # RUN/applied is a member's to write: a forged tip that is on develop does not settle it, the lead's journal says what review apply made
 printf 'agent/applied-run %s now\n' "$(git -C "$A" rev-parse develop)" > "$R3/applied"

@@ -400,13 +400,28 @@ SB=$(applied "$LB" agent/lb); git -C "$T/r6" update-ref refs/heads/agent/lb "$SB
 SD=$(applied "$LD" agent/ld); git -C "$T/r6" update-ref refs/heads/feature/ld "$SD"
 before=$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)
 out=$(./bin/qargi local list --scratch "$T/ls"); rcl=$?
-[ $rcl = 0 ] && [ "$(head -1 <<<"$out" | awk '{print $1,$2,$3,$4,$5,$6}')" = "ROLE SLUG AGE APPLIED MERGED RUN" ] \
-  && [ "$(awk '$2=="la"{print $1,$4,$5,$6}' <<<"$out")" = "build yes yes $LA" ] && [ "$(awk '$2=="lb"{print $1,$4,$5}' <<<"$out")" = "build yes no" ] \
+[ $rcl = 0 ] && [ "$(head -1 <<<"$out" | awk '{print $1,$2,$3,$4,$5,$6,$7}')" = "ROLE SLUG AGE APPLIED MERGED STATE RUN" ] \
+  && [ "$(awk '$2=="la"{print $1,$4,$5,$6,$7}' <<<"$out")" = "build yes yes prepared $LA" ] && [ "$(awk '$2=="lb"{print $1,$4,$5}' <<<"$out")" = "build yes no" ] \
   && [ "$(awk '$2=="lc"{print $1,$4,$5}' <<<"$out")" = "build no no" ] && ! grep -q "$LD" <<<"$out" && [ "$(wc -l <<<"$out")" = 4 ] \
-  && ok "list --scratch DIR: role, slug, age, applied and merged of each run in that directory only" || no "list: rc=$rcl $out"
+  && ok "list --scratch DIR: role, slug, age, applied, merged and state of each run in that directory only" || no "list: rc=$rcl $out"
 out=$(./bin/qargi local list); for sl in la lb lc ld; do awk -v s=$sl '$2==s{f=1} END{exit !f}' <<<"$out" || no "the registry list lacks $sl"; done
 awk '$2=="ld"{f=1} END{exit !f}' <<<"$out" && ok "list with no --scratch reads the registry (runs that still exist)" || no "registry list: $out"
 [ "$before" = "$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)" ] && ok "and list changes nothing" || no "list changed a file"
+# STATE (display only): prepared (no dispatch.json), then running, waiting, ended and unknown from start records written by hand, the runner a live
+# process (a sleep) with its start token; a runner that is gone, or whose pid another process now has (another token), is ended
+pidtok() { sed 's/^.*) //' "/proc/$1/stat" | awk '{print $20}'; }
+spawn_bg sleep 600; SLP=$SPAWNED_PID; SLT=$(pidtok "$SLP")
+spawn_bg sleep 600; DEADP=$SPAWNED_PID; DEADT=$(pidtok "$DEADP"); kill "$DEADP"; wait "$DEADP" 2>/dev/null
+lst_state() { ./bin/qargi local list --scratch "$T/ls" | awk -v s="$1" '$2 == s {print $6}'; }
+rec() { jq -n --argjson p "$2" --arg t "$3" --arg o "$4" --argjson w "$5" "{outcome:\$o,runner:\$p,runner_start:\$t,member:null,lock_wait_s:\$w} + $6" > "$1/dispatch.json"; }
+{ [ "$(lst_state la)" = prepared ] && [ "$(lst_state lb)" = prepared ] && [ "$(lst_state lc)" = prepared ]; } && ok "STATE: a run with no dispatch.json is prepared" || no "state prepared: $(./bin/qargi local list --scratch "$T/ls")"
+rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" running 2.3 '{waiting_since:"2026-01-02T03:04:05Z"}'; rec "$LCC" "$DEADP" "$DEADT" running 0 '{}'
+{ [ "$(lst_state la)" = running ] && [ "$(lst_state lb)" = waiting ] && [ "$(lst_state lc)" = ended ]; } \
+  && ok "STATE: a live runner is running, or waiting when its record says waiting_since; a runner that is gone is ended" || no "state: $(./bin/qargi local list --scratch "$T/ls")"
+rec "$LA" "$SLP" 1 running 0 '{}'; rec "$LB" "$SLP" "$SLT" ok 0 '{}'; echo 'not json' > "$LCC/dispatch.json"
+{ [ "$(lst_state la)" = ended ] && [ "$(lst_state lb)" = ended ] && [ "$(lst_state lc)" = unknown ]; } \
+  && ok "STATE: a pid that another process has now (another start token) is no runner, a finished record is ended, a record that cannot be read is unknown" || no "state: $(./bin/qargi local list --scratch "$T/ls")"
+kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json"
 ./bin/qargi local list --scratch "$T/nonexistent" >/dev/null 2>&1 && no "list accepted a missing directory" || ok "list refuses a directory that does not exist"
 for bad in "--applied" "--applied --scratch $T/ls $LA" "--applied --discard --scratch $T/ls" "--scratch $T/ls $LA" "--applied --scratch $T/nonexistent"; do
   # shellcheck disable=SC2086

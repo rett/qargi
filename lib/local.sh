@@ -21,7 +21,8 @@
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh report RUN [--findings] [--from FILE] [--force] < REPORT   a read-only member writes its own report: OUT/report.md (or findings.md) and a minimal manifest.json, inside OUT only
-#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
+#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied, merged and STATE
+#                                        (prepared, waiting, running, ended or unknown: from dispatch.json and the runner's process, lib/local_list.py; display only); a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
 #                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
 #                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
@@ -1786,7 +1787,15 @@ $vout}"
       sv=$(saved_of "$d"); [ -z "$sv" ] || [ ! -f "$sv/applied" ] || mp+=("$d" "$sv/applied")
     done
     merged_prefetch ${mp[@]+"${mp[@]}"}
-    printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' ROLE SLUG AGE APPLIED MERGED "${showrt:+RUNTIME      }" RUN
+    # STATE: what each run's dispatch.json and its runner's process say (lib/local_list.py), asked once for all the runs listed; nothing is signalled. A run it says
+    # nothing of (the process cannot be asked) is unknown.
+    declare -A RST=()
+    sd=(); for d in ${runs[@]+"${runs[@]}"}; do [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue; sd+=("$d"); done
+    if [ "${#sd[@]}" -gt 0 ]; then
+      while IFS= read -r -d '' sa && IFS= read -r -d '' sb && IFS= read -r -d '' _; do RST[$sa]=$sb; done \
+        < <(printf '%s\0' "${sd[@]}" | python3 -I "$(dirname "$0")/local_list.py" states 2>/dev/null)
+    fi
+    printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s\n' ROLE SLUG AGE APPLIED MERGED STATE "${showrt:+RUNTIME      }" RUN
     nowe=$(date +%s)
     for d in ${runs[@]+"${runs[@]}"}; do
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
@@ -1805,8 +1814,9 @@ $vout}"
       fi
       { ab=$(<"$d/ability"); } 2>/dev/null || ab='?'
       plain_v ab "$ab"; plain_v sl "${sl:--}"; plain_v dd "$d"
+      stv=${RST[$d]:-unknown}
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$dd" "$lfv" "$rnv"
+      printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$stv" "$rtc$dd" "$lfv" "$rnv"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
       [ -f "$d/dispatch.json" ] || continue
       while IFS= read -r rl; do
@@ -1832,7 +1842,7 @@ $vout}"
       plain_v ab "$ab"; plain_v sl "${sl:--}"
       printf -v gtxt '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}"; plain_v gtxt "$gtxt"
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$gtxt" "$lfv" "$rnv"
+      printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" unknown "$rtc$gtxt" "$lfv" "$rnv"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)

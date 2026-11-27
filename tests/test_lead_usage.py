@@ -606,7 +606,7 @@ class Check(Base):
         rc, out, _ = self.run_cli("feature", "finish", "lc")
         self.assertNotIn("open run", out)
         rc, out, _ = self.run_cli("local", "list")
-        self.assertRegex(out, r"build +old +\S+ +yes +yes +" + re.escape(d))                                    # the same verdict in local list
+        self.assertRegex(out, r"build +old +\S+ +yes +yes +[a-z]+ +" + re.escape(d))                                    # the same verdict in local list
         os.remove(os.path.join(self.state, "ref-journal.jsonl"))
         self.journal_rewrite(old, new, repo=os.path.join(self.t, "elsewhere"))                           # a rewrite of another repository is not this run's
         self.assertEqual(self.check()[0], 1)
