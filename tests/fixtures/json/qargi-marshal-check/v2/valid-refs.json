@@ -65,7 +65,10 @@
    "integrity_note": "",
    "signer": "",
    "warnings": [
-    "feature r2 has no lead (unled): claim or take it"
+    {
+     "text": "feature r2 has no lead (unled): claim or take it",
+     "severity": "info"
+    }
    ]
   }
  ]

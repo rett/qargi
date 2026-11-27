@@ -37,9 +37,18 @@
    "note": "a note",
    "finished_at": null,
    "warnings": [
-    "the lead of f1 (alice) is stale (renewed 107 min ago, ttl 15): qargi marshal takeover f1 --approved WORDS",
-    "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f1 --as-successor-of alice continues as the lead without a takeover",
-    "feature f1 changes files that feature/f3 also changes: shared.txt"
+    {
+     "text": "the lead of f1 (alice) is stale (renewed 107 min ago, ttl 15): qargi marshal takeover f1 --approved WORDS",
+     "severity": "info"
+    },
+    {
+     "text": "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f1 --as-successor-of alice continues as the lead without a takeover",
+     "severity": "info"
+    },
+    {
+     "text": "feature f1 changes files that feature/f3 also changes: shared.txt",
+     "severity": "info"
+    }
    ]
   },
   {
@@ -69,8 +78,14 @@
    "note": "",
    "finished_at": null,
    "warnings": [
-    "the lead of f2 (dora-2) is stale (renewed 90 min ago, ttl 15): qargi marshal takeover f2 --approved WORDS",
-    "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f2 --as-successor-of dora-2 continues as the lead without a takeover"
+    {
+     "text": "the lead of f2 (dora-2) is stale (renewed 90 min ago, ttl 15): qargi marshal takeover f2 --approved WORDS",
+     "severity": "info"
+    },
+    {
+     "text": "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f2 --as-successor-of dora-2 continues as the lead without a takeover",
+     "severity": "info"
+    }
    ]
   },
   {
@@ -93,7 +108,10 @@
    "note": "",
    "finished_at": "1970-01-12T13:46:40Z",
    "warnings": [
-    "feature f3 changes files that feature/f1 also changes: shared.txt"
+    {
+     "text": "feature f3 changes files that feature/f1 also changes: shared.txt",
+     "severity": "info"
+    }
    ]
   }
  ]

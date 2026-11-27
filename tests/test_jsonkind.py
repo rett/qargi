@@ -69,7 +69,7 @@ def status_doc(**over):
 
 def check_doc(**over):
     d = {"schema": 2, "kind": "qargi-marshal-check", "project": "proj", "integrity": "off", "backend": "local", "remote": "none", "feature": "demo", "answer": "free-stale",
-         "lead": dict(LEAD), "warnings": ["the lead is stale"]}
+         "lead": dict(LEAD), "warnings": [{"text": "the lead is stale", "severity": "info"}]}
     d.update(over)
     return d
 
@@ -187,6 +187,17 @@ class Documents(unittest.TestCase):
     """The rules of a document, each broken once, on the status kind (schema 2)."""
     def check(self, text, kind="qargi-marshal-status"):
         return J.validate(os.path.join(KINDS, kind + ".json"), text)
+
+    def test_the_integrity_and_the_severity_of_a_check_are_closed_enums(self):
+        for word in ("off", "advisory", "strict"):
+            self.assertEqual(self.check(dump(check_doc(integrity=word)), "qargi-marshal-check"), [], word)
+        self.assertEqual(rules(self.check(dump(check_doc(integrity="on")), "qargi-marshal-check")), {"enum-unknown"})
+        self.assertEqual(rules(self.check(dump({k: v for k, v in check_doc().items() if k != "integrity"}), "qargi-marshal-check")), {"required-missing"})
+        for word in ("info", "damaging"):
+            self.assertEqual(self.check(dump(check_doc(warnings=[{"text": "x", "severity": word}])), "qargi-marshal-check"), [], word)
+        for bad, rule in ((check_doc(warnings=[{"text": "x", "severity": "fatal"}]), "enum-unknown"), (check_doc(warnings=["a sentence"]), "type-wrong"),
+                          (check_doc(warnings=[{"text": "x"}]), "required-missing")):
+            self.assertEqual(rules(self.check(dump(bad), "qargi-marshal-check")), {rule}, rule)
 
     def test_every_rule_of_a_document_has_a_broken_case(self):
         good = dump(status_doc())

@@ -1696,19 +1696,26 @@ def v_resign(ctx, a):
 
 
 def warnings_for(ctx, d, rec_exists):
+    """The warnings of a feature row, each {"text": the sentence, "severity": "info" or "damaging"}. A warning is damaging when it means that the evidence of
+    the record cannot be trusted as stated; none of the five below says that (an abandoned feature, a stale lead, a restarted session, no lead, files that
+    another open feature also changes are facts about the work, not doubts about the record: the record's own integrity is the row's `integrity`), so
+    every warning is info. docs/reference/json-output.md says the same."""
     w = []
+
+    def warn(text, severity="info"):
+        w.append({"text": text, "severity": severity})
     if d["ghost"]:
-        w.append("feature %s was abandoned: its branch feature/%s is gone" % (d["feature"], d["feature"]))
+        warn("feature %s was abandoned: its branch feature/%s is gone" % (d["feature"], d["feature"]))
     elif d["lead"] and d["lease"] == "stale" and d["lead"]["id"] != ctx.id:
-        w.append("the lead of %s (%s) is stale (renewed %s min ago, ttl %d): qargi marshal takeover %s --approved WORDS" % (
+        warn("the lead of %s (%s) is stale (renewed %s min ago, ttl %d): qargi marshal takeover %s --approved WORDS" % (
             d["feature"], d["lead"]["id"], "?" if d["minutes_since_renewal"] is None else d["minutes_since_renewal"], ctx.ttl, d["feature"]))
         ld = d["lead"]
         if ld.get("host") == ctx.host and ld.get("user") == ctx.user and ld.get("worktree") == ctx.worktree_key:
-            w.append("you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim %s --as-successor-of %s continues as the lead without a takeover" % (d["feature"], ld["id"]))
+            warn("you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim %s --as-successor-of %s continues as the lead without a takeover" % (d["feature"], ld["id"]))
     elif not d["lead"] and (rec_exists or d["branch"]) and d["status"] not in ("finished", "abandoned"):
-        w.append("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
+        warn("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
     for o, fs in d.get("overlap", {}).items():
-        w.append("feature %s changes files that feature/%s also changes: %s" % (d["feature"], o, " ".join(clean(f) for f in fs[:10])))
+        warn("feature %s changes files that feature/%s also changes: %s" % (d["feature"], o, " ".join(clean(f) for f in fs[:10])))
     return w
 
 
@@ -1758,7 +1765,7 @@ def v_check(ctx, a):
         d = describe(ctx, a.name, rec, {})
         warns = warnings_for(ctx, d, rec is not None)
         for w in warns:
-            print("qargi: warning: " + w, file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
+            print("qargi: warning: " + w["text"], file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
         answer = "yours" if ld and ld["id"] == ctx.id else ("free-stale" if ld else "free")
         if a.json:
             write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
@@ -1774,7 +1781,7 @@ def v_check(ctx, a):
         if not a.json:
             print(brief_line(d))
         for w in warns:
-            print("qargi: warning: " + w, file=sys.stderr)
+            print("qargi: warning: " + w["text"], file=sys.stderr)
         rows.append(dict({k: v for k, v in d.items() if k not in DERIVED}, warnings=warns))
     if a.json:
         write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),

@@ -16,7 +16,13 @@
   "succeeds": "dora"
  },
  "warnings": [
-  "the lead of f2 (dora-2) is stale (renewed 90 min ago, ttl 15): qargi marshal takeover f2 --approved WORDS",
-  "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f2 --as-successor-of dora-2 continues as the lead without a takeover"
+  {
+   "text": "the lead of f2 (dora-2) is stale (renewed 90 min ago, ttl 15): qargi marshal takeover f2 --approved WORDS",
+   "severity": "info"
+  },
+  {
+   "text": "you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim f2 --as-successor-of dora-2 continues as the lead without a takeover",
+   "severity": "info"
+  }
  ]
 }

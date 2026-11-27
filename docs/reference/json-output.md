@@ -30,7 +30,7 @@ A **document** is one JSON object that a verb prints for a program to read. A **
 | `qargi-handoff` | 1 | `marshal handoff [NAME] --json` | standard output |
 | `qargi-refusal` | 1 | every verb that stops on a rule of the catalogue | standard error, one line |
 
-Schema 2 of `qargi-marshal-status` and `qargi-marshal-check` (0.3.10) adds the required `integrity` above. A new required field raises the integer, so a reader of schema 1 stops on a document of schema 2, as the reader rule says, and `tests/fixtures/json/KIND/v1/` stays for it.
+Schema 2 of `qargi-marshal-status` and `qargi-marshal-check` (0.3.10) adds the required `integrity` above, and in a check the warnings below are objects, where they were strings. A new required field raises the integer, so a reader of schema 1 stops on a document of schema 2, as the reader rule says, and `tests/fixtures/json/KIND/v1/` stays for it.
 
 What each verb writes. This is the `writes` field of the registry file, and a program that decides whether it may call a verb (a freeze allow-list, say) reads that field, not the word "read only" in a help text. `--no-write` is an option of `marshal status` and `marshal check`: with it the call writes nothing (no record, no audit line, no cache, and not even the directories that the first load of qargi makes) and fetches nothing, it answers as the call that writes would (a record whose branch is gone is shown abandoned, with no lead, and is not stored), and `remote` says `not-asked` on the shared refs backend.
 
@@ -50,6 +50,15 @@ Five fields tell a reader how far to trust an answer, and a program that builds 
 - `remote` is `none` (the local backend has no remote), `checked` (the fetch ran and worked), `unchecked` (the fetch was tried and failed: the answer is from the cache this machine fetched last, and exit 0) or `not-asked` (nothing was fetched: `--no-fetch`, `--no-write` or a member run). A handoff never fetches, so it says `not-asked` on the shared refs backend and `none` on the local one.
 - `lease_clock` is `wall` (local records: the wall clock, whole minutes since `renewed_at`) or `observed-here` (shared records: how long this machine saw the record's commit unchanged on its own monotonic clock; two hosts can give different answers for one record, and a first read on a machine says 0). `lease` and `minutes_since_renewal` mean what it says. `minutes_since_renewal` is a whole number of minutes on both backends.
 - `backend_fallback` of a handoff is true when the shared records could not be read and the note was made from the local records of the host; `backend` then says `local`.
+
+### Warnings and their severity
+
+Each warning of a `qargi-marshal-check`, in the top-level `warnings` and in the `warnings` of a row, is an object `{text, severity}`, where a string stood at schema 1. `text` is the sentence the text form prints after `qargi: warning: ` (`x-text`: a reader never parses it). `severity` is a closed enum, so a reader acts on it and on nothing else of the warning:
+
+- `damaging`: the warning means that the evidence of the record cannot be trusted as stated, so a program that builds on the record (a lease it shows, a lock it takes) must not rely on what the record says until a person has looked.
+- `info`: every other warning. It tells a reader something about the work, and what the record says is still what it says.
+
+The warnings are made in one place, `warnings_for` of the marshal, for a feature row: the feature was abandoned and its branch is gone; the lead is stale (and, with it, that this session looks like the restarted session of that lead); the feature has no lead; and, for each other open feature, files that both change (the same fact as the `overlap` of a status row, which is a map and no warning, so it has no severity). All of them are `info`. None is `damaging` today: the doubts about a record itself are not warnings of the check, they are the `integrity` and `integrity_note` of its row. The word is part of the shape so that a later release can make such a warning without raising the integer, and a reader handles it as defined above.
 
 ## Draft kinds
 

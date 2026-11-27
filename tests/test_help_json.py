@@ -119,7 +119,7 @@ class Kind(unittest.TestCase):
         self.assertEqual(got["feature"], ("string|null", "required"))
         self.assertEqual(got["schema"][1], "required")
         self.assertEqual(got["lead.worktree"], ("string", "optional"))
-        self.assertEqual(got["warnings"], ("array of string", "required"))
+        self.assertEqual(got["warnings"], ("array of object", "required"))
         self.assertEqual(got["features"], ("array of object", "optional"))
 
     def test_the_header_names_the_verbs_and_what_the_verb_writes(self):

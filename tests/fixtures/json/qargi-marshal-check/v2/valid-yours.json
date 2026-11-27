@@ -9,6 +9,9 @@
  "answer": "yours",
  "lead": null,
  "warnings": [
-  "feature f1 changes files that feature/f3 also changes: shared.txt"
+  {
+   "text": "feature f1 changes files that feature/f3 also changes: shared.txt",
+   "severity": "info"
+  }
  ]
 }
