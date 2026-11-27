@@ -410,7 +410,8 @@ COMMANDS = {
                                 "and the merge, local only, prints a plan and token like a merge into develop (--plan, --approved). A detached branch never meets develop, master, "
                                 "release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. "
                                 "For a feature, --plan and --approved are not used. When the registry of local runs names a run of BRANCH (its slug) that still exists and has no passing "
-                                "local verify, a warning names the run; the merge goes on. " + FLOW_UNREACHABLE_NOTE)),
+                                "local verify, the merge is refused (exit 1, code feature-merge-unverified, with the runs and the qargi local verify command for each) and nothing is changed; "
+                                "a run that is cleaned or whose directory is gone does not count. " + FLOW_UNREACHABLE_NOTE)),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
                            desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT, WAIVE_ENV_OPT, PLAN, APPROVED],

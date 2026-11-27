@@ -54,6 +54,7 @@ compares them with that page.
 | [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
 | [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | live | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | live | A feature is finished when none of its runs is open |
+| [`feature-merge-unverified`](#feature-merge-unverified) | feature | 1 | live | A task branch is merged into a feature only when each of its runs passed local verify |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
 | [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
 | [`ro-env-restricted`](#ro-env-restricted) | guard | 2 | live | A read-only run does not assign the variables that decide what runs |
@@ -207,6 +208,15 @@ compares them with that page.
 - Fields: `verb` (verb), `count` (count), `runs` (name-list).
 - Message: `{count} run(s) of this feature are still open: {runs}`
 - Next, for a lead: take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again
+
+### feature-merge-unverified
+
+- Rule: A task branch is merged into a feature only when each of its runs passed local verify.
+- Why: verify is what compares the refs of the repository with the ones the run was prepared on, so a run that never passed it may have moved a branch nobody looked at, and the merge would take its work in unchecked.
+- Exit 1, live.
+- Fields: `verb` (verb), `branch` (ref), `count` (count), `runs` (name-list).
+- Message: `{count} run(s) of {branch} have no passing verify: {runs}`
+- Next, for a lead: run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed
 
 ## Class guard
 
