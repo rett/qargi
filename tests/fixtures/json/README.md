@@ -20,6 +20,7 @@ scenario.sh                      how valid.json was made (qargi's own; a consume
 
 - A **reader** qualifies when it accepts every file whose `expect` is `valid` and rejects every file whose `expect` is `invalid` and whose `applies` is `reader` or `both`. A reader stops on a `kind` it does not expect and on a `schema` it does not know, ignores fields it does not know, and never parses a text field.
 - A **writer** qualifies when it prints no file whose `expect` is `invalid`: `applies` `writer` names the files a reader's parser may not see (a number written `1.0` or `3.0`, an integer beyond 9007199254740991, `NaN`, a key written twice), because most parsers take them in silence.
+- `broken/enum-unknown.json` puts a word outside a closed enum; a word outside an `x-open` enum is not a break (a reader reads it as `unknown`), so no file of the tree closes one.
 - Every number of a document is a JSON integer within plus or minus 2^53 - 1. A kind whose `stream` is `stderr` (the refusal) is one line: the prefix `qargi-refusal/N `, then the object on the same line, where N is the `schema` of the object. The files of that kind hold that whole line; the files `prefix-missing` and `prefix-number-differs` break the prefix.
 
 ## What the files are made from

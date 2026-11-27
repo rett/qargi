@@ -3,7 +3,7 @@
 
   1. a file of lib/kinds/ breaks the registry format, or two files name the same kind;
   2. a fixture marked valid does not validate against the live registry, one marked invalid validates or fails by another rule than the one named,
-     or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
+     a fixture breaks an `x-open` enum (a word outside it is no break), or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
   3. a kind has no v<schema> directory, a rule that applies to the kind has no broken file, or a file of the directory is in no cases.json;
   4. lib/kinds/KIND.json differs from the frozen KIND/vN/registry.json by more than R-J3 allows (a field removed or renamed, a type changed, an enum
      word lost, added to a closed enum, or a null added to any enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
@@ -309,8 +309,8 @@ def broken(kind, reg, valid, kinds, rule):
     if rule == "schema-float":
         return file_text(literal(doc, ("schema",), "%d.0" % doc["schema"], stderr), stderr)
     if rule == "enum-unknown":
-        for path, node, v in sites(reg, doc):
-            if path and "enum" in node and isinstance(v, str) and "const" not in node:
+        for path, node, v in sites(reg, doc):      # a closed enum only: a reader treats a word outside an x-open enum as `unknown`, it is no break
+            if path and "enum" in node and isinstance(v, str) and "const" not in node and not node.get("x-open"):
                 set_at(doc, path, "not-a-listed-word")
                 return file_text(body_text(doc, stderr), stderr)
         return None
@@ -358,6 +358,41 @@ def rules_text():
 
 
 # ---- the verdict of the validator on a fixture ---------------------------------------------------------------------------------------
+
+PATH_STEP = re.compile(r'\.([A-Za-z_][A-Za-z0-9_-]*)|\[([0-9]+)\]|\[("(?:[^"\\]|\\.)*")\]')
+
+
+def node_at(reg, path):
+    """The shape node of the registry at the JSONPath-like path of a finding ($.gates[0].tier), references followed; None where the registry has no node."""
+    defs = reg["document"].get("$defs", {})
+    node, pos = reg["document"], 1
+    while pos < len(path):
+        m = PATH_STEP.match(path, pos)
+        if not m:
+            return None
+        node = resolve(node, defs)
+        if m.group(2) is not None:
+            node = node.get("items")
+        else:
+            key = m.group(1) if m.group(1) is not None else json.loads(m.group(3))
+            node = (node.get("properties") or {}).get(key, node.get("additionalProperties"))
+        if not isinstance(node, dict):
+            return None
+        pos = m.end()
+    return resolve(node, defs)
+
+
+def open_enum_breaks(J, reg, text, stderr):
+    """The paths where the document breaks an enum that the registry declares x-open: a fixture never does, because a word outside such an enum is not a break."""
+    if stderr:
+        text = text.split(" ", 1)[1] if text.startswith(PREFIX_BASE) else text
+    out = []
+    for f in J.validate_doc(reg, text):
+        node = node_at(reg, f.path) if f.rule == "enum-unknown" else None
+        if node and node.get("x-open"):
+            out.append(f.path)
+    return out
+
 
 def findings_of(J, reg, text, stderr):
     """The rules the fixture breaks, in order: the line of standard error is first split into prefix and object."""
@@ -544,6 +579,8 @@ class Lint:
                 self.fail(3, "%s lists %s, which does not exist" % (rel + "/cases.json", c["file"]))
                 continue
             found = findings_of(J, reg, read(p), stderr)
+            for where in open_enum_breaks(J, reg, read(p), stderr):
+                self.fail(2, "%s/%s closes the x-open enum at %s: a word outside an x-open enum is not a break (a reader reads it as `unknown`)" % (rel, c["file"], where))
             if c["expect"] == "valid" and found:
                 self.fail(2, "%s/%s is marked valid and breaks %s" % (rel, c["file"], ", ".join(found)))
             elif c["expect"] == "invalid":
@@ -812,6 +849,11 @@ def self_test():
         r = copy_tree()
         write(fixture(r, "qargi-handoff", "broken/enum-unknown.json"), read(fixture(r, "qargi-handoff", "valid.json")))
         expect("a broken fixture that validates fails point 2", r, [2], "marked invalid and validates")
+        r = copy_tree()
+        v = read(fixture(r, "qargi-handoff", "valid.json"))
+        assert '"tier": "' in v
+        write(fixture(r, "qargi-handoff", "broken/enum-unknown.json"), re.sub(r'"tier": "[a-z]+"', '"tier": "not-a-listed-word"', v, count=1))
+        expect("a broken fixture that closes an x-open enum fails point 2", r, [2], "closes the x-open enum at $.gates[0].tier")
         r = copy_tree()
         os.remove(fixture(r, "qargi-marshal-status", "broken/schema-missing.json"))
         expect("a rule with no broken file fails point 3", r, [3], "schema-missing")

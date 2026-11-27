@@ -104,6 +104,7 @@ A consumer may group failures into a few words. Where a pinned verb has a code f
 
 - A **reader** qualifies when it accepts every file whose `expect` is `valid` and rejects every file whose `expect` is `invalid` and whose `applies` is `reader` or `both`.
 - A **writer** qualifies when it prints no file whose `expect` is `invalid`. The files whose `applies` is `writer` (a number written `1.0` or `3.0`, an integer beyond 2^53 - 1, `NaN`, a key written twice) are the ones most parsers take without a word, so a reader may accept them and qargi never prints them.
+- `broken/enum-unknown.json` puts a word outside a **closed** enum. A word outside an `x-open` enum is not a break (a reader treats it as `unknown`), so no file closes one: the lint fails on a fixture that does.
 - The files of `qargi-refusal` are the whole line with its prefix (`qargi-refusal/1 {...}`); two broken files break the prefix.
 - When a kind changes in a way that raises its integer, the old directory stays and a new one is made, so that a reader of the old integer keeps qualifying.
 

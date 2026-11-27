@@ -23,6 +23,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local list` shows STATE before RUNTIME and RUN, so a script that reads the RUN column by its position reads one column further to the right.
 - `qargi local verify --mine` asks the repository and its origin for their refs once for all its runs, as `clean --applied` and `clean --stale --yes` do: the first run that needs them asks, the answer is kept for that call only and never for another, and its working directory is removed when the call ends, whatever ends it (a check of one run no longer replaces the handler that removed it).
 
+### Fixed
+- The fixture `broken/enum-unknown.json` of `qargi-handoff` put its unknown word into `gates[].tier`, an `x-open` enum, where a reader reads a word it does not know as `unknown`: it now breaks `record.status`, a closed enum, and the registry test fails on any fixture that closes an `x-open` enum.
+
 ## [0.3.9] - 2026-11-26
 
 ### Added
