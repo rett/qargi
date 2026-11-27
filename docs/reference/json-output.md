@@ -50,17 +50,26 @@ Four fields tell a reader how far to trust an answer, and a program that builds 
 
 ## Draft kinds
 
-A kind whose registry file says `status: draft` is registered, so that `qargi help json` shows its fields, but it is not pinned: it has no fixtures yet, its integer may be raised without a release naming it, and the exit rule above is not promised for it. `qargi flow plan check` is the only verb of draft kinds so far. It exits 0 for a valid plan and 1 for an invalid one, and in both cases it prints the document of the kind `qargi-run-plan-check` (`valid` says which); a file that cannot be read is exit 2 with one line on standard error and no document, and a document that fails the check of its own registry file is exit 70, also with no document. A draft kind that a verb only reads (the plan file) has `stream` `none`: `qargi help json KIND` then says "Read by:" instead of "Printed by:", and a pinned kind never has it. [The run plan reference](run-plan.md) describes both kinds.
+A kind whose registry file says `status: draft` is registered, so that `qargi help json` shows its fields, but it is not pinned: it has no fixtures yet, its integer may be raised without a release naming it, and the exit rule above is not promised for it. Two verbs print draft kinds so far. `qargi flow plan check` exits 0 for a valid plan and 1 for an invalid one, and in both cases it prints the document of the kind `qargi-run-plan-check` (`valid` says which); a file that cannot be read is exit 2 with one line on standard error and no document, and a document that fails the check of its own registry file is exit 70, also with no document. A draft kind that a verb only reads (the plan file) has `stream` `none`: `qargi help json KIND` then says "Read by:" instead of "Printed by:", and a pinned kind never has it. [The run plan reference](run-plan.md) describes both kinds. `qargi local list --json` prints the kind `qargi-local-list` and keeps the exit rule: exit 0 only with one complete document that its registry file accepts, exit 70 with one line and no document for a document that does not, exit 2 for a wrong call.
+
+The document of `qargi-local-list` has `mode` `runs` (the key `runs`, one row for each run in the order of the text list: the runs that exist, then the runs whose directory is gone) or, with `--lanes`, `lanes` (the key `lanes`, one row for each lock file a runtime of a stored project declares; `--lanes` takes no other option but `--json`). A row of `runs` has `run`, `role`, `slug`, `age_seconds` (null when the start time is not a number), `applied` (`yes`, `no` or `closed`), `merged` (`yes`, `no`, `unknown` or `none`), `runtime` (null for a run prepared before the project had extra runtimes), `state`, `lock_wait_s`, `repo_path_lead_stated`, `directory_gone` and `saved_copy`. Two of them need a word:
+
+- `state` is `prepared` (no `local run` has started the run), `waiting` (its runner is alive and waits for a sign-in lane), `running` (its runner is alive), `ended` (it finished, or its runner is gone) or `unknown` (the record cannot be read, the runner cannot be compared with a process, or the directory is gone). It is display only: it comes from the run's `dispatch.json` and from the runner's process (pid and start token; nothing is signalled), and nothing that verify, clean or apply do depends on it. A reader treats a word it does not know as `unknown` (`x-open`).
+- `repo_path_lead_stated` is the repository path your registry recorded when the run was prepared. It is what the lead stated then, read from the registry and never from the run directory, and it is not checked again when the list is made; it is null for a run of a repository URL. `lock_wait_s` is the whole seconds the runner waited for a lane, rounded up (0 when it did not wait or no record says).
+
+The draft is not pinned: it has no fixtures, and its integer may be raised without a release naming it.
 
 | Kind | Schema | Verbs | Stream |
 | --- | --- | --- | --- |
 | `qargi-run-plan` | 1 | `flow plan check FILE` reads it; nothing prints it | none (read, never printed) |
 | `qargi-run-plan-check` | 1 | `flow plan check FILE --json` | standard output |
+| `qargi-local-list` | 1 | `local list --json`, `local list --lanes --json` | standard output |
 
 | Verb | Writes |
 | --- | --- |
 | `flow plan check FILE` | Nothing: the file is written by its author, and the checker only reads it. |
 | `flow plan check FILE --json` | Nothing: no state, no token, no network, no file; the plan, the roles qargi knows and the files a done command names are only read. |
+| `local list --json` | Nothing: no state, no lock, no token, no network and no file; the registry, the run directories, the lane records and /proc are only read, and no process is signalled. |
 
 ## The refusal codes of the three verbs
 

@@ -735,10 +735,13 @@ done
 { [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
   && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
 # the wait is recorded and is not the run's own time: lock_wait_s of the runs that waited, no waiting_since once they ran, seconds without the wait; the list says ended
-LISTED=$($DA local list 2>&1)
+LISTED=$($DA local list 2>&1); $DA local list --json > "$T/ls.json" 2>&1
 { [ "$(jq -r '.lock_wait_s > 0 and (has("waiting_since") | not) and (.seconds < .lock_wait_s) and .outcome == "ok"' "$CB/dispatch.json")" = true ] && [ "$(jq -r '.lock_wait_s > 0' "$CC/dispatch.json")" = true ] \
-  && [ "$(jq -r '.lock_wait_s == 0' "$CA/dispatch.json")" = true ] && [ "$(lstate "$CA")" = ended ] && [ "$(lstate "$CB")" = ended ] && [ "$(lstate "$CD")" = prepared ]; } \
-  && ok "a run that waited for the lane records lock_wait_s (more than 0, and more than its own seconds), has no waiting_since once it runs, and the list says ended" || no "wait record: $(cat "$CB/dispatch.json") $(grep -e "$CA" -e "$CB" <<<"$LISTED")"
+  && [ "$(jq -r '.lock_wait_s == 0' "$CA/dispatch.json")" = true ] && [ "$(lstate "$CA")" = ended ] && [ "$(lstate "$CB")" = ended ] \
+  && python3 -I lib/jsonkind.py validate qargi-local-list "$T/ls.json" && [ "$(jq -r --arg d "$CB" '.runs[] | select(.run == $d) | (.lock_wait_s > 0 and .state == "ended")' "$T/ls.json")" = true ] \
+  && [ "$(jq -r --arg d "$CD" '.runs[] | select(.run == $d) | .state' "$T/ls.json")" = prepared ] && [ "$(lstate "$CD")" = prepared ]; } \
+  && ok "a run that waited for the lane records lock_wait_s (more than 0, and more than its own seconds), has no waiting_since once it runs, and the list says ended (--json too: lock_wait_s, state)" || no "wait record: $(cat "$CB/dispatch.json") $(grep -e "$CA" -e "$CB" <<<"$LISTED")"
+rm -f "$T/ls.json"
 { [ "$CA/out/transcript" -ot "$CB/out/transcript" ] && [ "$CB/out/transcript" -ot "$CC/out/transcript" ]; } \
   && ok "the waiters start in the order they began to wait: the one that waited longest takes the lane first (only the first polls it)" || no "queue order: $(stat -c '%n %y' "$CA/out/transcript" "$CB/out/transcript" "$CC/out/transcript")"
 out=$($DA local list --lanes 2>&1)

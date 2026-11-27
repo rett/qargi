@@ -349,13 +349,12 @@ def declared_locks():
     return out
 
 
-def lanes_text(now=None):
-    """The lines of `qargi local list --lanes`: for each declared lock file its state (free, held, member alive and runner gone), the holder and the waiters."""
-    now = now or time.time()
+def lanes_data(now=None):
+    """The lanes of `qargi local list --lanes`, one dict for each declared lock file: {runtime, lock (as the definition declares it), state (the text of the STATE
+    column: free, held, held, member alive, runner gone; unknown ...), word (free, held or unknown), holder (the text of the HOLDER column, empty for none),
+    waiting: [{lead, run, since (ns)}] in the order they began to wait}."""
     locks = declared_locks()
-    if not locks:
-        return ["no lane: no runtime of a stored project shares a sign-in lock (a private link takes none unless it declares a refresh)"]
-    lines = ["%-12s %-34s %-26s %s" % ("RUNTIME", "LOCK", "STATE", "HOLDER")]
+    out = []
     for rt, shown, real in locks:
         d = os.path.dirname(real)
         is_held = held(real)
@@ -375,8 +374,21 @@ def lanes_text(now=None):
                 who = "lead %s run %s (%s, %s)" % (rec["lead"] or "?", rec["run"] or "?", rec["kind"] or "run", age_text(now - rec["started"]) if rec["started"] is not None else "?")
                 shown_waiters = True
             shown_waiters = shown_waiters or not unsure
-        lines.append("%-12s %-34s %-26s %s" % (plain(rt, 12), shown, state, who))
-        for i, w in enumerate(waiters(d) if shown_waiters else []):
+        out.append({"runtime": plain(rt, 12), "lock": shown, "state": state, "word": state.split(",")[0].split(" ")[0], "holder": who,
+                    "waiting": waiters(d) if shown_waiters else []})
+    return out
+
+
+def lanes_text(now=None):
+    """The lines of `qargi local list --lanes`: for each declared lock file its state (free, held, member alive and runner gone), the holder and the waiters."""
+    now = now or time.time()
+    lanes = lanes_data(now)
+    if not lanes:
+        return ["no lane: no runtime of a stored project shares a sign-in lock (a private link takes none unless it declares a refresh)"]
+    lines = ["%-12s %-34s %-26s %s" % ("RUNTIME", "LOCK", "STATE", "HOLDER")]
+    for lane in lanes:
+        lines.append("%-12s %-34s %-26s %s" % (lane["runtime"], lane["lock"], lane["state"], lane["holder"]))
+        for i, w in enumerate(lane["waiting"]):
             lines.append("  waiting %d: lead %s run %s (%s)" % (i + 1, w["lead"], w["run"], age_text(now - w["since"] / 1e9)))
     return lines
 

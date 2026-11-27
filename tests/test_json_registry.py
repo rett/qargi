@@ -479,6 +479,7 @@ class Lint:
             reg, fs = J.load_registry(os.path.join(self.kinds_dir, n + ".json"))
             if reg is not None:
                 regs[n] = reg
+        KINDS_SEEN[:] = sorted(n for n, r in regs.items() if r["status"] != "draft")      # the `kind-wrong` file names a pinned kind, as regen makes it (a draft has no fixtures)
         expected_rules = rules_text()
         if not os.path.isfile(os.path.join(self.fix, "rules.json")) or read(os.path.join(self.fix, "rules.json")) != expected_rules:
             self.fail(2, "%s/rules.json is not the list of rules of this test (python3 tests/test_json_registry.py --regen)" % FIX)

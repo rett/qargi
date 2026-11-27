@@ -407,7 +407,7 @@ out=$(./bin/qargi local list --scratch "$T/ls"); rcl=$?
 out=$(./bin/qargi local list); for sl in la lb lc ld; do awk -v s=$sl '$2==s{f=1} END{exit !f}' <<<"$out" || no "the registry list lacks $sl"; done
 awk '$2=="ld"{f=1} END{exit !f}' <<<"$out" && ok "list with no --scratch reads the registry (runs that still exist)" || no "registry list: $out"
 [ "$before" = "$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)" ] && ok "and list changes nothing" || no "list changed a file"
-# STATE (display only): prepared (no dispatch.json), then running, waiting, ended and unknown from start records written by hand, the runner a live
+# STATE (display only) and the document of list --json: prepared (no dispatch.json), then running, waiting, ended and unknown from start records written by hand, the runner a live
 # process (a sleep) with its start token; a runner that is gone, or whose pid another process now has (another token), is ended
 pidtok() { sed 's/^.*) //' "/proc/$1/stat" | awk '{print $20}'; }
 spawn_bg sleep 600; SLP=$SPAWNED_PID; SLT=$(pidtok "$SLP")
@@ -421,7 +421,22 @@ rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" runni
 rec "$LA" "$SLP" 1 running 0 '{}'; rec "$LB" "$SLP" "$SLT" ok 0 '{}'; echo 'not json' > "$LCC/dispatch.json"
 { [ "$(lst_state la)" = ended ] && [ "$(lst_state lb)" = ended ] && [ "$(lst_state lc)" = unknown ]; } \
   && ok "STATE: a pid that another process has now (another start token) is no runner, a finished record is ended, a record that cannot be read is unknown" || no "state: $(./bin/qargi local list --scratch "$T/ls")"
-kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json"
+rec "$LA" "$SLP" "$SLT" running 0 '{member:4242}'; rec "$LB" "$SLP" "$SLT" running 2.3 '{waiting_since:"2026-01-02T03:04:05Z"}'; rec "$LCC" "$DEADP" "$DEADT" running 0 '{}'
+./bin/qargi local list --scratch "$T/ls" --json > "$T/lj.json" 2> "$T/lj.err"; rcj=$?
+{ [ $rcj = 0 ] && [ ! -s "$T/lj.err" ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj.json" \
+  && [ "$(jq -r '.mode + " " + (.runs | length | tostring)' "$T/lj.json")" = "runs 3" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "la") | [.state, .role, .applied, .merged, .runtime == null, .lock_wait_s, .directory_gone, .run == "'"$LA"'", .repo_path_lead_stated == "'"$T/r6"'"] | join(" ")' "$T/lj.json")" = "running build yes yes true 0 false true true" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "lb") | [.state, .applied, .merged, .lock_wait_s] | join(" ")' "$T/lj.json")" = "waiting yes no 3" ] \
+  && [ "$(jq -r '.runs[] | select(.slug == "lc") | .state' "$T/lj.json")" = ended ] && [ "$(jq '[.runs[] | .age_seconds | type] | unique' -c "$T/lj.json")" = '["number"]' ]; } \
+  && ok "list --json: one document of the kind qargi-local-list that the registry file accepts: run, role, slug, age, applied, merged, runtime, state, lock_wait_s (whole seconds, rounded up) and the repository path the lead recorded" || no "list --json (rc=$rcj): $(head -c 600 "$T/lj.json") $(cat "$T/lj.err")"
+./bin/qargi local list --lanes --json > "$T/lj2.json" 2>&1; rcj=$?
+{ [ $rcj = 0 ] && python3 -I lib/jsonkind.py validate qargi-local-list "$T/lj2.json" && [ "$(jq -r '.mode + " " + (.lanes | length | tostring) + " " + (has("runs") | tostring)' "$T/lj2.json")" = "lanes 0 false" ]; } \
+  && ok "list --lanes --json: the lanes under their own key of the same kind (none here: no runtime shares a sign-in lock)" || no "list --lanes --json (rc=$rcj): $(cat "$T/lj2.json")"
+out=$(./bin/qargi local list --lanes --scratch "$T/ls" --json 2>&1); rcj=$?
+{ [ $rcj = 2 ] && grep -qF -e '--lanes takes no other option' <<<"$out"; } && ok "--json with --lanes takes no other option either" || no "lanes with --scratch and --json: rc=$rcj $out"
+out=$(./bin/qargi local list --scratch "$T/nonexistent" --json 2>&1); rcj=$?
+{ [ $rcj != 0 ] && ! grep -q '"kind"' <<<"$out"; } && ok "list --json of a directory that does not exist prints no document" || no "json of a missing directory: rc=$rcj $out"
+kill "$SLP" 2>/dev/null; rm -f "$LA/dispatch.json" "$LB/dispatch.json" "$LCC/dispatch.json" "$T/lj.json" "$T/lj2.json" "$T/lj.err"
 ./bin/qargi local list --scratch "$T/nonexistent" >/dev/null 2>&1 && no "list accepted a missing directory" || ok "list refuses a directory that does not exist"
 for bad in "--applied" "--applied --scratch $T/ls $LA" "--applied --discard --scratch $T/ls" "--scratch $T/ls $LA" "--applied --scratch $T/nonexistent"; do
   # shellcheck disable=SC2086

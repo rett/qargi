@@ -14,7 +14,7 @@ import jsonkind as J  # noqa: E402
 
 PY = [sys.executable, "-B", "-I", os.path.join(LIB, "jsonkind.py")]
 FIRST_KINDS = ("qargi-refusal", "qargi-handoff", "qargi-marshal-status", "qargi-marshal-check")
-DRAFT_KINDS = ("qargi-run-plan", "qargi-run-plan-check")      # registered, not pinned: no fixtures yet (tests/test_json_registry.py skips them)
+DRAFT_KINDS = ("qargi-local-list", "qargi-run-plan", "qargi-run-plan-check")      # registered, not pinned: no fixtures yet (tests/test_json_registry.py skips them)
 MAX_NEST = J.MAX_DEPTH
 RULE_NAMES = list(J.RULES)
 DOC_RULES = RULE_NAMES[:RULE_NAMES.index("registry-not-object")]

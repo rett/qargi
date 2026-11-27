@@ -21,13 +21,15 @@
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh report RUN [--findings] [--from FILE] [--force] < REPORT   a read-only member writes its own report: OUT/report.md (or findings.md) and a minimal manifest.json, inside OUT only
-#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied, merged and STATE
+#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME] [--json]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied, merged and STATE
 #                                        (prepared, waiting, running, ended or unknown: from dispatch.json and the runner's process, lib/local_list.py; display only); a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
+#                                        --json: one document of the draft kind qargi-local-list (lib/kinds/qargi-local-list.json) in place of the text
 #                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
 #                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
 #                                        every row when a filter is given, ends with actor=LABEL feature=NAME
-#   local.sh list --lanes                read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py)
+#   local.sh list --lanes [--json]       read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py);
+#                                        --json: the lanes, under the key lanes of the same kind
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--wait SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused; --wait SECONDS bounds the wait for
@@ -1705,17 +1707,20 @@ $vout}"
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
-    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES=''
+    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES='' JSON=''
     [ "${1:-}" != --lanes ] || LANES=1
     # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without taking any lock
     # (the holder from /proc/locks and the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    # --json prints the document of the kind qargi-local-list instead of the text (lib/local_list.py); with --lanes it is the lanes, under the key lanes of the same kind
     if [ -n "$LANES" ]; then
-      [ $# = 1 ] || usage_die "list: --lanes takes no other option or argument"
+      [ $# = 1 ] || { [ $# = 2 ] && [ "$2" = --json ]; } || usage_die "list: --lanes takes no other option or argument"
+      [ $# = 1 ] || exec python3 -I "$(dirname "$0")/local_list.py" json-lanes
       exec python3 -I "$(dirname "$0")/lane.py" list
     fi
     while [ $# -gt 0 ]; do
       case $1 in
         --lanes) usage_die "list: --lanes takes no other option or argument";;
+        --json) JSON=1; shift;;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         --actor) need_val "$1" $#; WANT_ACTOR=$2; [ -n "$WANT_ACTOR" ] || usage_die "list: --actor takes a coordinator label, or a prefix of one that ends at a colon"; shift 2;;
         --feature) need_val "$1" $#; WANT_FEATURE=$2; [ -n "$WANT_FEATURE" ] || usage_die "list: --feature takes a feature name"; shift 2;;
@@ -1723,7 +1728,7 @@ $vout}"
       esac
     done
     runs=(); REG_BULK=1 reg_load; scr=''
-    rtc='' dd='' lfv='' rnv='' gs='' gtxt=''   # set by the _v functions (variables by name), read in the rows below
+    rtc='' dd='' lfv='' rnv='' gs='' gtxt='' rtj='' rpj=''   # set by the _v functions (variables by name), read in the rows below
     # the run's coordinator label and feature, from the lead's registry (never from the run directory): the feature a labeled prepare recorded, else the one the
     # base feature/NAME names; a run prepared without a label has no actor. --actor matches the whole label or a prefix that ends at a colon; both filters are an AND.
     # The _v functions set the variable they are given (no process for a field of the registry, none for a cleaned text).
@@ -1788,21 +1793,26 @@ $vout}"
     done
     merged_prefetch ${mp[@]+"${mp[@]}"}
     # STATE: what each run's dispatch.json and its runner's process say (lib/local_list.py), asked once for all the runs listed; nothing is signalled. A run it says
-    # nothing of (the process cannot be asked) is unknown.
-    declare -A RST=()
+    # nothing of (the process cannot be asked) is unknown. RLW (the seconds waited for a lock) is in the document only.
+    declare -A RST=() RLW=()
     sd=(); for d in ${runs[@]+"${runs[@]}"}; do [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue; sd+=("$d"); done
     if [ "${#sd[@]}" -gt 0 ]; then
-      while IFS= read -r -d '' sa && IFS= read -r -d '' sb && IFS= read -r -d '' _; do RST[$sa]=$sb; done \
+      while IFS= read -r -d '' sa && IFS= read -r -d '' sb && IFS= read -r -d '' sc; do RST[$sa]=$sb; RLW[$sa]=$sc; done \
         < <(printf '%s\0' "${sd[@]}" | python3 -I "$(dirname "$0")/local_list.py" states 2>/dev/null)
     fi
-    printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s\n' ROLE SLUG AGE APPLIED MERGED STATE "${showrt:+RUNTIME      }" RUN
+    jrows=()   # --json: one line for each row, its fields separated by a tab (lib/local_list.py row_of)
+    list_row() { # RUN ROLE SLUG AGE_SECONDS APPLIED MERGED RUNTIME STATE LOCK_WAIT REPO GONE SAVED (all plain) -> adds the line of the row to jrows
+      local IFS=$'\t'; jrows+=("$1$IFS$2$IFS$3$IFS$4$IFS$5$IFS$6$IFS$7$IFS$8$IFS$9$IFS${10}$IFS${11}$IFS${12}")
+    }
+    [ -n "$JSON" ] || printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s\n' ROLE SLUG AGE APPLIED MERGED STATE "${showrt:+RUNTIME      }" RUN
     nowe=$(date +%s)
     for d in ${runs[@]+"${runs[@]}"}; do
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       reg_val sl "$d" slug
       { st=$(<"$d/started"); } 2>/dev/null || st=''
+      ages=''
       if [[ $st =~ ^[0-9]{1,12}$ ]]; then   # the file is a member's: only digits ever reach the arithmetic
-        age=$((nowe - st))
+        age=$((nowe - st)); ages=$(( age < 0 ? 0 : age ))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       ap=no; mg=no
@@ -1815,6 +1825,11 @@ $vout}"
       { ab=$(<"$d/ability"); } 2>/dev/null || ab='?'
       plain_v ab "$ab"; plain_v sl "${sl:--}"; plain_v dd "$d"
       stv=${RST[$d]:-unknown}
+      if [ -n "$JSON" ]; then
+        reg_val rtj "$d" runtime; plain_v rtj "$rtj"; reg_val rpj "$d" repo; plain_v rpj "$rpj"
+        list_row "$dd" "$ab" "$sl" "$ages" "$ap" "$mg" "$rtj" "$stv" "${RLW[$d]:-0}" "$rpj" 0 ''
+        continue
+      fi
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
       printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$stv" "$rtc$dd" "$lfv" "$rnv"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
@@ -1827,8 +1842,9 @@ $vout}"
       [ -n "$d" ] || continue
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       reg_val sl "$d" slug; reg_val gs "$d" started; ste=$(date -d "$gs" +%s 2>/dev/null) || ste=''
+      ages=''
       if [[ $ste =~ ^[0-9]{1,12}$ ]]; then
-        age=$((nowe - ste))
+        age=$((nowe - ste)); ages=$(( age < 0 ? 0 : age ))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       sv=$(saved_of "$d"); ap=no; mg=no
@@ -1840,10 +1856,19 @@ $vout}"
       fi
       reg_val ab "$d" ability
       plain_v ab "$ab"; plain_v sl "${sl:--}"
+      if [ -n "$JSON" ]; then
+        plain_v ab "${ab:-?}"; plain_v dd "$d"; plain_v sv "$sv"
+        reg_val rtj "$d" runtime; plain_v rtj "$rtj"; reg_val rpj "$d" repo; plain_v rpj "$rpj"
+        list_row "$dd" "$ab" "$sl" "$ages" "$ap" "$mg" "$rtj" unknown 0 "$rpj" 1 "$sv"   # no directory, so no record of a runner: unknown
+        continue
+      fi
       printf -v gtxt '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}"; plain_v gtxt "$gtxt"
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
       printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" unknown "$rtc$gtxt" "$lfv" "$rnv"
-    done;;
+    done
+    if [ -n "$JSON" ]; then
+      printf '%s\n' ${jrows[@]+"${jrows[@]}"} | python3 -I "$(dirname "$0")/local_list.py" json || exit $?
+    fi;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
     RUN=${1:-}; shift || true

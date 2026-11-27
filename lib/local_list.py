@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""The part of `qargi local list` that reads processes: the STATE of each run.
+"""The part of `qargi local list` that reads processes and builds a document: the STATE of each run, and the JSON of --json (kind qargi-local-list).
 
   local_list.py states            read run directories (NUL-ended) on standard input, print for each, NUL-ended, the directory, its STATE and its lock wait (whole seconds)
+  local_list.py json              read the rows of the list (one line each, fields separated by a tab) on standard input, print the document of the runs
+  local_list.py json-lanes        print the document of the lanes (what `local list --lanes` prints as text)
 
 STATE is display only, derived from RUN/dispatch.json (what the runner of `qargi local run` wrote) and from the runner's process; nothing is signalled, nothing is
 written, and nothing of it decides what verify, clean or apply do:
@@ -26,6 +28,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import lane as LN  # noqa: E402
 
+KIND = "qargi-local-list"
+SCHEMA = 1
 MAX_RECORD = 1 << 20
 STATES = ("prepared", "waiting", "running", "ended", "unknown")
 
@@ -113,10 +117,89 @@ def cmd_states():
     return 0
 
 
+APPLIED = ("yes", "no", "closed")
+MERGED = {"yes": "yes", "no": "no", "?": "unknown", "-": "none"}
+
+
+def text_or_none(value):
+    return value if value else None
+
+
+def row_of(fields):
+    """The row of the document from the 12 fields of a line of the list (a malformed line is a defect of qargi, not of a run)."""
+    if len(fields) != 12:
+        raise ValueError("a row of the list has %d fields, not 12" % len(fields))
+    run, role, slug, age, applied, merged, runtime, state, waited, repo, gone, saved = fields
+    if applied not in APPLIED or merged not in MERGED or state not in STATES or gone not in ("0", "1"):
+        raise ValueError("a row of the list holds a word the document does not have")
+    return {"run": run, "role": role, "slug": slug, "age_seconds": int(age) if age.isdigit() else None, "applied": applied, "merged": MERGED[merged],
+            "runtime": text_or_none(runtime), "state": state, "lock_wait_s": int(waited) if waited.isdigit() else 0,
+            "repo_path_lead_stated": text_or_none(repo), "directory_gone": gone == "1", "saved_copy": text_or_none(saved)}
+
+
+def lanes_rows(now=None):
+    """The lanes of `local list --lanes` as rows of the document (lib/lane.py lanes_data)."""
+    import time
+    now = now or time.time()
+    out = []
+    for lane in LN.lanes_data(now):
+        out.append({"runtime": lane["runtime"], "lock": lane["lock"], "state": lane["word"], "detail": lane["state"], "holder": text_or_none(lane["holder"]),
+                    "waiting": [{"lead": w["lead"], "run": w["run"], "waiting_seconds": max(int(now - w["since"] / 1e9), 0)} for w in lane["waiting"]]})
+    return out
+
+
+def document(mode, rows):
+    doc = {"schema": SCHEMA, "kind": KIND, "mode": mode}
+    doc["runs" if mode == "runs" else "lanes"] = rows
+    return doc
+
+
+def checked_text(doc):
+    """The text of the document, checked against the registry file of its kind before anything is printed (R-J9): (text, None), or (None, why)."""
+    import jsonkind as K
+    try:
+        text = json.dumps(doc, sort_keys=True, ensure_ascii=True, indent=1, allow_nan=False) + "\n"
+    except (ValueError, TypeError) as e:
+        return None, "the document of %s cannot be written as JSON (%s)" % (KIND, e)
+    try:
+        found = K.validate(K.registry_path(KIND), text)
+    except K.RegistryError as e:
+        return None, "the document of %s cannot be checked: %s" % (KIND, e)
+    if found:
+        return None, "the document of %s breaks its registry file at %s %s: %s" % (KIND, found[0].rule, found[0].path, found[0].message)
+    return text, None
+
+
+def cmd_json(mode):
+    try:
+        if mode == "runs":
+            lines = sys.stdin.buffer.read().decode("utf-8", "replace").split("\n")
+            rows = [row_of(line.split("\t")) for line in lines if line]
+        else:
+            rows = lanes_rows()
+        text, why = checked_text(document(mode, rows))
+    except ValueError as e:
+        text, why = None, str(e)
+    if text is None:
+        print("qargi: %s; this is a defect of qargi, not of a run" % why, file=sys.stderr)
+        return 70
+    try:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except (OSError, ValueError) as e:
+        print("qargi: cannot write the document: %s" % (getattr(e, "strerror", None) or e), file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv):
     if argv == ["states"]:
         return cmd_states()
-    print("usage: local_list.py states", file=sys.stderr)
+    if argv == ["json"]:
+        return cmd_json("runs")
+    if argv == ["json-lanes"]:
+        return cmd_json("lanes")
+    print("usage: local_list.py states | json | json-lanes", file=sys.stderr)
     return 2
 
 
