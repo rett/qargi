@@ -37,11 +37,16 @@ ORIGIN=$T/origin.git
 make_origin "$ORIGIN"
 make_machine a
 for n in r1 r2; do git -C "$T/m/a/app" branch "feature/$n" develop; done
-# XE MACHINE [VAR=val...] ARGS...: qargi as that machine; output in $T/o and $T/e, the exit status returned
+# XE MACHINE [VAR=val...] ARGS...: qargi as that machine; output in $T/o and $T/e, the exit status returned. The monotonic clock of the refs
+# backend is always held: $HELD_MONO when the call sets none (a machine that has been up for 46 days, later than every clock a case sets,
+# so a case that sets a clock finds the timers of earlier calls restarted, "the clock went backwards"). A call that left it to the real
+# monotonic clock made the first observation of a record, the one its claim makes, depend on how long the host had been up: on a freshly
+# started machine (a CI runner, up for a few minutes) the claim was observed at 350 s, not at the 1000.7 of the status that follows.
+HELD_MONO=4000000
 XE() {
   local m=$1; shift; local -a ev=()
   while [[ ${1:-} =~ ^[A-Z_]+= ]]; do ev+=("$1"); shift; done
-  env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" QARGI_MARSHAL_NOW="$NOW" QARGI_LEAD=op "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
+  env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" QARGI_MARSHAL_NOW="$NOW" QARGI_MARSHAL_MONO="$HELD_MONO" QARGI_LEAD=op "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
 }
 WORDS="the shared refs are fine for this project"
 en() { local tk; XE "$1" marshal enable; tk=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"); XE "$1" marshal enable --plan "$tk" --approved "$WORDS"; }
@@ -111,6 +116,8 @@ refusal marshal-refused 1 && ok "check: a lead identity that is not valid is the
 # the remote of the shared records cannot be asked: the claim is made first, then the origin goes away
 call XE a marshal claim r1 --as alice --goal "shared"
 [ "$RC" = 0 ] && ok "setup: alice claims r1 on the shared refs" || no "setup: claim r1 on the refs backend ($RC): $(out)"
+# the claim was observed at the held clock, not at the real one (the first observation of a record is the claim's own push)
+jq -e --argjson m "$HELD_MONO" '.r1[1] == $m' "$T/m/a/s/features/.observed-app.json" >/dev/null && ok "setup: the claim of r1 was observed at the held monotonic clock, whatever the uptime of the host" || no "setup: the observed clock of r1 is not the held one: $(cat "$T/m/a/s/features/.observed-app.json")"
 mv "$ORIGIN" "$ORIGIN.gone"
 call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice
 refusal marshal-remote-unreachable 3 && ok "check: a remote that cannot be asked is marshal-remote-unreachable, exit 3, no document" || no "check unreachable: $(refusal marshal-remote-unreachable 3; out)"
@@ -200,6 +207,15 @@ call XE a QARGI_MARSHAL_MONO=1000.7 marshal status --all --json
 call XE a QARGI_MARSHAL_MONO=1500.3 marshal status --all --json
 [ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '[.features[] | select(.feature == "r1")] | .[0] | .lease_clock == "observed-here" and .lead.id == "alice"' "$T/o" >/dev/null \
   && grep -Eq '"minutes_since_renewal": 8,' "$T/o" && ok "status --json (refs): with the monotonic clock held minutes_since_renewal is the integer 8 (it was a float), lease_clock observed-here" || no "status refs minutes: rc=$RC $(cat "$T/v"; jq -c '.features[] | select(.feature == "r1")' "$T/o")"
+# the same two reads on a machine that had been up 350 s when the record was first observed (a freshly started CI runner): the timer started
+# then and is not restarted by a clock that moved forward, so 1500.3 - 350 s are 19 minutes, not the 8 of a record first seen at 1000.7
+rm -rf "$T/s3"; cp -a "$T/m/a/s" "$T/s3"
+jq '.r1[1] = 350' "$T/s3/features/.observed-app.json" > "$T/s3/obs.tmp" && mv "$T/s3/obs.tmp" "$T/s3/features/.observed-app.json"
+call XE a QARGI_STATE="$T/s3" QARGI_MARSHAL_MONO=1000.7 marshal status --all --json
+call XE a QARGI_STATE="$T/s3" QARGI_MARSHAL_MONO=1500.3 marshal status --all --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '[.features[] | select(.feature == "r1")] | .[0] | .lease == "stale" and .minutes_since_renewal == 19' "$T/o" >/dev/null \
+  && ok "status --json (refs): a record first observed at 350 s is 19 minutes old at 1500.3 (the timer is the first observation, never restarted by a later clock)" || no "status refs first observed at 350: rc=$RC $(cat "$T/v"; jq -c '.features[] | select(.feature == "r1")' "$T/o")"
+rm -rf "$T/s3"
 call XE a marshal status --all --json --no-fetch
 [ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '.remote == "not-asked" and .backend == "refs"' "$T/o" >/dev/null && ok "status --json --no-fetch (refs): remote not-asked" || no "status refs --no-fetch: rc=$RC $(head -c 300 "$T/o")"
 mv "$ORIGIN" "$ORIGIN.gone"
