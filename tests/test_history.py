@@ -301,6 +301,15 @@ class Suite(Base):
         e = self.write_suite(result="fail", names=names)
         self.assertEqual((len(e["failing_tests"]), e["failing_total"], e["failing_tests"][0], e["failing_tests"][-1]), (200, 250, "FAIL case 0", "FAIL case 199"))
 
+    def test_the_failing_names_may_come_on_standard_input(self):
+        code = ("import sys; sys.path.insert(0, %r); import history as H; "
+                "sys.exit(H.write_main(['suite', '--project', 'demo', '--verb', 'release verify', '--name', '1.0.0', '--branch', 'release/1.0.0', '--head', %r, '--tree', %r, "
+                "'--command=c', '--result', 'fail', '--started', '2026-11-27T01:02:03Z', '--seconds', '1', '--names', '-']))" % (LIB, HEAD, TREE))
+        p = subprocess.run([sys.executable, "-I", "-c", code], input="FAIL one\n--- FAIL: two (0.00s)\n\n", universal_newlines=True, capture_output=True, timeout=60)
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        e = H.read("demo", warn=False)[0][-1]
+        self.assertEqual((e["failing_tests"], e["failing_total"], e["verb"], e["name"]), (["FAIL one", "--- FAIL: two (0.00s)"], 2, "release verify", "1.0.0"))
+
     def test_a_long_name_is_cut(self):
         e = self.write_suite(result="fail", names=["FAIL " + "x" * 1000])
         self.assertEqual(len(e["failing_tests"][0]), H.MAX_NAME)

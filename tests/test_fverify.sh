@@ -72,11 +72,36 @@ grep -qx 'failing steps:' "$T/last" && grep -qx '  sh tests/test_bad.sh' "$T/las
 [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] && [ -f "$lg" ] && grep -q '^total: .*FAILED' "$lg" && [ "$(stat -c %a "$lg")" = 600 ] && ok "the last line is the log of the run, which holds the whole report (mode 600)" || no "log line: $(tail -n 1 <<<"$out")"
 grep -q '^logs of the failed steps: ' <<<"$out" && ok "the runner's own step logs are named too" || no "step logs: $out"
 $F status bad 2>&1 | grep -q 'full suite: fail at this head' && ok "status says fail at this head" || no "status after failed verify"
+# the history of the runs ($STATE/history/PROJECT.jsonl, lib/history.py): one entry for each run, evidence and no gate
+HF=$T/s/history/app.jsonl
+hq() { jq -rs "$1" "$HF"; }   # a jq program over the entries of the history
+{ [ "$(hq '[.[] | select(.name == "why")] | map(.result) | join(",")')" = pass,pass,pass ] && [ "$(hq '[.[] | select(.name == "bad")] | length')" = 1 ] && [ "$(hq 'length')" = 4 ]; } \
+  && ok "the history holds one entry for each verify so far: three passes of why, one run of bad" || no "history entries: $(cat "$HF" 2>&1)"
+bh=$(git -C "$R" rev-parse feature/bad)
+hq '.[] | select(.name == "bad")' > "$T/hbad.json"
+jq -e --arg h "$bh" --arg t "$(git -C "$R" rev-parse "feature/bad^{tree}")" '.kind == "qargi-history-entry" and .schema == 1 and .entry_kind == "suite" and .project == "app" and .verb == "feature verify" and .branch == "feature/bad"
+  and .result == "fail" and .head == $h and .tree == $t and .command == "bash tests/run.sh -j 2" and .environment_id == null and .attempt == 1 and (.id | test("^[0-9a-f]{16}$"))
+  and .failing_tests == ["FAIL the second check of the bad step"] and .failing_total == 1 and (.seconds | type) == "number" and (.started | test("Z$")) and (.ended | test("Z$"))' "$T/hbad.json" >/dev/null \
+  && ok "a failed run's entry names the head and its tree, the command, the failing test and the attempt" || no "bad entry: $(cat "$T/hbad.json")"
+hlog=$(jq -r '.log' "$T/hbad.json")
+{ [ "$hlog" = "$T/s/suite-logs/runs/$(jq -r .id "$T/hbad.json").log" ] && [ "$(stat -c %a "$hlog")" = 600 ] && [ "$(stat -c %a "$T/s/history")" = 700 ] && [ "$(stat -c %a "$HF")" = 600 ] && cmp -s "$hlog" "$lg"; } \
+  && ok "the log of the run is kept under suite-logs/runs/ID.log (mode 600), as the last-run file has it; the history file is 600 in a 700 directory" || no "kept log: $hlog $(stat -c %a "$hlog" "$HF" 2>&1)"
+cp "$HF" "$T/h0"
 setcmd 'echo some output; exit 3'
 out=$($F verify bad 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx 'no failing test name in the output; its last lines:' <<<"$out" && grep -qx '  some output' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] \
   && ok "a test command that is no runner: its last lines stand in, then the log" || no "plain command: $out"
 # the failure-line patterns any gate may print: ^FAIL( |:), ^FAILED: , ^logs of the failed steps: and the ^--- FAIL: of a Go test run
+out=$($F verify bad 2>&1)
+{ [ "$(hq '[.[] | select(.name == "bad" and .command == "echo some output; exit 3")] | map("\(.attempt):\(.failing_total)") | join(",")')" = 1:0,2:0 ] && cmp -s -n "$(stat -c %s "$T/h0")" "$T/h0" "$HF"; } \
+  && ok "a second run of the same head, tree and command is attempt 2, and what was written before is unchanged" || no "attempts: $(cat "$HF")"
+# a verb that is killed after its suite ran leaves an entry too: the suite command kills the verb (its pid is written by the shell that becomes the verb)
+cp "$T/s/releases/app-feature_bad.json" "$T/rec0"
+setcmd "kill -TERM \$(cat '$T/vp'); exit 1"
+out=$(bash -c 'echo $$ > "$1"; shift; exec "$@"' _ "$T/vp" $DA feature verify bad 2>&1); rc=$?
+{ [ "$rc" = 143 ] && [ "$(hq '[.[] | select(.name == "bad")] | last | .result')" = interrupted ] && ! grep -q 'full suite: ' <<<"$out" && [ ! -e "$T/s/busy/app.verify.pid" ]; } \
+  && ok "a verify that is killed after its suite ran still leaves its entry, with the result interrupted (and no verdict)" || no "interrupted: rc=$rc $out $(tail -n 1 "$HF")"
+cmp -s "$T/rec0" "$T/s/releases/app-feature_bad.json" && ok "the interrupted run changed no verdict: the record of the branch's last run is as it was" || no "the record after the interrupt: $(cat "$T/s/releases/app-feature_bad.json")"
 setcmd 'printf "%s\n" "--- FAIL: TestParse (0.00s)" "FAIL: check two" "FAIL check three" "FAILED: step four" "logs of the failed steps: /logs/five"; exit 1'
 out=$($F verify bad 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx 'failing tests:' <<<"$out" && grep -qx '  --- FAIL: TestParse (0.00s)' <<<"$out" && grep -qx '  FAIL: check two' <<<"$out" && grep -qx '  FAIL check three' <<<"$out" \
@@ -88,6 +113,10 @@ grep -qF '^FAILED:' <<<"$hlp" && grep -qF '^FAIL( |:)' <<<"$hlp" && grep -qF '^-
 setcmd 'bash tests/run.sh -j 2'
 out=$($REL verify 0.9.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx '  sh tests/test_bad.sh' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $T/s/suite-logs/app.release-0.9.0.log" ] && ok "release verify ends the same way" || no "release verify: $out"
+hq '.[] | select(.name == "0.9.0")' > "$T/hrel.json"
+jq -e --arg h "$(git -C "$R" rev-parse develop)" '.entry_kind == "suite" and .verb == "release verify" and .branch == "develop" and .result == "fail" and .head == $h and .attempt == 1
+  and .failing_tests == ["FAIL the second check of the bad step"] and .log != null' "$T/hrel.json" >/dev/null \
+  && ok "release verify leaves its entry too (the version as the name, develop as the branch it ran on)" || no "release entry: $(cat "$T/hrel.json")"
 setcmd 'exit 0'
 
 # --- 3. the finish plan says whether develop is pushed, by the answer branches.push_develop

@@ -26,13 +26,14 @@ Command line (lib/history.py read ... is `qargi history ...`; write is what the 
   history.py read [--project P] [--kind suite|review] [--head SHA] [--limit N] [--json]
   history.py read show ID [--project P] [--json]
   history.py write suite  --project P --verb V --name N --branch B --head H --tree T --command=C [--env-id=E] --result R --started S --seconds N
-                          [--load-start X] [--log FILE] [--gates FILE] [--names FILE]
+                          [--load-start X] [--log FILE] [--gates FILE] [--names FILE|-]
   history.py write review --project P --run ID --slug S --facts FILE [--base B] [--base-sha H] [--role R] [--class C] [--runtime=R] [--model=M]
 Exit status of read: 0, 1 for an ID that no entry has, 2 a wrong call, 70 a document that fails its registry file (a defect, nothing printed). Exit status of
 write: 0, or 1 with a line on standard error when nothing could be written (the caller goes on: the history is evidence, not a gate)."""
 import argparse
 import errno
 import fcntl
+import io
 import json
 import os
 import re
@@ -318,12 +319,15 @@ def keep_logs(project, state=None, keep=KEEP_LOGS):
 # ---- the entries --------------------------------------------------------------------------------------------------------------
 
 def read_lines(path):
+    """The non-empty lines of a file, or of standard input when the path is `-`; none when there is no file."""
     if not path:
         return []
     try:
+        if path == "-":
+            return [l.rstrip("\n") for l in io.TextIOWrapper(sys.stdin.buffer, errors="replace") if l.strip()]
         with open(path, errors="replace") as f:
             return [l.rstrip("\n") for l in f if l.strip()]
-    except OSError:
+    except (OSError, ValueError):
         return []
 
 

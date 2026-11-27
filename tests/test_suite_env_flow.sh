@@ -51,6 +51,7 @@ $F start f >/dev/null 2>&1
 
 # offscen: the verbs with the setting off, run in order and printed normalised (a sha, the scratch directory, the times). tests/fixtures/suite-env-off.golden is
 # what the tree before verify.environment printed for it (the tree at 791595a1, before the flow verbs used the launcher); this tree must print the same, byte for byte.
+# The one difference is the state listing at its end: the history of the runs (history/PROJECT.jsonl and suite-logs/runs/, lib/history.py) is new, added to the listing by hand.
 # OFF_GOLDEN_WRITE=FILE OFF_GOLDEN_ONLY=1 writes the file from the tree under test: only a deliberate change of what the verbs print with the setting off may do that.
 offscen() {
   say() { echo "### $*"; "$DA" "$@" 2>&1; echo "rc=$?"; }

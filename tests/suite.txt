@@ -60,7 +60,7 @@ fast | par | 300 | 2 | python3 tests/test_procenv.py | lib/procenv.py lib/env_ch
 # The launcher of a whole-suite run (verify.environment): 68 cases measured 19.2 to 19.5s on four runs on the reference machine; budget ceil(19.5 * 1.1) = 22s; the timeout is the 300s of its neighbours (the real-scope cases wait on systemd).
 fast | par | 300 | 22 | python3 tests/test_suite_env.py | lib/suite_env.py lib/procenv.py lib/paths.py lib/lib.sh
 # verify.environment in the flow verbs: the seam, the cpu codes, the waiver, the record and its staleness, a hand-edited answers file, the off case against what the tree before the feature printed, and the real scope where systemd makes one; about 30 verifies of a scratch project. Measured 100 and 108s on two runs beside another suite on the reference machine (78s before the rework alone): budget 110s, the timeout 3 times that.
-full | par | 330 | 110 | bash tests/test_suite_env_flow.sh | lib/gitflow.sh lib/feature.sh lib/release.sh lib/suite_env.py tests/fixtures/fake-systemd-run tests/fixtures/suite-env-off.golden
+full | par | 330 | 110 | bash tests/test_suite_env_flow.sh | lib/gitflow.sh lib/feature.sh lib/release.sh lib/history.py lib/suite_env.py tests/fixtures/fake-systemd-run tests/fixtures/suite-env-off.golden
 fast | par | 300 | 6 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 6 | python3 tests/test_upgrade.py | lib/upgrade.sh lib/install_record.py
 full | par | 300 | 36 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py lib/procenv.py
@@ -83,7 +83,7 @@ fast | par | 300 | 29 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 6 | bash tests/test_new.sh
 full | par | 300 | 62 | bash tests/test_adopt.sh
 full | par | 480 | 243 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh lib/lib.sh lib/lead_usage.py lib/merged.py lib/owned_refs.py
-full | par | 300 | 72 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh
+full | par | 300 | 72 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py
 fast | par | 300 | 2 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 8 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 4 | bash tests/test_verify_env.sh
@@ -176,7 +176,7 @@ fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md a
 fast | serial | 300 | 2 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 37 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md
 fast | par | 300 | 26 | bash tests/test_gitflow_detached.sh
-fast | par | 300 | 26 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py
+fast | par | 300 | 26 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py lib/review.sh lib/review_check.py lib/history.py
 fast | par | 300 | 35 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 38 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
 fast | par | 300 | 1 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*
