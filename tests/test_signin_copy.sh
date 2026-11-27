@@ -406,9 +406,103 @@ wait_until 'grep -q "waiting for it to end" "$T/t2.out"' 30
 : > "$T/refresh-go"; wait_until '[ -s "$T/t1.rc" ] && [ -s "$T/t2.rc" ]' 60
 { [ "$(cat "$T/t1.rc")" = 0 ] && [ "$(cat "$T/t2.rc")" = 0 ] && [ "$(wc -l < "$T/refresh.count")" = 1 ] && [ "$(cat "$T"/t?.out | grep -c 'refreshing the sign-in')" = 1 ] \
   && grep -q '^ACCESS=same$' "$R1/out/transcript" && grep -q '^ACCESS=same$' "$R2/out/transcript" \
+  && grep -qE '^qargi: note: holder is lead .*, run rt1, holding it for [0-9]+s$' "$T/t2.out" \
   && [ "$(jq -r '.home.private[0].refreshed' "$R1/dispatch.json")" = true ] && [ "$(jq -r '.home.private[0].refreshed' "$R2/dispatch.json")" = false ]; } \
-  && ok "two runs started together refresh once and both finish: the one that waited read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
+  && ok "two runs started together refresh once and both finish: the one that waited printed the wait note and the holder line, read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
 rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode"
+
+# a runner killed with SIGKILL while its refresh command runs: the refresh got the lock descriptor, so the lane stays held until the command ends, and the lane record names it
+setprov fakeref; echo ok > "$T/refmode"; echo quick > "$T/mode"; signin 500; rm -f "$T/refresh.count" "$T/refresh.log" "$T/refresh-go" "$LOCKF"; : > "$T/refresh-gate"
+KREC=$MEM/.qargi-lane.json; prep rk1; RK1=$RUN; task
+( $DA local run "$RK1" > "$T/k1.out" 2>&1; echo $? > "$T/k1.rc" ) &
+wait_until 'grep -q "^PID=" "$T/refresh.log" 2>/dev/null && [ "$(jq -r .member.pid "$KREC" 2>/dev/null)" = "$(sed -n "s/^PID=//p" "$T/refresh.log")" ]' 30
+KPID=$(sed -n 's/^PID=//p' "$T/refresh.log"); KRUN=$(jq -r .runner.pid "$KREC")
+kill -KILL "$KRUN"; wait_until '[ -s "$T/k1.rc" ]' 30
+out=$($DA local list --lanes 2>&1)
+{ ! kill -0 "$KRUN" 2>/dev/null && kill -0 "$KPID" 2>/dev/null && ! flock -n "$LOCKF" true && [ "$(jq -r .kind "$KREC")" = refresh ] \
+  && grep -qE '^fakeref +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)), member alive, runner gone +lead .* \(refresh, ' <<<"$out"; } \
+  && ok "SIGKILL of the runner during a refresh: the lane stays held while the refresh command lives (it holds the lock descriptor), and the lane record and local list --lanes name it" || no "lane after SIGKILL in a refresh: runner $KRUN refresh $KPID $(cat "$KREC" 2>&1) $out"
+: > "$T/refresh-go"; wait_until '! kill -0 "$KPID" 2>/dev/null && flock -n "$LOCKF" true' 30 && ok "when the refresh command ends the lane is free" || no "lane after the refresh: $(ls -lA "$MEM")"
+rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode" "$KREC" "$T/k1.rc"
+# a refresh command that leaves a process of its group that cannot be stopped (the stop is faked to report it): the refresh failed, its result is not read, and the lane stays held (the
+# descendant has the descriptor) with its record
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+import lane as LN
+d = tempfile.mkdtemp(dir=sys.argv[2])
+src, pidf = os.path.join(d, "auth.json"), os.path.join(d, "descendant.pid")
+open(src, "w").write("{}")
+spec = {"argv": ["sh", "-c", 'sleep 60 & echo $! >> "$1"; exit 0', "sh", pidf], "prompt": "ok", "timeout_seconds": 20}
+home = {"private": {"auth.json": {"refresh": spec}}, "from": {"auth.json": "~/.x/auth.json"}, "refresh_tried": set(), "refreshed": {}, "locked": set(), "runtime": "fakeref", "env": "X_HOME", "wait": None}
+plan = {"env": {}, "env_pass": [], "exe": "sh", "project": "p"}
+reads = []
+L.models_values = lambda *a: ["m"]
+L.refresh_argv = lambda home, plan, spec, exe=None: list(spec["argv"])
+L.load_copy = lambda home, to, src: (reads.append(1), (b"copy", 10))[1]
+L.signin_refusal = lambda home, to, left, plan, cause=None: RuntimeError("refused:%s" % cause)
+L.kill_group = lambda proc, grace=0: 1
+try:
+    L.refresh_signin(home, "auth.json", src, plan, L.Signals(), b"copy", 10, 1000)
+    print("NOEXC")
+except RuntimeError as e:
+    print(e)
+pid = int(open(pidf).read())
+fd = os.open(os.path.join(d, L.LOCK_NAME), os.O_RDWR)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    print("LOCK-FREE")
+except BlockingIOError:
+    print("LOCK-HELD")
+rec = LN.read_record(d)
+print("RECORD member=%s reads=%d" % (bool(rec and rec["member"]), len(reads)))
+os.killpg(os.getpgid(pid), 9)
+PY
+)
+{ grep -qx 'refused:refresh-failed' <<<"$got" && grep -qx 'LOCK-HELD' <<<"$got" && grep -qx 'RECORD member=True reads=1' <<<"$got" && grep -qF 'could not be stopped' <<<"$got"; } \
+  && ok "a refresh command that leaves a process that cannot be stopped is a refresh-failed: the result is not read, and the lane stays held with its record while the process lives" || no "refresh survivors: $got"
+
+# --wait bounds the wait for the lock of a refresh too, while the run is not recorded: lane-busy, with no record and no refresh
+setprov fakeref; echo ok > "$T/refmode"; signin 500; rm -f "$T/refresh.count" "$T/refresh.log" "$T/lk-held" "$T/lk-release" "$LOCKF"; prep rw1; task; W1=$RUN
+spawn_bg bash -c 'flock 9; : > "$1/lk-held"; for _ in $(seq 600); do [ -e "$1/lk-release" ] && break; sleep 0.1; done' _ "$T" 9> "$LOCKF"; LKP=$SPAWNED_PID
+wait_until '[ -e "$T/lk-held" ]' 30
+out=$($DA local run "$W1" --wait 1 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'the wait of 1 s ended' <<<"$out" && grep -qF 'no attempt is recorded' <<<"$out" && [ ! -e "$W1/dispatch.json" ] && [ ! -e "$T/refresh.count" ]; } \
+  && ok "--wait bounds the wait for the lock of a refresh: refused as lane-busy before anything is recorded, and the refresh does not run" || no "wait for a refresh lock: rc=$rc $out"
+: > "$T/lk-release"; wait "$LKP" 2>/dev/null; rm -f "$T/lk-held" "$T/lk-release" "$LOCKF"
+# once the run is recorded (home["recorded"]) the wait for the lock of a refresh has no bound, so lane-busy is never raised for a run that has a record (a fake clock)
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+def take(**more):
+    holder = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    clock = [0.0]
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 5.0:                                # the holder lets go five seconds in
+            os.close(holder)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep, time=time.time)
+    home = dict({"declared": [], "runtime": "fakeref", "wait": 0}, **more)
+    try:
+        os.close(L.lock_one(path, home, "fakeref", L.Signals(), "refresh"))
+        return "took it at %.2f" % clock[0]
+    except L.Stop as e:
+        return "refused code=%d" % e.code
+    finally:
+        try:
+            os.close(holder)
+        except OSError:
+            pass
+print("before the record:", take())
+print("after the record:", take(recorded=True))
+PY
+)
+{ grep -qx 'before the record: refused code=1' <<<"$got" && grep -qx 'after the record: took it at 5.00' <<<"$got"; } \
+  && ok "a refresh that is needed only once the run is recorded waits for its lock without a bound (--wait 0 does not refuse it), so lane-busy never says nothing was recorded of a recorded run" || no "recorded refresh lock: $got"
 
 # a home with a plain link beside the private one holds the lock for the whole run: a refresh that is needed after the wait takes no second lock (no deadlock) and goes on
 setprov fakemixr; echo hold > "$T/mode"; echo ok > "$T/refmode"; signin 259200; rm -f "$T/hold-ready" "$T/hold-go" "$T/refresh.count" "$T/refresh.log" "$LOCKF"
@@ -454,6 +548,23 @@ rm -f "$LOCKF"; : > "$LOCKF"; chmod 600 "$LOCKF"
   && grep -qF 'is free; the run starts' "$T/q2.out" && [ -s "$Q2/out/transcript" ] && flock -n "$LOCKF" true; } \
   && ok "a lock file replaced under a waiting run is noticed (the descriptor is not the file at the path): the run retries onto the new file, then runs" || no "replaced lock file: $(cat "$T/q1.rc" "$T/q2.rc") $(cat "$T/q2.out")"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF"
+# a lock file replaced while a run HOLDS it is a new file nobody holds: a run that starts then gets its flock, but the lane record beside the lock names the live holder, so it waits (and --wait refuses it
+# as lane-busy) and never runs beside it
+echo hold > "$T/mode"; prep rh1; task; H1=$RUN; prep rh2; task; H2=$RUN; prep rh3; task; H3=$RUN
+( $DA local run "$H1" > "$T/h1.out" 2>&1; echo $? > "$T/h1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+rm -f "$LOCKF"; : > "$LOCKF"; chmod 600 "$LOCKF"
+out=$($DA local run "$H2" --wait 2 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF '[lane-busy]' <<<"$out" && grep -qF 'is held by lead ' <<<"$out" && [ ! -e "$H2/dispatch.json" ] && [ ! -e "$H2/out/transcript" ] && flock -n "$LOCKF" true; } \
+  && ok "a lock file replaced while a run holds it: a second run with --wait is refused (lane-busy), not started beside the holder, and holds nothing" || no "replaced under the holder, --wait: rc=$rc $out"
+( $DA local run "$H3" > "$T/h3.out" 2>&1; echo $? > "$T/h3.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/h3.out"' 30
+{ [ ! -s "$T/h3.rc" ] && [ ! -e "$H3/out/transcript" ] && [ ! -s "$T/h1.rc" ]; } \
+  && ok "and a run without --wait waits for the holder of the replaced file, and starts nothing" || no "replaced under the holder, wait: $(cat "$T/h3.out")"
+: > "$T/hold-go"; wait_until '[ -s "$T/h1.rc" ] && [ -s "$T/h3.rc" ]' 60
+{ [ "$(cat "$T/h1.rc")" = 0 ] && [ "$(cat "$T/h3.rc")" = 0 ] && grep -qF 'is free; the run starts' "$T/h3.out" && [ -s "$H3/out/transcript" ] && flock -n "$LOCKF" true; } \
+  && ok "when the holder ends the waiting run starts and ends ok" || no "after the replaced file's holder: $(cat "$T/h1.rc" "$T/h3.rc") $(cat "$T/h3.out")"
+rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$LOCKF" "$T"/h?.rc
 # the retries are bounded: a file that is replaced every time refuses the run (exit 2) and holds nothing
 got=$(python3 -I - "$T/tool/lib" "$MEM" <<'PY' 2>&1
 import os, sys
@@ -473,6 +584,98 @@ PY
 { grep -q '^STOP code=2 tries=6 True$' <<<"$got" && [ "$(grep -c 'was replaced or removed' <<<"$got")" = 6 ] && flock -n "$LOCKF" true; } \
   && ok "a lock file that is replaced every time is tried six times, then the run is refused (exit 2), and no descriptor is left holding the lock" || no "replace bound: $got"
 rm -f "$LOCKF"
+# a bounded wait is counted once: a file replaced one second into a wait of two seconds does not start the two seconds again (a fake clock, advanced by the polling)
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(first, fcntl.LOCK_EX)
+clock, second = [0.0], []
+def sleep(seconds):
+    clock[0] += seconds
+    if clock[0] >= 1.0 and not second:                 # the file is replaced and the first holder lets go; another run holds the new file
+        os.unlink(path)
+        second.append(os.open(path, os.O_RDWR | os.O_CREAT, 0o600))
+        fcntl.flock(second[0], fcntl.LOCK_EX)
+        os.close(first)
+L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep, time=time.time)
+try:
+    L.lock_one(path, {"declared": [], "runtime": "fakeplain", "wait": 2}, "fakeplain", L.Signals())
+    print("NOEXC")
+except L.Stop as e:
+    print("STOP code=%d at=%.2f replaced=%s %s" % (e.code, clock[0], bool(second), "the wait of 2 s ended" in str(e)))
+PY
+)
+{ grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
+  && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
+
+# the reader of /proc/locks (synthetic text): the device is compared with stat's as well as the inode; what cannot be compared is unknown, never held
+got=$(python3 -I - "$T/tool/lib" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import lane as LN
+dev = os.makedev(8, 1)
+def line(maj, minr, ino, kind="FLOCK"):
+    return "1: %s  ADVISORY  WRITE 4242 %02x:%02x:%d 0 EOF\n" % (kind, maj, minr, ino)
+cases = [("same device and inode", line(8, 1, 77), dev),
+         ("another device", line(8, 17, 77), dev),
+         ("another inode", line(8, 1, 78), dev),
+         ("a POSIX lock", line(8, 1, 77, "POSIX"), dev),
+         ("a lock that waits", "1: -> FLOCK  ADVISORY  WRITE 4242 08:01:77 0 EOF\n", dev),
+         ("00:00 in the line", line(0, 0, 77), dev),
+         ("an anonymous device for stat", line(8, 1, 77), os.makedev(0, 44)),
+         ("an anonymous device in the line", line(0, 44, 77), dev),
+         ("no device for stat", line(8, 1, 77), None),
+         ("held beside an unknown", line(0, 44, 77) + line(8, 1, 77), dev),
+         ("two other devices", line(8, 17, 77) + line(9, 2, 77), dev)]
+for name, text, st in cases:
+    print("%s: %s" % (name, LN.match_flock(text, st, 77)))
+PY
+)
+want='same device and inode: True
+another device: False
+another inode: False
+a POSIX lock: False
+a lock that waits: False
+00:00 in the line: unknown
+an anonymous device for stat: unknown
+an anonymous device in the line: unknown
+no device for stat: unknown
+held beside an unknown: True
+two other devices: False'
+[ "$got" = "$want" ] && ok "the reader of /proc/locks compares the device with stat's as well as the inode: another device's lock is not held, and what cannot be compared is unknown, never held" || no "match_flock: $got"
+# the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+import lane as LN
+d = tempfile.mkdtemp(dir=sys.argv[2])
+def waiter(pid, since):
+    start = LN.token(pid)
+    with open(os.path.join(d, "%s%d.%s" % (LN.WAIT, pid, start)), "w") as f:
+        json.dump({"pid": pid, "start": start, "lead": "l", "run": "r", "runtime": "x", "since": since}, f)
+me, other = os.getpid(), os.getppid()
+print("nobody waits:", L.my_turn(d, False, False), L.my_turn(d, True, True))
+waiter(other, 1)
+print("another waits, not queued:", L.my_turn(d, False, False))
+waiter(me, 2)
+print("another waits ahead:", L.my_turn(d, True, True))
+print("no waiter file made:", L.my_turn(d, True, False))
+for n in os.listdir(d):
+    os.unlink(os.path.join(d, n))
+waiter(me, 1)
+waiter(other, 2)
+print("first in the queue:", L.my_turn(d, True, True))
+open(os.path.join(d, "%s999999.1" % LN.WAIT), "w").write("{}")                  # a process that is not there
+print("a ghost ahead is ignored:", L.my_turn(d, True, True))
+PY
+)
+{ grep -qx 'nobody waits: True True' <<<"$got" && grep -qx 'another waits, not queued: False' <<<"$got" && grep -qx 'another waits ahead: False' <<<"$got" && grep -qx 'no waiter file made: True' <<<"$got" \
+  && grep -qx 'first in the queue: True' <<<"$got" && grep -qx 'a ghost ahead is ignored: True' <<<"$got"; } \
+  && ok "the queue: a run polls the flock only as the first of the live waiters, a newcomer goes ahead only when nobody waits, a ghost waiter is ignored" || no "queue turn: $got"
 
 # --- coordination: the lane record, the holder line and the queue, --wait, local list --lanes ------------------------------------------------------
 export QARGI_LEAD=lead-one
@@ -496,7 +699,7 @@ echo x > "$MEM/.qargi-lane-wait.1.1"; true & DEADP=$!; wait "$DEADP"; echo '{"pi
 ino=$(stat -c %i "$LOCKF"); before=$(grep -c ":$ino " /proc/locks)
 out=$(timeout 20 $DA local list --lanes 2>&1); rc=$?
 after=$(grep -c ":$ino " /proc/locks)
-{ [ "$rc" = 0 ] && grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held +lead lead-one run ca \(run, [0-9]+s\)$' <<<"$out" \
+{ [ "$rc" = 0 ] && grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)) +lead lead-one run ca \(run, [0-9]+s\)$' <<<"$out" \
   && grep -qE '^  waiting 1: lead lead-one run cb \([0-9]+s\)$' <<<"$out" && grep -qE '^  waiting 2: lead lead-one run cc \([0-9]+s\)$' <<<"$out" && ! grep -q ghost-waiter-never-listed <<<"$out" \
   && [ "$before" = "$after" ] && [ ! -s "$T/ca.rc" ] && [ ! -s "$T/cb.rc" ] && notext "$out"; } \
   && ok "local list --lanes shows the holder and the waiters in the order they began to wait, ignores a waiter of a process that is gone, and does not block or disturb a live run (no lock taken)" || no "lanes: rc=$rc $out before=$before after=$after"
@@ -513,9 +716,19 @@ out=$($DA local run "$CE" --wait 0 2>&1); rc=$?
   && ok "--wait 0 fails at once when the lane is held, without the waiting note" || no "wait 0: rc=$rc $out"
 out=$($DA local run "$CE" --wait abc 2>&1); rc=$?
 { [ "$rc" = 1 ] && grep -qF -e '--wait: a whole number of seconds' <<<"$out"; } && ok "--wait takes a whole number of seconds" || no "wait abc: rc=$rc $out"
+bad=''
+for v in '²' '٣' '1_0' ' 5' '+5' '1234567890'; do   # a digit that is not 0-9 (superscript, Arabic-Indic), an underscore, a sign, ten digits: a usage refusal, never a traceback
+  for f in --wait --timeout; do
+    out=$($DA local run "$CE" "$f" "$v" 2>&1); rc=$?
+    { [ "$rc" = 1 ] && grep -qF -e "$f: a whole number of seconds" <<<"$out" && ! grep -q Traceback <<<"$out"; } || bad="$bad [$f '$v' rc=$rc $out]"
+  done
+done
+[ -z "$bad" ] && ok "--wait and --timeout take ASCII digits only (at most nine): another digit, a sign, an underscore or ten digits is a usage refusal (exit 1), not a traceback" || no "wait and timeout digits: $bad"
 : > "$T/hold-go"; wait_until '[ -s "$T/ca.rc" ] && [ -s "$T/cb.rc" ] && [ -s "$T/cc.rc" ]' 90
 { [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
   && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
+{ [ "$CA/out/transcript" -ot "$CB/out/transcript" ] && [ "$CB/out/transcript" -ot "$CC/out/transcript" ]; } \
+  && ok "the waiters start in the order they began to wait: the one that waited longest takes the lane first (only the first polls it)" || no "queue order: $(stat -c '%n %y' "$CA/out/transcript" "$CB/out/transcript" "$CC/out/transcript")"
 out=$($DA local list --lanes 2>&1)
 grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +free *$' <<<"$out" && ok "local list --lanes of a free lane says free" || no "lanes free: $out"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$T"/c?.rc
@@ -538,7 +751,7 @@ echo hold > "$T/mode"; prep cs1; task; CS1=$RUN
 wait_until '[ -e "$T/hold-ready" ] && [ -s "$T/member.pid" ] && [ -n "$(jq -r ".member // empty" "$CS1/dispatch.json")" ]' 30
 kill -KILL "$(jq -r .runner "$CS1/dispatch.json")"; wait_until '[ -s "$T/cs1.rc" ]' 30
 out=$($DA local list --lanes 2>&1)
-grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +held, member alive, runner gone +lead lead-one run cs1 ' <<<"$out" \
+grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +(held|unknown \(device not comparable\)), member alive, runner gone +lead lead-one run cs1 ' <<<"$out" \
   && ok "SIGKILL of the runner: the record and local list --lanes say member alive, runner gone" || no "lanes after SIGKILL: $out"
 prep cs2; task; CS2=$RUN
 ( $DA local run "$CS2" > "$T/cs2.out" 2>&1; echo $? > "$T/cs2.rc" ) &

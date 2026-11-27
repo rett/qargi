@@ -145,12 +145,12 @@ def read_record(d):
 
 
 def set_member(d, pid):
-    """Add the member (its pid and start token) to the record this process wrote in d; nothing when the record is not this process's."""
+    """Add the member (its pid and start token) to the record this process wrote in d, or remove it (pid None); nothing when the record is not this process's."""
     rec = _read(os.path.join(d, RECORD))
     mine = me()
     if not rec or not isinstance(rec.get("runner"), dict) or rec["runner"].get("pid") != mine["pid"] or rec["runner"].get("start") != mine["start"]:
         return
-    rec["member"] = {"pid": pid, "start": token(pid) or ""}
+    rec["member"] = {"pid": pid, "start": token(pid) or ""} if pid else None
     try:
         _atomic(os.path.join(d, RECORD), (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
     except OSError:
@@ -260,27 +260,51 @@ def holder_brief(d, now=None):
     return "lead %s run %s" % (rec["lead"] or "?", rec["run"] or "?"), max(int((now or time.time()) - (rec["started"] or 0)), 0) if rec["started"] else 0
 
 
+UNKNOWN = "unknown"
+
+
+def match_flock(text, st_dev, ino):
+    """Is a flock on the file (the device number st_dev of os.stat, the inode ino) in the text of /proc/locks? True (held), False (no lock of that file), or UNKNOWN
+    when a line has the inode number but its device cannot be compared with the file's. A line reads ID: FLOCK ADVISORY WRITE PID MAJOR:MINOR:INODE START END (major
+    and minor in hex); the line of a lock that waits (->) is passed over. The inode number alone is no identity, for another file system holds the same number, so
+    the device is compared as well: equal is held, and unequal with both known is another file's lock. A device that is not known (st_dev None, or 00:00 in the
+    line), or whose major number is 0 on either side (an anonymous device, which a file system such as btrfs or an overlay can report to stat and not to /proc/locks)
+    cannot be compared: the answer is then UNKNOWN, never held."""
+    unsure = False
+    for line in text.splitlines():
+        parts = line.split()
+        if "->" in parts or len(parts) < 6 or parts[1] != "FLOCK":
+            continue
+        for p in parts:
+            q = p.split(":")
+            if len(q) != 3 or not q[2].isdigit() or int(q[2]) != ino:
+                continue
+            try:
+                dev = os.makedev(int(q[0], 16), int(q[1], 16))
+            except (ValueError, OverflowError):
+                dev = None
+            if not dev or st_dev is None:
+                unsure = True
+            elif dev == st_dev:
+                return True
+            elif os.major(dev) == 0 or os.major(st_dev) == 0:
+                unsure = True
+    return UNKNOWN if unsure else False
+
+
 def held(path):
-    """Is the flock on the lock file at path held by some process? Read from /proc/locks by the inode number (the device is not compared: a file system may show
-    another device number there than stat does); no lock is ever taken, not even for a moment. None when /proc/locks cannot be read, False when the file is
+    """Is the flock on the lock file at path held by some process? Read from /proc/locks by the device and the inode number (match_flock; a device that cannot be
+    compared makes the answer UNKNOWN, never held); no lock is ever taken, not even for a moment. None when /proc/locks cannot be read, False when the file is
     not there."""
     try:
-        ino = os.stat(path).st_ino
+        st = os.stat(path)
     except OSError:
         return False
     try:
         with open("/proc/locks", encoding="ascii", errors="replace") as f:
-            for line in f:
-                parts = line.split()
-                if "->" in parts or len(parts) < 6 or parts[1] != "FLOCK":
-                    continue
-                for p in parts:
-                    q = p.split(":")
-                    if len(q) == 3 and q[2].isdigit() and int(q[2]) == ino:
-                        return True
+            return match_flock(f.read(), st.st_dev, st.st_ino)
     except OSError:
         return None
-    return False
 
 
 # ---- qargi local list --lanes -------------------------------------------------------------------------------------------------------
@@ -336,19 +360,23 @@ def lanes_text(now=None):
         d = os.path.dirname(real)
         is_held = held(real)
         rec = read_record(d)
+        shown_waiters = False
         if is_held is None:
             state, who = "unknown (/proc/locks cannot be read)", ""
         elif not is_held:
             state, who = "free", ""
         else:
+            unsure = is_held == UNKNOWN                      # /proc/locks has the inode but its device cannot be compared with stat's: held only on the word of a record that is alive
             hs = holder_state(rec) if rec else None
             if rec is None or hs == "gone":
-                state, who = "held", "not recorded" if rec is None else "recorded for a run that is gone"
+                state, who = ("unknown (device not comparable)", "") if unsure else ("held", "not recorded" if rec is None else "recorded for a run that is gone")
             else:
-                state = "held" if hs == "running" else "held, member alive, runner gone"
+                state = ("unknown (device not comparable)" if unsure else "held") + ("" if hs == "running" else ", member alive, runner gone")
                 who = "lead %s run %s (%s, %s)" % (rec["lead"] or "?", rec["run"] or "?", rec["kind"] or "run", age_text(now - rec["started"]) if rec["started"] is not None else "?")
+                shown_waiters = True
+            shown_waiters = shown_waiters or not unsure
         lines.append("%-12s %-34s %-26s %s" % (plain(rt, 12), shown, state, who))
-        for i, w in enumerate(waiters(d) if is_held else []):
+        for i, w in enumerate(waiters(d) if shown_waiters else []):
             lines.append("  waiting %d: lead %s run %s (%s)" % (i + 1, w["lead"], w["run"], age_text(now - w["since"] / 1e9)))
     return lines
 

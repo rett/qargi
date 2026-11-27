@@ -483,7 +483,7 @@ def refresh_problems(rf, where, command=None):
     the runtime use (and so refresh) the real sign-in when the copy's token would end inside a run: argv is a list of printable one-line words (element 0 the
     runtime's own command, the one dispatch.argv starts with when command is given, so the approval of the executable covers it; {model} and {scratch} are the
     only placeholders), prompt the text it is given on standard input, timeout_seconds how long it may run (1 to REFRESH_TIMEOUT_MAX), min_remaining_seconds
-    (default 0) the seconds a refreshed token must have left, besides the run's own need, for the refresh to count."""
+    (default 0) the seconds a refreshed token must have left at least, for the refresh to count: the larger of it and the run's own need (bound plus margin), not their sum."""
     if not isinstance(rf, dict):
         return ["%s: %s is not an object {argv, prompt, timeout_seconds}" % (where, _show(rf))]
     bad = ["%s.%s: additional property is not allowed" % (where, k) for k in rf if k not in REFRESH_KEYS]
