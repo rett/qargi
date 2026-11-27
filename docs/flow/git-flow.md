@@ -376,6 +376,18 @@ while `backlog list`, `add` and `done` require a repository marker at `repo.path
 Missing, null, empty-string or false section values are unset. The reference
 also specifies the bounded differences from shell path expansion.
 
+`qargi flow plan check FILE [--json]` checks a run plan before its tasks are
+dispatched: a JSON file with the feature the work merges into and one node for
+each task (its role, the paths it may change, its DONE command and the nodes it
+comes after). It says whether the plan is valid, lists the nodes in waves (a
+wave is the nodes whose `after` are all in earlier waves), and reports two nodes
+that `after` does not order and whose scopes can touch the same path, so that
+the lead orders them or narrows them before the first `local prepare`. A node
+that does not list `CHANGELOG.md`, `man/qargi.1`, `docs/reference/refusals.md`,
+`tests/suite.txt` or `tests/durations.txt` in its scope is not assumed to write
+it. The check keeps no state and plans and starts nothing; the
+[run plan reference](../reference/run-plan.md) has the format and the codes.
+
 ## The worktree root
 
 qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one

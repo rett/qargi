@@ -55,6 +55,8 @@ Start cuts `feature/dots` from develop; the member works in its own clone and re
 
 For read-only planning reports, `qargi backlog graph check|show|why --graph FILE` reads a manually declared graph against the configured open backlog. It pins reported evidence to item revisions and leaves feature and archive state unobserved. Reports grant no acceptance or execution authority. The [backlog graph reference](docs/reference/backlog-graph.md) gives the schema, examples, limits and current lead-only public-command guard policy.
 
+`qargi flow plan check FILE [--json]` checks a run plan, one feature and the task nodes that merge into it, before anything is dispatched: it says whether the plan is valid, in which waves its nodes can run, and which unordered nodes could change the same path. It keeps no state, plans nothing and starts nothing. The [run plan reference](docs/reference/run-plan.md) gives the format, the finding codes and what the checker does not do.
+
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
 [Codex as the lead](docs/members-and-providers/codex.md#codex-as-the-lead).

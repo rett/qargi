@@ -18,6 +18,7 @@ ROOT = os.path.dirname(HERE)
 FIX = os.path.join(HERE, "fixtures", "run-plan")
 LIB = os.path.join(ROOT, "lib")
 SCRIPT = os.path.join(LIB, "run_plan.py")
+BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import done_words as D  # noqa: E402
 import jsonkind as K  # noqa: E402
@@ -554,6 +555,64 @@ class Command(unittest.TestCase):
         with open(path, "wb") as f:
             f.write(data)
         return path
+
+
+class Verb(unittest.TestCase):
+    """qargi flow plan check, through bin/qargi."""
+    def qargi(self, *args, env=None):
+        p = subprocess.run([BIN] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, cwd=ROOT, env=env, universal_newlines=True, timeout=60)
+        return p.returncode, p.stdout, p.stderr
+
+    def test_the_verb_gives_the_output_and_the_exit_status_of_the_checker(self):
+        for name, rc in (("valid-waves", 0), ("cycle", 1)):
+            with self.subTest(name=name):
+                path = os.path.join(FIX, name + ".json")
+                for extra in ((), ("--json",)):
+                    self.assertEqual(self.qargi("flow", "plan", "check", path, *extra), run("plan", "check", path, *extra))
+                self.assertEqual(self.qargi("flow", "plan", "check", path)[0], rc)
+
+    def test_json_is_the_document_of_the_checker_and_not_the_wrapper_of_the_other_verbs(self):
+        rc, out, err = self.qargi("flow", "plan", "check", "--json", os.path.join(FIX, "valid-waves.json"))
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual([x.line() for x in K.validate(K.registry_path(RP.CHECK_KIND), out)], [])
+        self.assertEqual(json.loads(out)["kind"], RP.CHECK_KIND)
+
+    def test_a_file_that_cannot_be_read_and_a_wrong_call_are_exit_2(self):
+        self.assertEqual(self.qargi("flow", "plan", "check", os.path.join(FIX, "missing.json"))[0], 2)
+        self.assertEqual(self.qargi("flow")[0], 2)
+        self.assertEqual(self.qargi("flow", "plan", "run", "x")[0], 2)
+
+    def test_it_sets_up_no_state_even_in_a_scratch_state_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, QARGI_STATE=os.path.join(d, "state"), QARGI_CONF=os.path.join(d, "conf"), HOME=os.path.join(d, "home"))
+            rc, out, err = self.qargi("flow", "plan", "check", os.path.join(FIX, "valid-linear.json"), env=env)
+            self.assertEqual((rc, err), (0, ""))
+            self.assertEqual(os.listdir(d), [])
+
+    def test_the_help_forms_describe_the_verb(self):
+        for args in (("flow", "--help"), ("flow", "plan", "check", "x", "--json", "-h"), ("help", "flow", "plan")):
+            with self.subTest(args=args):
+                rc, out, err = self.qargi(*args)
+                self.assertEqual((rc, err), (0, ""))
+                self.assertIn("qargi flow plan ACTION FILE", out)
+                self.assertIn("docs/reference/run-plan.md", out)
+        rc, out, err = self.qargi("help", "json", RP.CHECK_KIND)
+        self.assertEqual(rc, 0)
+        self.assertIn("flow plan check FILE --json", out)
+
+    def test_a_coordinator_may_run_it_for_it_only_reads(self):
+        env = dict(os.environ, QARGI_ACTOR="lead-1:coord:alpha:1")
+        rc, out, err = self.qargi("flow", "plan", "check", os.path.join(FIX, "valid-linear.json"), env=env)
+        self.assertEqual((rc, err), (0, ""))
+
+    def test_the_reference_page_and_the_help_agree_on_the_codes(self):
+        page = slurp(os.path.join(ROOT, "docs", "reference", "run-plan.md"), "r")
+        reg = json.loads(slurp(K.registry_path(RP.CHECK_KIND)))
+        listed = reg["document"]["$defs"]["finding"]["properties"]["code"]["description"]
+        for word in re.findall(r"[a-z]+(?:-[a-z]+)+", listed.split(":", 1)[1].split(".")[0]):
+            self.assertIn("`%s`" % word, page)
+        for shared in RP.SHARED:
+            self.assertIn("`%s`" % shared, page)
 
 
 if __name__ == "__main__":

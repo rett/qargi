@@ -50,7 +50,7 @@ Four fields tell a reader how far to trust an answer, and a program that builds 
 
 ## Draft kinds
 
-A kind whose registry file says `status: draft` is registered, so that `qargi help json` shows its fields, but it is not pinned: it has no fixtures yet, its integer may be raised without a release naming it, and the exit rule above is not promised for it. `qargi flow plan check` is the only verb of draft kinds so far. It exits 0 for a valid plan and 1 for an invalid one, and in both cases it prints the document of the kind `qargi-run-plan-check` (`valid` says which); a file that cannot be read is exit 2 with one line on standard error and no document, and a document that fails the check of its own registry file is exit 70, also with no document.
+A kind whose registry file says `status: draft` is registered, so that `qargi help json` shows its fields, but it is not pinned: it has no fixtures yet, its integer may be raised without a release naming it, and the exit rule above is not promised for it. `qargi flow plan check` is the only verb of draft kinds so far. It exits 0 for a valid plan and 1 for an invalid one, and in both cases it prints the document of the kind `qargi-run-plan-check` (`valid` says which); a file that cannot be read is exit 2 with one line on standard error and no document, and a document that fails the check of its own registry file is exit 70, also with no document. [The run plan reference](run-plan.md) describes both kinds.
 
 | Kind | Schema | Verbs | Stream |
 | --- | --- | --- | --- |

@@ -1,6 +1,7 @@
 # Reference
 
 - [Backlog graph v1](backlog-graph.md) documents the native read-only schema, reports, source revision evidence and planning limits.
+- [Run plan check](run-plan.md) documents `qargi flow plan check FILE`: the format of a run plan (one feature and its task nodes), the checks and their codes, the order of the nodes in waves, the overlap of scopes, the exit status and what the checker does not do.
 - [Campaign records v1](campaign-records.md) documents bounded local declarations, the closed schema, publication outcomes and bounded history.
 - [verify.environment](verify-environment.md) documents the optional project answer that starts the whole-suite runs of `qargi feature verify` and `qargi release verify` under a declared environment (signals, descriptors, terminal, cpu scope, variables): the schema, the refusal codes, the waiver, the record, and a table of each setting against the hosted Linux runner it was measured on.
 - [JSON output](json-output.md) is the contract of the documents that qargi prints for a program to read: the two fields that name a document (`schema`, an integer, and `kind`), what raises the integer and what does not, the exit rule, the pinned kinds with what each verb writes (and `--no-write`), the refusal codes of the marshal verbs and how a reader qualifies against `tests/fixtures/json/`. `qargi help json [KIND]` prints the same from the command line.
@@ -11,6 +12,8 @@
 ## Planning reports and declarations
 
 `qargi backlog graph check|show|why --graph FILE` reads manually declared relationships against the configured open backlog. `why` also needs `--node REF`. Reported evidence follows the parser's item digest. Feature references and archived items remain unobserved. The reports grant no approval, acceptance, scheduling or execution authority. The public command remains lead-only under the current member guard. The [graph reference](backlog-graph.md#commands-and-boundaries) describes the member-safe direct Python reader and its limits.
+
+`qargi flow plan check FILE [--json]` reads a run plan (one feature and the task nodes that merge into it, each with its role, scope, DONE command and `after`) and says whether it is valid and in which waves its nodes can run, and where two unordered nodes could change the same path. It keeps no state, plans nothing and starts nothing, and a valid plan grants no authority. The public command is lead-only under the current member guard, like the graph. The [run plan reference](run-plan.md) gives the format, the finding codes and the limits.
 
 `qargi campaign check --spec FILE` validates a supplied declaration without configuration or state probes and is available to members. The lead owns local `commit`, stored `check`, `show` and `log` operations. Campaign records retain supplied design and briefing claims and unresolved evidence links. They do not observe source state or record acceptance. [Campaign records v1](campaign-records.md) specifies the qualified local-store boundary and bounded history. Ataniq owns its separate orchestration work. Fresh review against actual dependencies remains required before merge acceptance, and declarations do not enforce that review.
 

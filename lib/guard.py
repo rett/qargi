@@ -117,6 +117,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it, note journals a branch the lead made; any verb, also through lib/ref.sh);
     `qargi backlog done` (it moves an item out of the backlog file into the dated archive beside it and rewrites the file, from a plan and a token; any verb but list, also through lib/backlog.sh,
     lib/backlog.py and a verb held in a variable) is the lead's too, and `qargi backlog list` only reads and stays allowed; qargi project set of backlog.file is refused with the answers the lead later runs;
+    `qargi flow` (plan check reads a plan file and writes nothing, but the command is the lead's under the current policy, and a verb added to it gets no member permission;
+    the pure reader, python3 lib/run_plan.py, stays open as lib/backlog_graph.py does);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -3731,6 +3733,11 @@ def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
                              "report graph findings in your task output")
         return OwnReason("qargi backlog %s moves an item out of the backlog file into the dated archive and rewrites the file (from a plan and a token) and is the lead's to run "
                          "(qargi backlog list only reads and is allowed); report in your task output which backlog items your change finishes, with the evidence" % (verb or "(no verb)"))
+    if area == "flow":
+        # qargi flow plan check only reads a plan file, and the pure reader (python3 lib/run_plan.py plan check FILE, as lib/backlog_graph.py is for the backlog graph)
+        # has no write verb and stays open; the command is reserved for the lead under the current CLI policy, and a verb added to flow later gets no member permission.
+        return OwnReason("qargi flow %s is a read-only query reserved for the lead under the current CLI policy; "
+                         "report the plan findings in your task output" % (verb or "(no verb)"))
     if area == "upstream" and verb not in UPSTREAM_OPEN:
         return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
                          "report in your task output that the upstream line needs looking at"
