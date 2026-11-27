@@ -32,8 +32,10 @@ directory only their user can write, but every field read from them is cut to pl
                                                         it did not have to wait; rounded down for busy) and, for busy and reentry, `holder=TEXT`.
   suite_queue.py release --state DIR --owner PID        remove the record of the holder and the waiter file of OWNER (the shell then closes its descriptor)
   suite_queue.py status --state DIR [--json]            the slot, its holder and the waiters in the order of the queue; with --json one document of the draft kind
-                                                        qargi-suite-queue. Read-only: no lock is taken, nothing is removed, no process is signalled (/proc/locks says
-                                                        whether the lock is held)
+                                                        qargi-suite-queue. Read-only: no lock is kept, nothing is removed, no process is signalled. Whether the lock is held is read from
+                                                        /proc/locks; where that cannot decide (a device it cannot compare with stat's, as on btrfs; no entry) the lock file is probed for a moment
+                                                        with a non-blocking flock on a descriptor of its own, let go and closed at once (lib/lane.py held()). A run that really takes the slot
+                                                        uses its own descriptor and tries again after a short wait if the probe was there at that moment
   suite_queue.py pids --state DIR                       the pids of the holder and of the waiters that are alive, one line, space separated (for the warning of other runs)
   suite_queue.py project                                the project in effect here (QARGI_PROJECT, else the one whose repository holds the current directory), or nothing
 
@@ -223,7 +225,8 @@ def age_text(seconds):
 
 
 def lock_held(d):
-    """True or False (the flock on the lock file is held, or is not: read from /proc/locks, no lock is taken), or None when that cannot be told."""
+    """True or False (the flock on the lock file is held, or is not: read from /proc/locks, and where that cannot decide probed for a moment with a flock that is let
+    go at once, lib/lane.py held()), or None when that cannot be told (the lock file cannot be opened)."""
     h = L.held(os.path.join(d, LOCK))
     return None if h is None or h == L.UNKNOWN else bool(h)
 

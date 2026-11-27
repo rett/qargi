@@ -448,6 +448,98 @@ class Status(Base):
         self.assertEqual(reg["verbs"], ["suite status --json"])
 
 
+class Probe(Base):
+    """Where /proc/locks cannot decide (a device it names cannot be compared with stat's, as on btrfs; no entry), the lock file is probed with a non-blocking flock
+    on a descriptor of its own: held when another process holds the lock, free otherwise, and the file is left unlocked by the probe."""
+
+    HOLD = ("import fcntl, os, sys\nfd = os.open(sys.argv[1], os.O_RDONLY)\nfcntl.flock(fd, fcntl.LOCK_EX)\nprint('locked', flush=True)\nsys.stdin.readline()\n")
+
+    def setUp(self):
+        super().setUp()
+        self.d = Q.prepare(self.state)
+        self.lock = os.path.join(self.d, "lock")
+        st = os.stat(self.lock)
+        # a /proc/locks that has the inode of the lock file under a device that is not stat's and has no major number: the entry cannot be compared
+        self.proc = os.path.join(self.tmp, "locks")
+        with open(self.proc, "w") as f:
+            f.write("1: FLOCK  ADVISORY  WRITE 4242 00:2c:%d 0 EOF\n" % st.st_ino)
+        patch = mock.patch.object(Q.L, "PROC_LOCKS", self.proc)
+        patch.start()
+        self.addCleanup(patch.stop)
+        with open(self.proc) as f:
+            self.assertEqual(Q.L.match_flock(f.read(), st.st_dev, st.st_ino), Q.L.UNKNOWN, "the synthetic text must be one that cannot be compared")
+
+    def child(self):
+        p = subprocess.Popen([sys.executable, "-I", "-c", self.HOLD, self.lock], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (p.kill(), p.wait(), p.stdin.close(), p.stdout.close()))
+        self.assertEqual(p.stdout.readline().strip(), "locked")
+        return p
+
+    def unlocked(self):
+        fd = os.open(self.lock, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
+    def test_a_lock_that_cannot_be_compared_is_held_when_a_process_holds_it(self):
+        self.child()
+        self.assertIs(Q.L.held(self.lock), True)
+        self.assertIs(Q.lock_held(self.d), True)
+        self.assertEqual(self.status()["state"], "held")
+
+    def test_a_lock_that_cannot_be_compared_is_free_when_nobody_holds_it_and_the_probe_leaves_it_unlocked(self):
+        self.assertIs(Q.L.held(self.lock), False)
+        self.assertIs(Q.lock_held(self.d), False)
+        self.assertTrue(self.unlocked(), "the probe left the lock held")
+        self.assertEqual(self.status()["state"], "free")
+        self.assertTrue(self.unlocked())
+
+    def test_a_probe_of_a_lock_that_was_held_is_no_lock_once_the_holder_has_ended(self):
+        c = self.child()
+        self.assertIs(Q.L.held(self.lock), True)
+        c.kill()
+        c.wait()
+        self.assertIs(Q.L.held(self.lock), False)
+        self.assertTrue(self.unlocked())
+
+    def test_no_entry_in_the_locks_is_probed_as_well(self):
+        with open(self.proc, "w"):
+            pass
+        self.assertIs(Q.L.held(self.lock), False)
+        self.child()
+        self.assertIs(Q.L.held(self.lock), True)
+
+    def test_a_locks_file_that_cannot_be_read_is_probed_and_a_lock_file_that_cannot_be_opened_stays_unknown(self):
+        os.unlink(self.proc)
+        self.assertIs(Q.L.held(self.lock), False)
+        self.child()
+        self.assertIs(Q.L.held(self.lock), True)
+        if os.getuid() != 0:
+            os.chmod(self.lock, 0)
+            try:
+                self.assertIsNone(Q.L.held(self.lock), "a file that cannot be opened cannot be probed")
+            finally:
+                os.chmod(self.lock, 0o600)
+
+    def test_the_probe_of_a_missing_file_is_free_and_makes_nothing(self):
+        gone = os.path.join(self.d, "nothing")
+        self.assertIs(Q.L.held(gone), False)
+        self.assertFalse(os.path.exists(gone))
+
+    def test_an_orphaned_suite_is_a_held_slot_with_no_holder_and_the_waiter_says_whose_verb_is_gone(self):
+        self.child()                                        # the descriptor of a suite whose verb was killed
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        Q._write(os.path.join(self.d, Q.RECORD), dict(Q.info("app", "feature verify", "gone", ""), schema=1, pid=dead.pid, start="1", started=int(time.time())))
+        doc = self.status()
+        self.assertEqual((doc["state"], doc["holder"]), ("held", None))
+        self.assertIn("holder is app feature verify gone, whose verb is gone", Q.describe(self.d, 0))
+
+
 class Verbs(Base):
     """qargi suite run and qargi suite status, started as a user starts them (bin/qargi, the state of the test)."""
 

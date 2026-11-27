@@ -646,6 +646,43 @@ no device for stat: unknown
 held beside an unknown: True
 two other devices: False'
 [ "$got" = "$want" ] && ok "the reader of /proc/locks compares the device with stat's as well as the inode: another device's lock is not held, and what cannot be compared is unknown, never held" || no "match_flock: $got"
+# held() where /proc/locks cannot decide (synthetic text with a device that cannot be compared): a lock file that a child process really holds is held, one nobody holds is free,
+# and the probe leaves the lock file unlocked; a lock file that cannot be opened stays unknown
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import lane as LN
+d = os.path.join(sys.argv[2], "probe-lane"); os.makedirs(d, exist_ok=True)
+lock = os.path.join(d, ".qargi-run.lock")
+open(lock, "w").close()
+ino = os.stat(lock).st_ino
+fake = os.path.join(d, "locks")
+with open(fake, "w") as f:
+    f.write("1: FLOCK  ADVISORY  WRITE 4242 00:2c:%d 0 EOF\n" % ino)
+def free():
+    fd = os.open(lock, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+print("synthetic text: %s" % LN.match_flock(open(fake).read(), os.stat(lock).st_dev, ino))
+print("nobody holds it: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+child = subprocess.Popen([sys.executable, "-I", "-c", "import fcntl,os,sys\nfd=os.open(sys.argv[1],os.O_RDONLY)\nfcntl.flock(fd,fcntl.LOCK_EX)\nprint('x',flush=True)\nsys.stdin.readline()", lock], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+child.stdout.readline()
+print("a child holds it: %s" % LN.held(lock, fake))
+child.stdin.close(); child.wait()
+print("the child has ended: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+print("a file that is not there: %s" % LN.held(os.path.join(d, "none"), fake))
+PY
+)
+want='synthetic text: unknown
+nobody holds it: False, unlocked after: True
+a child holds it: True
+the child has ended: False, unlocked after: True
+a file that is not there: False'
+[ "$got" = "$want" ] && ok "held() probes the lock file where /proc/locks cannot compare the device: held when a process holds the flock, free when nobody does, and the probe leaves it unlocked" || no "held probe: $got"
 # the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
 got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
 import json, os, sys, tempfile

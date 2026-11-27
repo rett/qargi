@@ -87,7 +87,7 @@ The draft is not pinned: it has no fixtures, and its integer may be raised witho
 | `history --json` | Nothing: the file of the history is only read. |
 | `history show ID --json` | Nothing: `history show` only reads the file. (The entries are written by `feature verify`, `release verify` and `review check`; see the reference page of the history.) See [History](history.md). |
 | `local list --json` | Nothing: no state, no lock, no token, no network and no file; the registry, the run directories, the lane records and /proc are only read, and no process is signalled. |
-| `suite status --json` | Nothing: the queue directory is only read (a waiter file of a process that is gone is not removed), no lock is taken, no token is made and no process is signalled. |
+| `suite status --json` | Nothing: the queue directory is only read (a waiter file of a process that is gone is not removed), no lock is kept (the lock file is probed for a moment where /proc/locks cannot say whether it is held), no token is made and no process is signalled. |
 
 ## The refusal codes of the three verbs
 

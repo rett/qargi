@@ -1784,8 +1784,8 @@ $vout}"
     SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES='' JSON=''
     [ "${1:-}" != --lanes ] || LANES=1
     [ "${1:-}" != --json ] || [ "${2:-}" != --lanes ] || LANES=1   # --json --lanes: the two in either order
-    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without taking any lock
-    # (the holder from /proc/locks and the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without keeping any lock
+    # (held or free from /proc/locks, else a probe flock let go at once; the holder from the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
     # --json prints the document of the kind qargi-local-list instead of the text (lib/local_list.py); with --lanes it is the lanes, under the key lanes of the same kind
     if [ -n "$LANES" ]; then
       [ $# = 1 ] || { [ $# = 2 ] && { [ "$2" = --json ] || [ "$1" = --json ]; }; } || usage_die "list: --lanes takes no other option or argument"

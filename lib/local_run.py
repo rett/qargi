@@ -48,7 +48,7 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        first waiter polls the lock and a run that finds others waiting queues behind them), and
                        waits, with no bound unless --wait SECONDS gives one (a signal ends the wait): at the bound the run is refused as lane-busy (exit 1) before its
                        attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait. The record and the
-                       waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (the holder only when /proc/locks says the lock is held).
+                       waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (held or free from /proc/locks, else a probe flock let go at once; the holder only when the lock is held).
                        The lock descriptor goes to the member (pass_fds), so a runner killed with SIGKILL leaves the lane held until the member's process group ends (the
                        record then shows the runner gone and the member alive), and after the flock succeeds the descriptor must still be the file at the path (st_dev and
                        st_ino of fstat against lstat): a lock file removed or replaced while the run waited is closed, noted and opened again, at most six times, then the run is refused

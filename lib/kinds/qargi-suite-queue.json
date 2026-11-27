@@ -7,7 +7,7 @@
   "stream": "stdout",
   "verbs": ["suite status --json"],
   "about": "The queue of the whole-suite runs of this user, as `qargi suite status` shows it: the slot (`state`), the run that holds it (`holder`) and the runs that wait for it, in the order they will be served. A whole-suite run (feature verify, release verify, `suite run`) holds the slot only while its suite runs, so two never overlap on one host. `state` is `free` (nobody holds the slot), `held` (a lock is held; `holder` names the run when its record is there and its process is alive, else it is null) or `unknown` (the lock cannot be read from /proc/locks and no live record names a holder); the state is read from the kernel's lock table, never from the records alone, so a holder that was killed is not shown. `waiting` lists only the runs whose process is alive. A field read from a file in the queue directory is cut to plain characters. The verb exits 0 with a document and prints nothing else on standard output; a queue that cannot be read is exit 1 with one line on standard error and no document, a document that fails the check of this registry file is exit 70 with one line on standard error and no document, and a wrong call is exit 2.",
-  "writes": "Nothing: the queue directory is only read (a waiter file of a process that is gone is not removed), no lock is taken, no token is made and no process is signalled.",
+  "writes": "Nothing: the queue directory is only read (a waiter file of a process that is gone is not removed), no lock is kept (the lock file is probed for a moment where /proc/locks cannot say whether it is held), no token is made and no process is signalled.",
   "document": {
     "type": "object",
     "required": ["schema", "kind", "state", "holder", "waiting"],
