@@ -610,6 +610,39 @@ PY
 )
 { grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
   && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
+# the end of a bound tries the lock a few more times (the last poll may have met a probe of `local list --lanes`): a lock let go during those tries is taken, one that stays
+# held is refused as lane-busy after exactly RETRIES more tries; no real sleep (the clock and the pauses of both modules are the test's own), --wait 0 tries once
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+def case(release_at, wait=2):
+    """release_at: the number of the pause of try_flock after which the competing holder lets go (None: never)."""
+    path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+    first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(first, fcntl.LOCK_EX)
+    clock, pauses = [0.0], [0]
+    def poll_sleep(seconds):
+        clock[0] += seconds
+    def retry_sleep(seconds):
+        pauses[0] += 1
+        if release_at is not None and pauses[0] == release_at:
+            os.close(first)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=poll_sleep, time=time.time)
+    L.SQ.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=retry_sleep, time=time.time)
+    try:
+        L.lock_one(path, {"declared": [], "runtime": "fakeplain", "wait": wait}, "fakeplain", L.Signals())
+        return "TAKEN pauses=%d" % pauses[0]
+    except L.Stop as e:
+        return "STOP code=%d pauses=%d at=%.1f" % (e.code, pauses[0], clock[0])
+print(case(2))
+print(case(None))
+print(case(1, wait=0))
+PY
+)
+got=$(grep -v '^qargi: note:' <<<"$got")                  # the notes of the waiting run are not the result
+{ [ "$(sed -n 1p <<<"$got")" = "TAKEN pauses=2" ] && [ "$(sed -n 2p <<<"$got")" = "STOP code=1 pauses=3 at=2.0" ] && [ "$(sed -n 3p <<<"$got")" = "STOP code=1 pauses=0 at=0.0" ]; } \
+  && ok "the end of a --wait bound tries the lock three more times (taken when it is let go meanwhile, lane-busy when it is not); --wait 0 tries once" || no "retry at the bound: $got"
 
 # the reader of /proc/locks (synthetic text): the device is compared with stat's as well as the inode; what cannot be compared is unknown, never held
 got=$(python3 -I - "$T/tool/lib" <<'PY' 2>&1
@@ -646,6 +679,43 @@ no device for stat: unknown
 held beside an unknown: True
 two other devices: False'
 [ "$got" = "$want" ] && ok "the reader of /proc/locks compares the device with stat's as well as the inode: another device's lock is not held, and what cannot be compared is unknown, never held" || no "match_flock: $got"
+# held() where /proc/locks cannot decide (synthetic text with a device that cannot be compared): a lock file that a child process really holds is held, one nobody holds is free,
+# and the probe leaves the lock file unlocked; a lock file that cannot be opened stays unknown
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import lane as LN
+d = os.path.join(sys.argv[2], "probe-lane"); os.makedirs(d, exist_ok=True)
+lock = os.path.join(d, ".qargi-run.lock")
+open(lock, "w").close()
+ino = os.stat(lock).st_ino
+fake = os.path.join(d, "locks")
+with open(fake, "w") as f:
+    f.write("1: FLOCK  ADVISORY  WRITE 4242 00:2c:%d 0 EOF\n" % ino)
+def free():
+    fd = os.open(lock, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+print("synthetic text: %s" % LN.match_flock(open(fake).read(), os.stat(lock).st_dev, ino))
+print("nobody holds it: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+child = subprocess.Popen([sys.executable, "-I", "-c", "import fcntl,os,sys\nfd=os.open(sys.argv[1],os.O_RDONLY)\nfcntl.flock(fd,fcntl.LOCK_EX)\nprint('x',flush=True)\nsys.stdin.readline()", lock], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+child.stdout.readline()
+print("a child holds it: %s" % LN.held(lock, fake))
+child.stdin.close(); child.wait()
+print("the child has ended: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+print("a file that is not there: %s" % LN.held(os.path.join(d, "none"), fake))
+PY
+)
+want='synthetic text: unknown
+nobody holds it: False, unlocked after: True
+a child holds it: True
+the child has ended: False, unlocked after: True
+a file that is not there: False'
+[ "$got" = "$want" ] && ok "held() probes the lock file where /proc/locks cannot compare the device: held when a process holds the flock, free when nobody does, and the probe leaves it unlocked" || no "held probe: $got"
 # the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
 got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
 import json, os, sys, tempfile

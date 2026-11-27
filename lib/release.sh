@@ -24,8 +24,9 @@
 #                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
 #                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
 #                                           release.sign.files, and the project's release.after_steps (steps recorded by `finish`; `step` marks one done).
-#   release.sh verify VERSION [--hotfix] [--waive-environment PARTS --plan T --approved W]
-#                                           run the whole suite on the branch head (develop's head before a release starts); same warnings.
+#   release.sh verify VERSION [--hotfix] [--waive-environment PARTS --plan T --approved W] [--queue-wait SECONDS]
+#                                           run the whole suite on the branch head (develop's head before a release starts); same warnings. Before the suite starts
+#                                           it waits its turn in the queue of the whole-suite runs (as feature verify does; --queue-wait bounds the wait: suite-queue-busy).
 #                                           With the answer verify.environment the suite and each gate start through lib/suite_env.py; a part
 #                                           that cannot be applied refuses the run, and the waiver is as for feature verify (per run, audited)
 #                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
@@ -111,11 +112,12 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET='' QUEUE_WAIT=''; ASSETS=() ASSET_DIRS=()
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
     --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
+    --queue-wait) need_val "$1" $#; QUEUE_WAIT=$2; case $QUEUE_WAIT in ''|*[!0-9]*) usage_die "--queue-wait takes a whole number of seconds (0 refuses at once when the slot is not free)";; esac; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
@@ -133,6 +135,7 @@ done
 [ "$verb" = step ] || [ "$verb" = plan ] || [ -z "$AGAIN" ] || usage_die "--evidence and --again belong to release step (--again also to release plan)"
 [ "$verb" = verify ] || [ -z "$STRICT" ] || usage_die "--strict belongs to release verify"
 [ "$verb" = verify ] || [ -z "$WAIVE_SET" ] || usage_die "--waive-environment belongs to release verify"
+[ "$verb" = verify ] || [ -z "$QUEUE_WAIT" ] || usage_die "--queue-wait belongs to release verify"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || usage_die "--push belongs to release fix"
 [ "$verb" = fix ] || [ -z "$FIXREC" ] || usage_die "--record belongs to release fix"
 [ -z "$FIXREC" ] || [ -z "$FIXPUSH" ] || usage_die "--record and --push are two ways of taking a fix in: --record journals the commits and asks nothing, --push is release push"
@@ -1176,27 +1179,30 @@ case $verb in
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     suite_env_prepare "qargi release verify $VER${HOTFIX:+ --hotfix}" "$on" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin release-verify "$VER"   # from here to the end of the verb, the wait for the slot included: a second verify of this version sees it (busy_same_refuse)
     worktree "$h"
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
     [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
-    suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict refusal above spends nothing)
+    other_runs_warning
+    squeue_acquire "release verify" "$VER" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
+    suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict or a --queue-wait refusal above spends nothing)
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    other_runs_warning
-    busy_begin release-verify "$VER"
-    t0=$SECONDS
+    t0=$SECONDS   # after the wait: the seconds of the record are the suite's
     history_prepare "release verify" "$VER" "$on" "$h"
     if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
-    busy_end
     suite_env_settle
     history_end "$res"
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")$(suite_env_note "$on")"
+    frep=''; [ "$res" = pass ] || frep=$(suite_failure_report)   # read now, printed below: the log is the next run's as soon as the slot is let go
+    squeue_release   # after the readers of the log, the gate list and the reports of the launcher (named by the version: the next run of this name rewrites them once it has the slot), before the checks that ask GitHub
+    busy_end
     if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
-    [ "$res" = pass ] || suite_failure_report
+    [ -z "$frep" ] || printf '%s\n' "$frep"
     [ "$res" = pass ];;
   fix)
     # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change

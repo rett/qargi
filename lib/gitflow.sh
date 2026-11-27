@@ -15,6 +15,9 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   fi
 fi
 
+# The queue of the whole-suite runs (lib/suite_queue.sh): feature verify and release verify take a slot before their suite starts and give it back when it ends.
+. "$(dirname "${BASH_SOURCE[0]}")/suite_queue.sh"
+
 # g ARGS -> git -C REPO ARGS. In a dry run (QARGI_DRY=1, `--dry-run` of a verb) it passes only what is on the allow-list of dry_git_ok, which reads and never
 # writes (GIT_OPTIONAL_LOCKS=0 keeps `status` from refreshing the index), and ends the verb with 70 on anything else, naming it (dry_deny): a dry path that reaches
 # a writing git is a defect of the verb, found by tests/test_release_cut.sh. Outside a dry run it is plain git.
@@ -360,11 +363,15 @@ bump_cleanup() {
 # `qargi lead compact-check` reads (a live pid: not now); busy_end and the EXIT trap remove it, and a file whose pid is gone is ignored.
 BUSY=''
 busy_begin() { mkdir -p "$DA_STATE/busy" 2>/dev/null; BUSY=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid; echo "$$" > "$BUSY" 2>/dev/null || BUSY=''; }
-busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
+busy_end() { # the mark is removed when it is this run's own: a second run of the same name (verify.environment off) writes its pid over it while the first still runs
+  [ -z "$BUSY" ] || { [ "$(cat "$BUSY" 2>/dev/null)" != "$$" ] || rm -f "$BUSY"; }
+  BUSY=''
+}
 # busy_same_refuse KIND NAME: with verify.environment on, a second whole-suite run of the same KIND and NAME while the first is alive is refused, before anything is made
 # or claimed: the two would share one directory for the reports of the launcher (run_suite_logged), and the second would delete the first's reports, so the first could
-# end on a refusal code that is not its own. It reads the pid file busy_begin writes, and busy_begin runs only after the launcher's attempt, the worktree, the claim and
-# the warning of the other runs: a second verify started while the first is still preparing (seconds) is not refused, and this window is not closed. A mark whose pid is
+# end on a refusal code that is not its own. It reads the pid file busy_begin writes, which the verbs write right after the launcher's attempt (before the worktree, the
+# warning of the other runs and the wait in the queue of the whole-suite runs, so a verify that waits for the slot is covered) and remove when they end: a second verify started
+# during the launcher's attempt (a moment) is not refused, and this window is not closed. A mark whose pid is
 # alive but is no verify (a pid reused after a verify died without its EXIT trap) refuses too, so the message names the file to remove. With the setting off nothing changes (the two runs share the log, as they always did, and other_runs_warning says so).
 busy_same_refuse() {
   local f=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid pid
@@ -380,7 +387,7 @@ busy_same_refuse() {
 lead_advice() {
   pymod lead_usage advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
 }
-on_exit() { history_end interrupted; marshal_hold_stop; busy_end; cleanup; intent_unlock; }
+on_exit() { squeue_release; history_end interrupted; marshal_hold_stop; busy_end; cleanup; intent_unlock; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
 worktree() { # commit-ish -> a detached temporary worktree there (WT)
   WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX")
@@ -845,14 +852,17 @@ run_suite_logged() {
       ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run${ENV_WAIVE:+. The waiver token was spent}"
     fi
     history_arm
-    run_suite 2>&1 | tee "$SUITE_LOG"
-    rc=${PIPESTATUS[0]}
+    squeue_closed suite_piped   # the whole pipeline without the descriptor of the slot: tee has none, and the suite's subshell keeps the slot until the suite ends
+    rc=$SUITE_RC
   else
     [ -z "${SUITE_ENV:-}" ] || die "verify-env-no-log: the suite log $SUITE_LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run${ENV_WAIVE:+. The waiver token was spent}"
-    SUITE_LOG=''; history_arm; run_suite; rc=$?
+    SUITE_LOG=''; history_arm; squeue_closed squeue_sub run_suite; rc=$?
   fi
   return "$rc"
 }
+# suite_piped -> run_suite with both streams through tee into the log; SUITE_RC is the suite's status (not tee's)
+SUITE_RC=0
+suite_piped() { run_suite 2>&1 | tee "$SUITE_LOG"; SUITE_RC=${PIPESTATUS[0]}; }
 # The history of the whole-suite runs (lib/history.py; docs/reference/history.md): one line for each run of feature verify and release verify, appended when the run
 # ends, and with the result interrupted when the verb ends before it had a verdict (the exit trap, on_exit). It is evidence and no gate: nothing here changes what a
 # verify decides, and a line that cannot be written is a warning.
@@ -877,7 +887,7 @@ history_end() {
   [ -n "$HIST_TREE" ] || { echo "qargi: warning: history: the tree of $HIST_HEAD is not known; no entry was written" >&2; return 0; }
   { [ -z "${SUITE_LOG:-}" ] || [ ! -f "$SUITE_LOG" ] || suite_failing_names "$SUITE_LOG"; } | python3 -I "$HISTW" suite --project "$PROJ" --verb="$HIST_VERB" --name="$HIST_NAME" \
     --branch="$HIST_BRANCH" --head="$HIST_HEAD" --tree="$HIST_TREE" --command="$TESTCMD" --env-id="${SUITE_ENV_ID:-}" --result="$1" --started="$HIST_START" \
-    --seconds="$((SECONDS - HIST_T0))" --load-start="$HIST_LOAD0" --log="${SUITE_LOG:-}" --gates="${GATES_FILE:-}" --names=- || true
+    --seconds="$((SECONDS - HIST_T0))" --queue-wait-s="${SQ_WAIT:-0}" --load-start="$HIST_LOAD0" --log="${SUITE_LOG:-}" --gates="${GATES_FILE:-}" --names=- || true
 }
 # suite_failing_names LOG -> the failing-test lines of a suite log (`FAIL name`, `FAIL: name` and `--- FAIL: name`), each once, in the order they appear: what the failure
 # report below prints and what the history of the run (history_end) stores
@@ -917,16 +927,21 @@ suite_cmdline() {
 # other_runs_warning -> warnings on stderr (the verb goes on) when something else of this project may be running a suite: a whole-suite
 # run of qargi in progress (a live pid in $DA_STATE/busy), a local run of the registry for this repository with a file changed in the
 # last QARGI_ACTIVE_MINUTES (default 10), or a tests/run.sh process whose directory belongs to this repository (Linux: /proc). Two suites
-# at once slow each other and fail on timeouts they would not meet alone.
+# at once slow each other and fail on timeouts they would not meet alone. A run of this user that holds or waits in the queue of the whole-suite runs
+# (lib/suite_queue.sh) is not reported as an unexplained run: the queue names it (the line of the wait: the holder, the place), and the run that waits is served when
+# the holder's suite has ended. Its processes (a busy mark of the holder, the tests/run.sh below its shell) are left out here.
 other_runs_warning() {
-  local rp mins=${QARGI_ACTIVE_MINUTES:-10} f b pid d line p cwd common anc q
+  local rp mins=${QARGI_ACTIVE_MINUTES:-10} f b pid d line p cwd common anc q a qp
   rp=$(readlink -f -- "$REPO" 2>/dev/null) || rp=$REPO
   case $mins in ''|*[!0-9]*) mins=10;; esac
+  qp=" $(python3 -I "$SQ_PY" pids --state "$DA_STATE" 2>/dev/null | tr -s '[:space:]' ' ') "
   for f in "$DA_STATE/busy/$PROJ."*.pid; do
     [ -e "$f" ] || continue
     pid=$(cat "$f" 2>/dev/null) || continue
     case $pid in ''|*[!0-9]*) continue;; esac
     kill -0 "$pid" 2>/dev/null || continue
+    [ "$pid" != "$$" ] || continue   # this run's own mark
+    case $qp in *" $pid "*) continue;; esac   # named by the queue
     b=${f##*/}; b=${b#"$PROJ".}; b=${b%.pid}
     echo "qargi: warning: another whole-suite run of $PROJ is in progress ($b, pid $pid): two suites at once slow both and can fail on timeouts; going on" >&2
   done
@@ -948,6 +963,11 @@ other_runs_warning() {
     suite_cmdline "$pid" || continue
     q=$(awk '/^PPid:/ {print $2}' "$p/status" 2>/dev/null)
     [ -z "$q" ] || ! suite_cmdline "$q" || continue   # a worker of a run counted already
+    a=$pid   # a suite that runs below the shell of a run in the queue: the queue names that run
+    while [ -n "$a" ] && [ "$a" -gt 1 ]; do
+      case $qp in *" $a "*) continue 2;; esac
+      a=$(awk '/^PPid:/ {print $2}' "/proc/$a/status" 2>/dev/null)
+    done
     cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
     [ "$(git_common "$cwd")" = "$common" ] || continue
     echo "qargi: warning: tests/run.sh is running in this repository (pid $pid, in $cwd): two suites at once slow both and can fail on timeouts; going on" >&2

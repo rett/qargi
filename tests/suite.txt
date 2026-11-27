@@ -83,7 +83,8 @@ fast | par | 300 | 29 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 6 | bash tests/test_new.sh
 full | par | 300 | 62 | bash tests/test_adopt.sh
 full | par | 480 | 243 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh lib/lib.sh lib/lead_usage.py lib/merged.py lib/owned_refs.py
-full | par | 300 | 72 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py
+# NOT a measurement on the reference machine, an estimate to be re-recorded there at the next whole run: the queue checks (ten more verifies, waits of four seconds by the queue's own clock, two verifies of one name) roughly doubled this step. On the development host the step before the queue took 69s and with it 135s (alone, one after the other); the recorded 65s of the reference machine scaled by 135/69 gives 127s, recorded as 128s in tests/durations.txt, and the budget is that plus a tenth; the timeout is raised to keep the margin.
+full | par | 420 | 141 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py lib/suite_queue.sh lib/suite_queue.py
 fast | par | 300 | 2 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 8 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 4 | bash tests/test_verify_env.sh
@@ -225,3 +226,5 @@ fast | par | 300 | 17 | python3 tests/test_rolecard.py | lib/rolecard.py lib/rol
 fast | par | 300 | 7 | python3 tests/test_run_plan.py | bin/qargi lib/run_plan.py lib/done_words.py lib/backlog_graph.py lib/role.py lib/paths.py lib/local.sh lib/jsonkind.py lib/commands.py lib/kinds/qargi-run-plan*.json docs/reference/run-plan.md tests/fixtures/run-plan/* tests/test_run_plan.py
 # The history of the whole-suite runs and review reports (lib/history.py and qargi history): 50 tests measured 5s alone in a member run (not the reference machine), most of it the verb started as a process; recorded 5s, budget ceil(5 * 1.10) = 6s.
 fast | par | 300 | 6 | python3 tests/test_history.py | bin/qargi lib/history.py lib/jsonkind.py lib/paths.py lib/commands.py lib/help.py lib/kinds/qargi-history*.json docs/reference/history.md tests/test_history.py
+# The queue of the whole-suite runs (lib/suite_queue.py, qargi suite): 27 tests measured 11s alone on the development host (not the reference machine) (a poll of 0.02s between helper processes; no fixed sleep); budget +10%.
+fast | par | 300 | 13 | python3 tests/test_suite_queue.py | bin/qargi lib/suite_queue.py lib/suite_queue.sh lib/suite.sh lib/lane.py lib/jsonkind.py lib/commands.py lib/help.py lib/guard.py lib/kinds/qargi-suite-queue.json docs/reference/suite-queue.md tests/test_suite_queue.py

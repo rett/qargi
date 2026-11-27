@@ -11,13 +11,13 @@
    "kind": "qargi-history",
    "status": "draft",
    "schema": 1,
-   "sha256": "3c77d36056b0ad1a610c9355523de7a63678e0e56060bbe3710d88734af354f3"
+   "sha256": "2f47c4f68a3939b1f309c3843e426792e543e17aac2ec2c677f18437c1cac5da"
   },
   {
    "kind": "qargi-history-entry",
    "status": "draft",
    "schema": 1,
-   "sha256": "545495e772c50b4f5c50c039fb2d3b3b8bc5b2a91f2c546cc9c90fd020480ef1"
+   "sha256": "29e3c67c1da041b610096d3457d4b7a370154faec0ec4c944cac98402202783e"
   },
   {
    "kind": "qargi-local-list",
@@ -54,6 +54,12 @@
    "status": "draft",
    "schema": 1,
    "sha256": "83e4d839fa23b1cbc5ee855d22deaf6e6309a9709a5d28ef383d8afe20726baa"
+  },
+  {
+   "kind": "qargi-suite-queue",
+   "status": "draft",
+   "schema": 1,
+   "sha256": "d895c0cb8d61985af264ad7b09130dd47afb712514c66ef9e74908d28330c086"
   }
  ]
 }

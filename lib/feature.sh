@@ -16,8 +16,11 @@
 #                                                  local only, takes --plan T --approved W. A detached branch never meets develop, master,
 #                                                  release, hotfix or feature branches: every merge between them is refused.
 #   feature.sh status NAME [--project P]
-#   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W]
-#                                                  the whole suite on the feature's head (the checkpoint before finishing). With the answer
+#   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W] [--queue-wait SECONDS]
+#                                                  the whole suite on the feature's head (the checkpoint before finishing). Before its suite starts it waits its
+#                                                  turn in the queue of the whole-suite runs (lib/suite_queue.sh: one slot for each user, first in, first out; the wait
+#                                                  is not in the seconds of the suite and is recorded in the history as queue_wait_s); --queue-wait bounds it, and at the
+#                                                  bound the run is refused as suite-queue-busy with nothing run or recorded. With the answer
 #                                                  verify.environment the suite starts through lib/suite_env.py; a part of it that cannot be
 #                                                  applied refuses the run and prints a token (also when the run is refused after a passing
 #                                                  attempt), and PARTS (signals, fds, tty, cpu) waives the refused parts for this run only
@@ -44,11 +47,12 @@
 verb=${1:-}; shift || true
 # shellcheck disable=SC2034  # QARGI_VERB is read by refuse and notice (lib/lib.sh): the verb of the contract line of a refusal
 QARGI_VERB="feature $verb"
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET='' DRY_RUN=''
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET='' DRY_RUN='' QUEUE_WAIT=''
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
     --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
+    --queue-wait) need_val "$1" $#; QUEUE_WAIT=$2; case $QUEUE_WAIT in ''|*[!0-9]*) usage_die "--queue-wait takes a whole number of seconds (0 refuses at once when the slot is not free)";; esac; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;; --dry-run) DRY_RUN=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
@@ -63,6 +67,7 @@ case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || 
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
 [ -z "$WAIVE_SET" ] || [ "$verb" = verify ] || usage_die "--waive-environment belongs to feature verify"
+[ -z "$QUEUE_WAIT" ] || [ "$verb" = verify ] || usage_die "--queue-wait belongs to feature verify"
 [ -z "$DRY_RUN" ] || [ "$verb" = finish ] || usage_die "--dry-run belongs to feature finish"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
@@ -395,22 +400,25 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     suite_env_prepare "qargi feature verify $NAME_ARG" "$BR" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin verify "$NAME_ARG"   # from here to the end of the verb, the wait for the slot included: a second verify of this name sees it (busy_same_refuse)
     worktree "$h"
-    suite_env_claim_now   # the waiver is used here, after the worktree and before the log (a refusal above spends nothing)
+    hold_begin "$NAME_ARG"   # the lease is kept while the run waits its turn, too
+    other_runs_warning
+    squeue_acquire "feature verify" "$NAME_ARG" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
+    suite_env_claim_now   # the waiver is used here, after the worktree and the slot and before the log (a refusal above spends nothing)
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    other_runs_warning
-    hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
-    t0=$SECONDS
+    t0=$SECONDS   # after the wait: the seconds of the record are the suite's
     history_prepare "feature verify" "$NAME_ARG" "$BR" "$h"
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
-    busy_end; hold_end
     suite_env_settle
     history_end "$res"
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$BR")$(suite_env_note "$BR")"
     [ "$res" = pass ] || suite_failure_report
+    squeue_release   # last: the log, the gate list and the reports of the launcher are named by the feature, and the next run of this name rewrites them as soon as it has the slot
+    busy_end; hold_end
     [ "$res" = pass ];;
   finish)
     if [ -z "$DRY_RUN" ]; then marshal_gate "$NAME_ARG"

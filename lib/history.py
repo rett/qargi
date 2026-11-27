@@ -350,7 +350,7 @@ def suite_entry(project, a, state=None):
     entry = {"schema": SCHEMA, "kind": ENTRY_KIND, "entry_kind": "suite", "id": eid, "project": project, "time": ended,
              "verb": a.verb, "name": a.name, "branch": a.branch, "head": a.head, "tree": a.tree, "command": a.command,
              "environment_id": a.env_id or None, "gates": gates_of(a.gates), "result": a.result, "started": a.started, "ended": ended,
-             "seconds": a.seconds, "failing_tests": names[:MAX_FAILING], "failing_total": len(names),
+             "seconds": a.seconds, "queue_wait_s": max(getattr(a, "queue_wait_s", 0), 0), "failing_tests": names[:MAX_FAILING], "failing_total": len(names),
              "load_start": a.load_start if a.load_start and LOAD_RE.match(a.load_start) else None, "load_end": load_average(),
              "attempt": 1, "log": keep_log(eid, a.log, state)}
 
@@ -420,7 +420,7 @@ def table(entries):
     return "\n".join("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip() for r in rows) + "\n"
 
 
-SHOW_ORDER = ("id", "entry_kind", "project", "time", "verb", "name", "branch", "head", "tree", "result", "attempt", "started", "ended", "seconds",
+SHOW_ORDER = ("id", "entry_kind", "project", "time", "verb", "name", "branch", "head", "tree", "result", "attempt", "started", "ended", "seconds", "queue_wait_s",
               "load_start", "load_end", "command", "environment_id", "log", "run", "slug", "verdict", "report_sha256", "base", "base_sha", "role",
               "class", "runtime", "model", "vendor", "tests_run")
 
