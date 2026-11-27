@@ -168,6 +168,11 @@
             "x-when": "entry_kind is suite",
             "description": "Whole seconds of the run, as the per-branch record of the run has them."
           },
+          "queue_wait_s": {
+            "type": "integer",
+            "x-when": "entry_kind is suite",
+            "description": "Whole seconds, rounded up, that the run waited in the queue of the whole-suite runs (`qargi suite status`) before its suite started; 0 when it did not wait. Not counted in `seconds`, and an entry written before the queue has no such field."
+          },
           "failing_tests": {
             "type": "array",
             "items": {

@@ -2,7 +2,7 @@
 """The writers of the history (lib/history.py): what feature verify, release verify (lib/gitflow.sh) and review check (lib/review.sh) call to append an entry.
 
   history_write.py suite  --project P --verb V --name N --branch B --head H --tree T --command=C [--env-id=E] --result R --started S --seconds N
-                          [--load-start X] [--log FILE] [--gates FILE] [--names FILE|-]
+                          [--queue-wait-s N] [--load-start X] [--log FILE] [--gates FILE] [--names FILE|-]
   history_write.py review --project P --run ID --slug S --facts FILE [--base B] [--base-sha H] [--role R] [--class C] [--runtime=R] [--model=M]
 
 An option whose value may start with a hyphen is written with `=`. The entry is built here (lib/history.py), checked against its registry file and
@@ -31,6 +31,7 @@ def write_main(argv):
     s.add_argument("--result", required=True, choices=H.RESULTS)
     s.add_argument("--started", required=True)
     s.add_argument("--seconds", required=True, type=int)
+    s.add_argument("--queue-wait-s", type=int, default=0)
     s.add_argument("--load-start", default="")
     s.add_argument("--log", default="")
     s.add_argument("--gates", default="")

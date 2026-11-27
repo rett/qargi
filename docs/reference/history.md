@@ -34,6 +34,7 @@ A **suite entry** (`entry_kind` `suite`) is added when a `feature verify` or a `
 | `gates` | each declared gate in order: `name`, `result` (`pass`, `fail`, `not run`, `covered by NAME`), `seconds` |
 | `result` | `pass`, `fail` or `interrupted` |
 | `started`, `ended`, `seconds` | UTC times, and the whole seconds the run took |
+| `queue_wait_s` | the whole seconds, rounded up, that the run waited in the queue of the whole-suite runs before its suite started (0 when it did not wait); not counted in `seconds`. An entry written before the queue has no such field |
 | `failing_tests`, `failing_total` | the failing-test lines the failure report prints (`FAIL ...`, `FAIL: ...`, `--- FAIL: ...`), each once, at most 200 (each cut at 300 characters), and how many there were |
 | `load_start`, `load_end` | the first field of `/proc/loadavg` at the start and at the end, as text (`"0.52"`: a document holds integers only), null when it cannot be read |
 | `attempt` | see above |

@@ -11,13 +11,13 @@
    "kind": "qargi-history",
    "status": "draft",
    "schema": 1,
-   "sha256": "3c77d36056b0ad1a610c9355523de7a63678e0e56060bbe3710d88734af354f3"
+   "sha256": "2f47c4f68a3939b1f309c3843e426792e543e17aac2ec2c677f18437c1cac5da"
   },
   {
    "kind": "qargi-history-entry",
    "status": "draft",
    "schema": 1,
-   "sha256": "454ed4782cbdb36459791f79e98a7deba12c650838c29b44de1178c07cc155a5"
+   "sha256": "29e3c67c1da041b610096d3457d4b7a370154faec0ec4c944cac98402202783e"
   },
   {
    "kind": "qargi-local-list",

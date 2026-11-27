@@ -125,6 +125,7 @@ compares them with that page.
 | [`runtime-drift`](#runtime-drift) | state | 1 | live | A run starts on the runtime it was prepared for |
 | [`runtime-signin-expiring`](#runtime-signin-expiring) | state | 1 | live | A member run starts only when its private copy of the sign-in outlasts the run |
 | [`lane-busy`](#lane-busy) | state | 1 | live | A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then |
+| [`suite-queue-busy`](#suite-queue-busy) | suite-queue | 1 | live | A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out |
 | [`verify-env-invalid`](#verify-env-invalid) | verify-environment | 1 | live | The verify.environment answer is a valid declaration |
 | [`verify-env-change-unapproved`](#verify-env-change-unapproved) | verify-environment | 1 | live | A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted |
 | [`verify-env-cpu-no-systemd-run`](#verify-env-cpu-no-systemd-run) | verify-environment | 1 | live | With the cpu part on, the suite runs in a scope made by systemd-run |
@@ -882,6 +883,17 @@ compares them with that page.
 - Fields: `name` (label), `lock` (path), `wait` (count), `holder` (name), `age` (count).
 - Message: `the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded`
 - Next, for a lead: start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again
+
+## Class suite-queue
+
+### suite-queue-busy
+
+- Rule: A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out.
+- Why: two whole-suite runs of one user never overlap on a host, so a run waits for the slot of the one before it; a bound (--queue-wait SECONDS) lets a script or a supervisor stop waiting instead of holding its own verb for hours, and the refusal names the run that holds the slot so the wait is explained.
+- Exit 1, live.
+- Fields: `verb` (verb), `holder` (name), `waited` (count).
+- Message: `the suite queue is busy: {holder} holds the slot, and the wait of {waited} s reached --queue-wait`
+- Next, for a lead: qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt
 
 ## Class verify-environment
 

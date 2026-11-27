@@ -106,6 +106,10 @@ SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.
                    "Any gate or test command may print the lines that are named, at the start of a line: a failing step is a line matching ^FAILED: (the step follows); a failing test is a line "
                    "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
                    "A command that prints none shows its last lines instead.")
+QUEUE_WAIT_OPT = opt("--queue-wait", "wait at most SECONDS in the queue of the whole-suite runs (a whole number; without the option the wait has no bound; 0 refuses at once when the slot is not free): at the bound the run is refused as suite-queue-busy, exit 1, naming the holder, with nothing run, recorded or counted as an attempt", "SECONDS", "seconds")
+QUEUE_NOTE = ("Whole-suite runs of one user never overlap on a host: before its suite starts the run waits in a queue, first in, first out (a run of qargi feature verify or qargi release verify takes the one slot while its suite runs and not "
+              "for the rest of the verb), and prints one line on standard error naming the holder (project, verb, name, how long) and its own place, again only when one of them changes. The seconds it waited are not in the seconds of the suite; "
+              "they are the queue_wait_s of its entry in the history. --queue-wait SECONDS bounds the wait. A run whose verb is killed frees the slot at once.")
 WAIVE_ENV_OPT = opt("--waive-environment", "run once without these parts of verify.environment, which a refusal named (comma separated: signals, fds, tty, cpu; never env); needs --plan and --approved", "PARTS")
 VERIFY_ENV_ANSWER = ("verify.environment (an object, or null for off) is the environment the whole-suite runs of feature verify and release verify start under: "
                      "fds (close or ci-like), ci_fds, cpu_quota (null, max or N%), env_pass (names taken from the caller) and env_set (names and values); an invalid declaration refuses with verify-env-invalid and the line that is wrong. "
@@ -135,7 +139,7 @@ GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {n
               "A feature gate may name a release gate in covered_by when that gate's command runs the same check: release verify then lists the gate as covered by it and does not run it "
               "(its result is 'covered by NAME' when NAME passed, 'not run' when NAME failed or was not reached); feature verify still runs it. The name must be a release gate.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
-                   "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
+                   "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux); a run of this user that holds or waits in the queue of the whole-suite runs is named by the queue (below), not warned about.")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
             "a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because "
             "a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb.")
@@ -414,8 +418,8 @@ COMMANDS = {
                                 "a run that is cleaned or whose directory is gone does not count. " + FLOW_UNREACHABLE_NOTE)),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
                            desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
-            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT, WAIVE_ENV_OPT, PLAN, APPROVED],
-                           desc=GATES_NOTE + " " + ENV_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE,
+            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT, WAIVE_ENV_OPT, QUEUE_WAIT_OPT, PLAN, APPROVED],
+                           desc=GATES_NOTE + " " + ENV_NOTE + " " + OTHER_RUNS_NOTE + " " + QUEUE_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE,
                            examples=["qargi feature verify login", 'qargi feature verify login --waive-environment cpu --plan TOKEN --approved "go ahead"']),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT, DRY],
@@ -871,14 +875,14 @@ COMMANDS = {
                                "as '[done] NAME (WHO, TIME, evidence: TEXT)' or '[pending] NAME (WHO): COMMAND', the done ones first and the pending ones last; a pending step of the owner reads "
                                "'waits for the owner: run COMMAND', and a step that needs evidence says so. qargi release step marks one done; the list is kept in a file under the state directory.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")],
-                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name"), WAIVE_ENV_OPT, PLAN, APPROVED],
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name"), WAIVE_ENV_OPT, QUEUE_WAIT_OPT, PLAN, APPROVED],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " " + ENV_NOTE + " "
                                  "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
                                  "and warns on standard error, naming each job whose name and id match no declared gate name, is not listed in a gate's ci_jobs and is not listed in the optional answer ci.not_gates (the jobs that are aggregate or publish jobs and not gates). "
                                  "A job a gate lists in ci_jobs is reported as a note, covered by that gate. With no gate declared it prints one note naming the jobs instead of a warning each. "
                                  "A name listed in ci_jobs or ci.not_gates that no workflow has is a warning. A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
                                  "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
-                                 "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+                                 "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + QUEUE_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"),
                          opt("--record", "journal the commits made with git on the branch, and say whether they are inside the cut: the lead's, no plan, no token, no approval; exclusive with --push, --plan and --approved"),

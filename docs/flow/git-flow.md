@@ -91,7 +91,10 @@ refusal changes nothing.
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
    current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
-   failed one ends with the failing tests and the path of the log.
+   failed one ends with the failing tests and the path of the log. Whole-suite runs of one user never overlap on a host: before its suite
+   starts `verify` (and `release verify`) waits its turn in a first-in, first-out queue, prints one line naming the holder and its place when
+   they change, and records the wait as `queue_wait_s` in the history (it is not in the seconds of the suite); `--queue-wait SECONDS` bounds
+   the wait and refuses at the bound with `suite-queue-busy`.
    The command `verify` runs is the project's `test_command` (for a release, `release.test_command` when set). A project may instead declare
    **gates**, the answer `gates`: an ordered list of `{"name": "...", "command": "...", "tier": "feature" | "release"}` (the command is a
    command line or a list of words, as `test_command`; names are unique and non-empty; `qargi project set` and `project validate` check

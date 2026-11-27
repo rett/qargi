@@ -6,8 +6,9 @@ a moment longer. The slot is a kernel lock (flock) on a file of the state direct
 (mode 700; every file mode 600, advisory only: the flock stays the authority):
 
   lock                      the file the flock is taken on. The shell that runs the suite opens it and keeps the descriptor for exactly that long (lib/suite_queue.sh),
-                            so the slot is freed by the death of that shell, whatever way it dies, and a suite that outlives it does not keep the slot (the shell
-                            closes the descriptor for the suite).
+                            and the lock is the kernel's, so no run can leave it held: it is freed when the last process that has the descriptor ends, whatever way
+                            it ends. That is the shell and the subshell that waits for the suite; what the suite starts (an exec) never has the descriptor, so a
+                            daemon a test leaves behind cannot keep the slot. A verb that is killed while its suite runs leaves the slot taken until that suite ends.
   holder.json               the record of the holder, written atomically (a new file renamed over it) once the lock is held and removed before it is let go:
                             {schema, pid, start, project, verb, name, head, started}. `start` is the process start token (field 22 of /proc/PID/stat), so a pid that was
                             reused is not taken for the holder; pid is the shell that holds the descriptor. A record whose process is gone is ignored.
@@ -26,7 +27,7 @@ directory only their user can write, but every field read from them is cut to pl
                                                         carry it, and this command stops when it is gone. While it waits it prints one line on standard error naming
                                                         the holder and the position, again only when one of them changes. Exit 0 (taken), 4 (the bound ran out;
                                                         nothing was taken or left behind), 3 (the owner is gone), 1 (an error), 2 (a wrong call). RESULT gets
-                                                        `status=ok|busy`, `waited=SECONDS` (whole seconds, rounded up, 0 when it did not have to wait) and, for busy,
+                                                        `status=ok|busy`, `waited=SECONDS` (whole seconds, rounded up, 0 when it did not have to wait; rounded down for busy) and, for busy,
                                                         `holder=TEXT`.
   suite_queue.py release --state DIR --owner PID        remove the record of the holder and the waiter file of OWNER (the shell then closes its descriptor)
   suite_queue.py status --state DIR [--json]            the slot, its holder and the waiters in the order of the queue; with --json one document of the draft kind
@@ -214,10 +215,13 @@ def describe(d, ahead, now=None):
     """The one line of the wait: the holder and the position."""
     now = now or time.time()
     rec = live_holder(d)
+    gone = read_holder(d)
     if rec and rec["started"] is not None:
         who_ = "holder is %s (running %s)" % (holder_text(rec), age_text(now - rec["started"]))
     elif rec:
         who_ = "holder is %s" % holder_text(rec)
+    elif lock_held(d) and gone:
+        who_ = "holder is %s, whose verb is gone (its suite still holds the slot)" % holder_text(gone)
     elif lock_held(d):
         who_ = "holder is not recorded"
     else:
@@ -273,7 +277,7 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
                 shown = key
             elapsed = clock() - t0
             if bound is not None and elapsed >= bound:
-                return "busy", int(math.ceil(elapsed)), holder_text(rec) if rec else "unknown"
+                return "busy", int(elapsed), holder_text(rec) if rec else "unknown"      # whole seconds waited, rounded down: never less than the bound
             time.sleep(poll if bound is None else max(min(poll, bound - elapsed), 0.005))
     finally:
         try:

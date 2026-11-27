@@ -37,6 +37,7 @@ State (`state/`), what the commands write as they run:
 | `finish-intent/` | the intent of a `feature finish` or `release finish`, so a re-run after a death completes it |
 | `conflicts/` | the kept worktree of a merge that conflicted, to resolve and resume |
 | `suite-logs/` | the last whole-suite log and gate list of each project and branch |
+| `suite-queue/` | the queue of the whole-suite runs: the lock the slot is a `flock` on, the record of the holder and a file for each waiter (`lib/suite_queue.py`) |
 | `ref-journal.jsonl` | recorded lead branch moves used by the snapshot comparison acceptance rules |
 | `features/`, `marshal/` | the marshal's local records, and per project its switch and trusted signers |
 | `sessions.json` | the tracker of cloud sessions (role, profile, model, effort, state) |

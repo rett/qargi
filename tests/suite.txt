@@ -83,7 +83,8 @@ fast | par | 300 | 29 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 6 | bash tests/test_new.sh
 full | par | 300 | 62 | bash tests/test_adopt.sh
 full | par | 480 | 243 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh lib/lib.sh lib/lead_usage.py lib/merged.py lib/owned_refs.py
-full | par | 300 | 72 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py
+# The queue of the whole-suite runs added about 58s to the 60s this step took alone on the development host (118s measured): nine more verifies and a wait of two seconds by the queue's own clock. Budget and duration are scaled by the same ratio (65s to 128s), plus 10%; the timeout is raised to keep the margin.
+full | par | 420 | 141 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py lib/suite_queue.sh lib/suite_queue.py
 fast | par | 300 | 2 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 8 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 4 | bash tests/test_verify_env.sh

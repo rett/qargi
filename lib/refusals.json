@@ -436,6 +436,16 @@
       "message": "{count} run(s) of {branch} have no passing verify: {runs}",
       "next": {"lead": "run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed", "host": "run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed"}
     },
+    "suite-queue-busy": {
+      "rule": "A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out",
+      "why": "two whole-suite runs of one user never overlap on a host, so a run waits for the slot of the one before it; a bound (--queue-wait SECONDS) lets a script or a supervisor stop waiting instead of holding its own verb for hours, and the refusal names the run that holds the slot so the wait is explained",
+      "class": "suite-queue",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "holder": "name", "waited": "count"},
+      "message": "the suite queue is busy: {holder} holds the slot, and the wait of {waited} s reached --queue-wait",
+      "next": {"lead": "qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt", "host": "qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt"}
+    },
     "methodology-no-flow": {
       "rule": "A verb of the git-flow shape runs only on a project whose methodology has that flow",
       "why": "the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there; a methodology whose flow cannot be read is not run as git-flow either, because that would be a guess",

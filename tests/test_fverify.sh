@@ -202,5 +202,86 @@ if [ -d /proc/$$ ]; then
   [ $rc = 1 ] && [ ! -s "$T/gone.err" ] && ok "suite_cmdline of a pid that is gone: status 1, nothing on standard error" || no "gone pid rc=$rc: $(cat "$T/gone.err")"
 fi
 
+# --- 5. the queue of the whole-suite runs: one slot for each user, first in, first out (lib/suite_queue.py)
+# A tiny fake suite: it says it started (its pid, one line of FAKE_STARTS), then waits, bounded, for the file FAKE_GO. No fixed sleep decides what the test sees: it polls for
+# the lines and the files the runs write.
+SQ="python3 -I ${DA%/bin/qargi}/lib/suite_queue.py"
+printf '#!/bin/bash\necho "$$" >> "$FAKE_STARTS"\n for _ in $(seq 1500); do [ -e "$FAKE_GO" ] && break; sleep 0.02; done\n' > "$T/fake.sh"
+setcmd "bash $T/fake.sh"
+nstarts() { if [ -f "$T/starts" ]; then wc -l < "$T/starts"; else echo 0; fi; }
+started() { [ "$(nstarts)" -ge "$1" ]; }
+qstatus() { $SQ status --state "$T/s" --json; }
+waited_for() { qstatus | jq -e --argjson n "$1" '.waiting[0].waiting_seconds >= $n' >/dev/null 2>&1; }       # the first waiter has waited N seconds, by the queue's own clock
+no_waiters() { [ "$(qstatus | jq '.waiting | length')" = 0 ]; }
+reap() { # PID: waits, bounded, for a background verb; its status in rc_ (KILLED when it had to be stopped)
+  local i
+  for i in $(seq 1200); do kill -0 "$1" 2>/dev/null || break; sleep 0.05; done
+  if kill -0 "$1" 2>/dev/null; then kill -9 "$1" 2>/dev/null; rc_=KILLED; else wait "$1"; rc_=$?; fi
+}
+for n in qa qb qc qd; do $F start $n >/dev/null 2>&1; task "i$n"; $F merge $n "agent/i$n" >/dev/null 2>&1; done
+rm -f "$T/starts" "$T/go"
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qa > "$T/qa.out" 2>&1 & pa=$!
+wait_until 'started 1' 30 && ok "the first verify's suite is running" || no "the first suite did not start: $(cat "$T/qa.out")"
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qb > "$T/qb.out" 2>&1 & pb=$!
+on_line() { grep -q '^qargi: suite queue: position 1, holder is app feature verify qa (running ' "$T/qb.out"; }
+wait_until on_line 30 && ok "a second verify, started while the first's suite runs, waits and prints the holder and its place" || no "no queue line: $(cat "$T/qb.out")"
+wait_until 'waited_for 2' 30 && ok "it has waited two seconds by the queue's clock" || no "no waiter: $(qstatus)"
+doc=$(qstatus)
+{ [ "$(nstarts)" = 1 ] && jq -e --argjson p "$pa" '.state == "held" and .holder.pid == $p and .holder.project == "app" and .holder.verb == "feature verify" and .holder.name == "qa" and (.waiting | length) == 1
+    and .waiting[0].position == 1 and .waiting[0].name == "qb" and .waiting[0].verb == "feature verify"' <<<"$doc" >/dev/null; } \
+  && ok "its suite has not started; the queue names the holder and the waiter" || no "queue while waiting: starts=$(nstarts) $doc"
+! grep -q 'warning: another whole-suite run' "$T/qb.out" && ok "the holder is named by the queue, not warned about as an unexplained busy run" || no "busy warning: $(cat "$T/qb.out")"
+touch "$T/go"
+reap "$pa"; ra=$rc_; reap "$pb"; rb=$rc_
+{ [ "$ra" = 0 ] && [ "$rb" = 0 ] && grep -q '^full suite: pass' "$T/qa.out" && grep -q '^full suite: pass' "$T/qb.out" && [ "$(nstarts)" = 2 ]; } \
+  && ok "both pass, one after the other" || no "after go: ra=$ra rb=$rb starts=$(nstarts): $(cat "$T/qa.out" "$T/qb.out")"
+{ [ "$(grep -c 'suite queue:' "$T/qb.out")" = 1 ] && ! grep -q 'suite queue:' "$T/qa.out"; } && ok "the line is printed once while nothing changes, and not at all by the run that did not wait" || no "queue lines: $(cat "$T/qa.out" "$T/qb.out")"
+{ [ "$(hq '[.[] | select(.name == "qa")] | length')" = 1 ] && [ "$(hq '[.[] | select(.name == "qb")] | length')" = 1 ] && [ "$(hq '.[] | select(.name == "qa") | .queue_wait_s')" = 0 ]; } \
+  && ok "both runs are in the history, the first with queue_wait_s 0" || no "history: $(tail -n 2 "$HF")"
+qw=$(hq '.[] | select(.name == "qb") | .queue_wait_s'); sec=$(hq '.[] | select(.name == "qb") | .seconds'); rsec=$(jq -r .seconds "$T/s/releases/app-feature_qb.json")
+{ [ "$qw" -ge 2 ] && [ "$sec" -lt "$qw" ] && [ "$rsec" -lt "$qw" ]; } \
+  && ok "the second records queue_wait_s $qw, which is not in its seconds ($sec in the history, $rsec in the record of the branch)" || no "queue_wait_s=$qw seconds=$sec record=$rsec"
+jq -e '.queue_wait_s | type == "number"' <<<"$(hq '.[] | select(.name == "qb")')" >/dev/null && ok "queue_wait_s is a JSON integer of the entry" || no "queue_wait_s type"
+{ [ "$(stat -c %a "$T/s/suite-queue")" = 700 ] && [ "$(ls "$T/s/suite-queue")" = lock ] && [ "$(stat -c %a "$T/s/suite-queue/lock")" = 600 ]; } \
+  && ok "nothing but the lock file is left in the queue directory (mode 700), and the status says free" || no "queue directory: $(ls -la "$T/s/suite-queue")"
+[ "$(qstatus | jq -r '.state')" = free ] || no "status after: $(qstatus)"
+# --queue-wait: the bound ends the wait with a refusal and records nothing
+rm -f "$T/starts" "$T/go"
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qc > "$T/qc.out" 2>&1 & pc=$!
+wait_until 'started 1' 30 || no "the holder did not start: $(cat "$T/qc.out")"
+nh=$(hq 'length')
+out=$($F verify qd --queue-wait 0 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '"code":"suite-queue-busy"' <<<"$out" && grep -q '"exit":1' <<<"$out" && grep -q '"verb":"feature verify"' <<<"$out" \
+    && grep -q 'qargi: refused \[suite-queue-busy\] the suite queue is busy: app feature verify qc holds the slot, and the wait of 0 s reached --queue-wait' <<<"$out"; } \
+  && ok "--queue-wait 0 refuses at once with suite-queue-busy (exit 1), naming the holder and the seconds waited" || no "queue-wait 0 rc=$rc: $out"
+{ [ "$(hq 'length')" = "$nh" ] && [ ! -e "$T/s/releases/app-feature_qd.json" ] && [ ! -e "$T/s/suite-logs/app.feature-qd.log" ] && [ "$(nstarts)" = 1 ] && no_waiters && [ ! -e "$T/s/busy/app.verify.qd.pid" ]; } \
+  && ok "the refusal recorded nothing: no history entry, no record, no log, no waiter left, nothing run" || no "after the refusal: $(tail -n 1 "$HF") $(ls "$T/s/suite-queue")"
+out=$($REL verify 0.9.3 --queue-wait 0 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '"code":"suite-queue-busy"' <<<"$out" && grep -q '"verb":"release verify"' <<<"$out" && [ "$(hq 'length')" = "$nh" ]; } \
+  && ok "release verify --queue-wait 0 is refused the same way, with nothing recorded" || no "release queue-wait 0 rc=$rc: $out"
+$F verify qd --queue-wait 2>/dev/null; r1=$?; $F verify qd --queue-wait soon >/dev/null 2>&1; r2=$?; $F status qd --queue-wait 1 >/dev/null 2>&1; r3=$?; $REL status 0.9.3 --queue-wait 1 >/dev/null 2>&1; r4=$?
+[ "$r1$r2$r3$r4" = 2222 ] && ok "--queue-wait needs a whole number and belongs to the two verify verbs (exit 2)" || no "usage errors: $r1 $r2 $r3 $r4"
+touch "$T/go"; reap "$pc"
+[ "$rc_" = 0 ] && ok "the holder went on to pass" || no "holder rc=$rc_: $(cat "$T/qc.out")"
+$F verify qd >/dev/null 2>&1
+[ "$(hq '[.[] | select(.name == "qd")] | map(.attempt) | join(",")')" = 1 ] && ok "the refused run counted no attempt: the one that ran is attempt 1" || no "attempts of qd: $(hq '[.[] | select(.name == "qd")]')"
+# a waiter that is killed leaves nothing in the way; a holder that is killed leaves no stale lock, but its suite is still running, so the slot stays taken until that suite ends
+rm -f "$T/starts" "$T/go"
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qa > "$T/qa.out" 2>&1 & pa=$!
+wait_until 'started 1' 30 || no "the holder did not start: $(cat "$T/qa.out")"
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qb > "$T/qb.out" 2>&1 & pb=$!
+wait_until on_line 30 || no "no queue line: $(cat "$T/qb.out")"
+kill -9 "$pb"; wait "$pb" 2>/dev/null
+wait_until no_waiters 30 && ok "a waiter killed with SIGKILL is no longer in the queue" || no "the dead waiter stays: $(qstatus)"
+kill -9 "$pa"; wait "$pa" 2>/dev/null
+FAKE_STARTS=$T/starts FAKE_GO=$T/go $F verify qc > "$T/qc.out" 2>&1 & pc=$!
+on_gone() { grep -q '^qargi: suite queue: position 1, holder is app feature verify qa, whose verb is gone' "$T/qc.out"; }
+wait_until on_gone 30 && ok "a holder killed with SIGKILL: its suite still runs, so the next verify waits, and the line says whose verb is gone" || no "no line for a killed holder: $(cat "$T/qc.out")"
+{ [ "$(nstarts)" = 1 ] && jq -e '.state == "held" and .holder == null and (.waiting | length) == 1 and .waiting[0].name == "qc"' <<<"$(qstatus)" >/dev/null; } && ok "nothing overlaps: the second suite has not started, and the queue shows the lock held with its waiter" || no "orphaned holder: starts=$(nstarts) $(qstatus)"
+touch "$T/go"; reap "$pc"
+{ [ "$rc_" = 0 ] && [ "$(nstarts)" = 2 ] && grep -q '^full suite: pass' "$T/qc.out"; } && ok "the slot is free when the orphaned suite has ended, and the waiter then runs and passes" || no "qc rc=$rc_ starts=$(nstarts): $(cat "$T/qc.out")"
+fake_alive() { local p; while read -r p; do kill -0 "$p" 2>/dev/null && return 0; done < "$T/starts"; return 1; }
+wait_until '! fake_alive' 30 && ok "no fake suite is left running" || no "a fake suite is still running"
+
 [ "$fail" = 0 ] && echo "all fverify tests passed"
 exit "$fail"
