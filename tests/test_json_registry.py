@@ -5,6 +5,7 @@
   2. a fixture marked valid does not validate against the live registry, one marked invalid validates or fails by another rule than the one named,
      a fixture breaks an `x-open` enum (a word outside it is no break), or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
   3. a kind has no v<schema> directory, a rule that applies to the kind has no broken file, or a file of the directory is in no cases.json;
+     points 2, 3 and 5 hold for each older v directory too, against the registry.json frozen in it (a reader of an old integer keeps qualifying); point 4 reports an older directory with no frozen registry;
   4. lib/kinds/KIND.json differs from the frozen KIND/vN/registry.json by more than R-J3 allows (a field removed or renamed, a type changed, an enum
      word lost, added to a closed enum, or a null added to any enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
   5. a field of the live registry appears in no valid fixture;
@@ -555,10 +556,27 @@ class Lint:
                 self.fail(7, "%s is marked export-ignore (%s): the release archive would not hold it" % (name, value))
 
     def kind(self, kind, reg):
+        """The live directory of the kind (points 2 to 5), then each older v directory against the registry file frozen in it (points 2, 3 and 5)."""
+        self.fixtures(kind, reg, reg["schema"], live=True)
+        kdir = os.path.join(self.fix, kind)
+        for n in sorted(os.listdir(kdir)) if os.path.isdir(kdir) else []:
+            m = re.match(r"^v([0-9]+)$", n)
+            if not m or int(m.group(1)) == reg["schema"] or not os.path.isdir(os.path.join(kdir, n)):
+                continue
+            fp = os.path.join(kdir, n, "registry.json")
+            old, fs = self.J.load_registry(fp) if os.path.isfile(fp) else (None, [])
+            if old is None:
+                self.fail(4, "%s/%s/%s has no well-formed registry.json to hold its fixtures to%s" % (FIX, kind, n, ": " + fs[0].line() if fs else ""))
+            elif old["schema"] != int(m.group(1)) or old["kind"] != kind:
+                self.fail(4, "%s/%s/%s/registry.json is the registry of %s schema %s, not of this directory" % (FIX, kind, n, old["kind"], old["schema"]))
+            else:
+                self.fixtures(kind, old, int(m.group(1)), live=False)
+
+    def fixtures(self, kind, reg, schema, live):
         J = self.J
         stderr = reg["stream"] == "stderr"
-        vdir = os.path.join(self.fix, kind, "v%d" % reg["schema"])
-        rel = "%s/%s/v%d" % (FIX, kind, reg["schema"])
+        vdir = os.path.join(self.fix, kind, "v%d" % schema)
+        rel = "%s/%s/v%d" % (FIX, kind, schema)
         if not os.path.isdir(vdir):                                                                              # point 3
             self.fail(3, "%s has no directory %s" % (kind, rel))
             return
@@ -614,9 +632,11 @@ class Lint:
                     self.fail(2, "%s/%s is marked invalid and validates" % (rel, c["file"]))
                 elif set(found) != {c["rule"]}:
                     self.fail(2, "%s/%s is marked %s and breaks %s" % (rel, c["file"], c["rule"], ", ".join(found)))
-        # point 4: the frozen copy against the live registry
+        # point 4: the frozen copy against the live registry (an older directory holds its own registry: its fixtures were held to it above)
         fp = os.path.join(vdir, "registry.json")
-        if not os.path.isfile(fp):
+        if not live:
+            pass
+        elif not os.path.isfile(fp):
             self.fail(4, "%s/registry.json is missing (python3 tests/test_json_registry.py --freeze at the pin)" % rel)
         else:
             frozen, fs = J.load_registry(fp)
@@ -904,6 +924,21 @@ def self_test():
                     strip_key(d, "signer")
                     write(os.path.join(v, n), json.dumps(d, indent=1) + "\n")
         expect("a field of the registry that no valid fixture holds fails point 5", r, [5], "the field $.features[].signer appears in no valid fixture")
+        # the directories of an older integer are held to the registry frozen in them
+        r = copy_tree()
+        p = os.path.join(r, FIX, "qargi-marshal-check", "v1", "valid.json")
+        write(p, read(p).replace('"remote": "none"', '"remote": "maybe"'))
+        expect("an older valid fixture that does not validate fails point 2", r, [2], "v1/valid.json is marked valid and breaks")
+        r = copy_tree()
+        os.remove(os.path.join(r, FIX, "qargi-marshal-status", "v1", "broken", "schema-missing.json"))
+        expect("an older directory with a rule and no broken file fails point 3", r, [3], "schema-missing")
+        r = copy_tree()
+        p = os.path.join(r, FIX, "qargi-marshal-status", "v1", "cases.json")
+        write(p, read(p).replace('"expect": "valid"', '"expect": "invalid"', 1))
+        expect("an older cases.json that disagrees with its fixtures fails point 2", r, [2], "v1/")
+        r = copy_tree()
+        os.remove(os.path.join(r, FIX, "qargi-marshal-status", "v1", "registry.json"))
+        expect("an older directory with no frozen registry fails point 4", r, [4], "v1 has no well-formed registry.json")
         # point 6: a frozen copy edited in a scratch repository that has a tag
         r = copy_tree()
         for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.net", "commit", "-q", "-m", "pinned"], ["tag", "0.0.1"]):
