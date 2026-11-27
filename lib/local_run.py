@@ -597,7 +597,7 @@ def take_flock(fd, d, again=0):
     try:
         taken = SQ.try_flock(fd, again)
     except SQ.QueueError as e:
-        fail("the lock of the lane cannot be taken: %s" % e)
+        fail("lane: %s" % e)   # QueueError says what could not be done ("cannot take the lock: ..."): said once
     if not taken:
         return False
     if foreign_holder(d):
