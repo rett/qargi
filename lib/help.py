@@ -351,7 +351,8 @@ def show_json_kind(kind):
     reg = json_load(kind)
     out = [b(kind) + "  (schema %d, %s, since %s)" % (reg["schema"], reg["status"], reg["since"]), "",
            wrap("About: " + reg["about"], 2),
-           wrap("Printed by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " on " + reg["stream"] + ".", 2),
+           wrap(("Read by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " (qargi never prints it).") if reg["stream"] == "none"
+                else "Printed by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " on " + reg["stream"] + ".", 2),
            wrap("Writes: " + reg["writes"], 2), "",
            b("Fields") + "  (path, type, required or optional within its parent; [] is an array item, .* a map value)"]
     doc = reg["document"]

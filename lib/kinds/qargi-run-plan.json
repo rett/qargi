@@ -4,7 +4,7 @@
   "schema": 1,
   "status": "draft",
   "since": "0.3.10",
-  "stream": "stdout",
+  "stream": "none",
   "verbs": ["flow plan check FILE"],
   "about": "The run plan that `qargi flow plan check` reads: one feature and the task nodes that merge into it, written by a person (qargi never prints one; the checker's own document is qargi-run-plan-check). Each node names a role, the paths it may change (`scope`), the command that says it is done (`done`) and the nodes it comes after (`after`). The checker is stricter than this shape: it refuses a key that is not listed here, a role qargi does not know, a scope that is absolute or holds `..`, a `done` that reads as prose, a node id used twice, an `after` that names no node or the node itself, a cycle, and two nodes that are not ordered by `after` and whose scopes can touch the same path. A plan describes work to be done: it grants no approval and starts nothing.",
   "writes": "Nothing: the file is written by its author, and the checker only reads it.",

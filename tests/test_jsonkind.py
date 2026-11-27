@@ -331,6 +331,7 @@ class RegistryFormat(Tmp):
             "status-value": top(lambda r: r.update(status="released")),
             "since-form": top(lambda r: r.update(since="0.3")),
             "stream-value": top(lambda r: r.update(stream="file")),
+            "stream-none-pinned": top(lambda r: r.update(stream="none")),
             "history-entry": top(lambda r: r.update(history=[{"schema": 1}])),
             "history-order": top(lambda r: r.update(schema=2)),
             "history-since": top(lambda r: r["history"][0].update(since="0.3.8")),

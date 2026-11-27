@@ -5,8 +5,8 @@
   jsonkind.py check FILE|-             one registry file (- reads standard input)
   jsonkind.py validate KIND FILE|-     a document against the registry file lib/kinds/KIND.json (- reads standard input)
 
-A registry file (format 1) has an envelope of qargi's own keys (registry, kind, schema, status, since, stream, verbs, about, writes,
-history) and `document`, the shape of the document in the keyword subset that lib/provider.py reads for provider definitions: type, enum,
+A registry file (format 1) has an envelope of qargi's own keys (registry, kind, schema, status, since, stream (stdout, stderr, or none for a
+draft that a verb reads and never prints), verbs, about, writes, history) and `document`, the shape of the document in the keyword subset that lib/provider.py reads for provider definitions: type, enum,
 const, pattern, required, properties, items, additionalProperties (a shape for a map, never false) and a local $ref to $defs of the
 document. The format check adds what the subset cannot say: the type `number` does not exist (every number is an integer), a document
 names its two markers `schema` and `kind`, a field added after the pin is never required, and a reserved field may be null. The
@@ -42,7 +42,7 @@ KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 ENVELOPE = ("registry", "kind", "schema", "status", "since", "stream", "verbs", "about", "writes", "history", "document")
 STATUSES = ("pinned", "draft")
-STREAMS = ("stdout", "stderr")
+STREAMS = ("stdout", "stderr", "none")        # none: a draft kind that a verb reads and no verb prints
 TYPES = ("object", "array", "string", "integer", "boolean", "null")      # no `number`: R-J5
 SHAPE_KEYS = ("type", "enum", "const", "pattern", "required", "properties", "items", "additionalProperties", "$ref")
 ANNOTATIONS = ("description", "x-text", "x-since", "x-when", "x-reserved", "x-open", "x-ordered", "x-bound")
@@ -81,7 +81,8 @@ RULES = {
     "schema-number": "`schema` is not an integer of 1 or more",
     "status-value": "`status` is not pinned or draft",
     "since-form": "`since` is not a version of the form N.N.N",
-    "stream-value": "`stream` is not stdout or stderr",
+    "stream-value": "`stream` is not stdout, stderr or none",
+    "stream-none-pinned": "a pinned kind has `stream` stdout or stderr: none is for a draft that a verb reads and never prints",
     "history-entry": "an entry of `history` is not {schema, since, change}",
     "history-order": "`history` is not one entry per integer, ascending, ending at `schema`",
     "history-since": "`since` is not the version of the first entry of `history`",
@@ -302,7 +303,9 @@ class Format:
             if self.since is None:
                 self.add("since-form", "$.since", "%s is not a version of the form N.N.N" % q(reg["since"]))
         if "stream" in reg and reg["stream"] not in STREAMS:
-            self.add("stream-value", "$.stream", "%s is not stdout or stderr" % q(reg["stream"]))
+            self.add("stream-value", "$.stream", "%s is not stdout, stderr or none" % q(reg["stream"]))
+        elif reg.get("stream") == "none" and reg.get("status") == "pinned":
+            self.add("stream-none-pinned", "$.stream", "a pinned kind is printed on stdout or stderr: `none` is for a draft that a verb reads and never prints")
         verbs = reg.get("verbs", [])
         if "verbs" in reg and not (isinstance(verbs, list) and verbs and all(isinstance(x, str) and x.strip() and x == x.strip() for x in verbs)
                                    and len(set(verbs)) == len(verbs)):

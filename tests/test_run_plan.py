@@ -410,7 +410,7 @@ class Documents(unittest.TestCase):
         for kind in (RP.PLAN_KIND, RP.CHECK_KIND):
             reg, found = K.load_registry(K.registry_path(kind))
             self.assertEqual([x.line() for x in found], [])
-            self.assertEqual((reg["kind"], reg["schema"], reg["status"], reg["stream"]), (kind, 1, "draft", "stdout"))
+            self.assertEqual((reg["kind"], reg["schema"], reg["status"], reg["stream"]), (kind, 1, "draft", "none" if kind == RP.PLAN_KIND else "stdout"))
 
     def test_the_document_of_every_fixture_is_valid_against_its_kind(self):
         for name in sorted(os.listdir(FIX)):
@@ -600,6 +600,12 @@ class Verb(unittest.TestCase):
         rc, out, err = self.qargi("help", "json", RP.CHECK_KIND)
         self.assertEqual(rc, 0)
         self.assertIn("flow plan check FILE --json", out)
+        self.assertIn("Printed by: qargi flow plan check FILE --json on stdout", out)
+        rc, out, err = self.qargi("help", "json", "qargi-run-plan")
+        self.assertEqual(rc, 0)
+        flat = " ".join(out.split())
+        self.assertIn("Read by: qargi flow plan check FILE (qargi never prints it).", flat)
+        self.assertNotIn("Printed by", out)
 
     def test_a_coordinator_may_run_it_for_it_only_reads(self):
         env = dict(os.environ, QARGI_ACTOR="lead-1:coord:alpha:1")
