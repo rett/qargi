@@ -44,7 +44,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        real file is held from before the links are made until they are removed; a run that finds it held says so on standard error,
                        names the holder from the lane record beside the lock (lib/lane.py: .qargi-lane.json, mode 600, written atomically while the lock is held and removed
                        before it is let go: lead, run slug, the runner and the member with their process start tokens, the start time; no path, no value) and, when
-                       several runs wait, its place among them (the waiters' small files .qargi-lane-wait.PID.START, removed when the wait ends, a stale one ignored), and
+                       several runs wait, its place among them (the waiters' small files .qargi-lane-wait.PID.START, removed when the wait ends, a stale one ignored: the order they start in, for only the
+                       first waiter polls the lock and a run that finds others waiting queues behind them), and
                        waits, with no bound unless --wait SECONDS gives one (a signal ends the wait): at the bound the run is refused as lane-busy (exit 1) before its
                        attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait. The record and the
                        waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (the holder only when /proc/locks says the lock is held).
@@ -595,6 +596,17 @@ def take_flock(fd, d):
     return True
 
 
+def my_turn(d, waited, queued):
+    """May this run try the flock of the lane in directory d? Runs wait in the order they began (the waiters' files of lib/lane.py; one of a process that is gone is
+    ignored) and only the first of them polls the flock, so the lock goes to the run that has waited longest and the place a waiter prints is the order they start in.
+    waited: this run has found the lane busy; queued: it has made its waiter file (without one it polls whenever it likes). A run that has not waited yet goes ahead
+    only when nobody waits."""
+    ws = LN.waiters(d)
+    if not waited:
+        return not ws
+    return not queued or not ws or all(w["pid"] != os.getpid() for w in ws) or ws[0]["pid"] == os.getpid()
+
+
 def lock_one(path, home, runtime, sig, kind="run"):
     """Hold an exclusive flock on the lock file `path` (one of lock_files, or the one beside a private link's source): the descriptor, until it is closed. A run
     that finds it held says so (a note on standard error, with the holder from the lane record and, when several wait, its place in the queue) and waits for it,
@@ -621,7 +633,7 @@ def lock_one(path, home, runtime, sig, kind="run"):
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
                     fail("the lock file %s is not a regular file; remove it" % shown)
-                busy = not take_flock(fd, d)
+                busy = (wait != 0 and not my_turn(d, waited, waiter is not None)) or not take_flock(fd, d)    # a run that finds others waiting queues behind them
                 if busy:
                     if wait == 0:
                         raise lane_busy(home, runtime, shown, d, 0)
@@ -634,7 +646,7 @@ def lock_one(path, home, runtime, sig, kind="run"):
                         print("qargi: note: %s%s" % (LN.holder_line(d), "; you are number %d of %d waiting" % (ahead + 1, total) if total > 1 else ""), file=sys.stderr, flush=True)
                     sig.armed = True
                     try:
-                        while not take_flock(fd, d):
+                        while not (my_turn(d, True, waiter is not None) and take_flock(fd, d)):
                             if end is not None and time.monotonic() >= end:
                                 raise lane_busy(home, runtime, shown, d, wait)
                             time.sleep(LOCK_POLL)

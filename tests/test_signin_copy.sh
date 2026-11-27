@@ -610,6 +610,37 @@ PY
 { grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
   && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
 
+# the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+import lane as LN
+d = tempfile.mkdtemp(dir=sys.argv[2])
+def waiter(pid, since):
+    start = LN.token(pid)
+    with open(os.path.join(d, "%s%d.%s" % (LN.WAIT, pid, start)), "w") as f:
+        json.dump({"pid": pid, "start": start, "lead": "l", "run": "r", "runtime": "x", "since": since}, f)
+me, other = os.getpid(), os.getppid()
+print("nobody waits:", L.my_turn(d, False, False), L.my_turn(d, True, True))
+waiter(other, 1)
+print("another waits, not queued:", L.my_turn(d, False, False))
+waiter(me, 2)
+print("another waits ahead:", L.my_turn(d, True, True))
+print("no waiter file made:", L.my_turn(d, True, False))
+for n in os.listdir(d):
+    os.unlink(os.path.join(d, n))
+waiter(me, 1)
+waiter(other, 2)
+print("first in the queue:", L.my_turn(d, True, True))
+open(os.path.join(d, "%s999999.1" % LN.WAIT), "w").write("{}")                  # a process that is not there
+print("a ghost ahead is ignored:", L.my_turn(d, True, True))
+PY
+)
+{ grep -qx 'nobody waits: True True' <<<"$got" && grep -qx 'another waits, not queued: False' <<<"$got" && grep -qx 'another waits ahead: False' <<<"$got" && grep -qx 'no waiter file made: True' <<<"$got" \
+  && grep -qx 'first in the queue: True' <<<"$got" && grep -qx 'a ghost ahead is ignored: True' <<<"$got"; } \
+  && ok "the queue: a run polls the flock only as the first of the live waiters, a newcomer goes ahead only when nobody waits, a ghost waiter is ignored" || no "queue turn: $got"
+
 # --- coordination: the lane record, the holder line and the queue, --wait, local list --lanes ------------------------------------------------------
 export QARGI_LEAD=lead-one
 LREC=$MEM/.qargi-lane.json
@@ -652,6 +683,8 @@ out=$($DA local run "$CE" --wait abc 2>&1); rc=$?
 : > "$T/hold-go"; wait_until '[ -s "$T/ca.rc" ] && [ -s "$T/cb.rc" ] && [ -s "$T/cc.rc" ]' 90
 { [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
   && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
+{ [ "$CA/out/transcript" -ot "$CB/out/transcript" ] && [ "$CB/out/transcript" -ot "$CC/out/transcript" ]; } \
+  && ok "the waiters start in the order they began to wait: the one that waited longest takes the lane first (only the first polls it)" || no "queue order: $(stat -c '%n %y' "$CA/out/transcript" "$CB/out/transcript" "$CC/out/transcript")"
 out=$($DA local list --lanes 2>&1)
 grep -qE '^fakeplain +~/.fakesi-members/.qargi-run.lock +free *$' <<<"$out" && ok "local list --lanes of a free lane says free" || no "lanes free: $out"
 rm -f "$T/mode" "$T/hold-ready" "$T/hold-go" "$T/member.pid" "$T"/c?.rc
