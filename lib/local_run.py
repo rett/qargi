@@ -3072,11 +3072,11 @@ def parse(argv):
         else:
             fail("unknown option or missing value: %s" % a, 1)
     if o["timeout"] is not None:
-        if not o["timeout"].isdigit():
-            fail("--timeout: a whole number of seconds", 1)
+        if not re.fullmatch(r"[0-9]{1,9}", o["timeout"]):         # ASCII digits only: str.isdigit takes others (a superscript) that int() refuses with a traceback
+            fail("--timeout: a whole number of seconds (at most 9 digits)", 1)
         o["timeout"] = int(o["timeout"])
     if o["wait"] is not None:
-        if not o["wait"].isdigit() or len(o["wait"]) > 9:
+        if not re.fullmatch(r"[0-9]{1,9}", o["wait"]):
             fail("--wait: a whole number of seconds (0 fails at once when the lane is busy)", 1)
         o["wait"] = int(o["wait"])
     if not (o["project"] and o["runtime"] and o["class"] in CLASSES):

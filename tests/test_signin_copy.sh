@@ -680,6 +680,14 @@ out=$($DA local run "$CE" --wait 0 2>&1); rc=$?
   && ok "--wait 0 fails at once when the lane is held, without the waiting note" || no "wait 0: rc=$rc $out"
 out=$($DA local run "$CE" --wait abc 2>&1); rc=$?
 { [ "$rc" = 1 ] && grep -qF -e '--wait: a whole number of seconds' <<<"$out"; } && ok "--wait takes a whole number of seconds" || no "wait abc: rc=$rc $out"
+bad=''
+for v in '²' '٣' '1_0' ' 5' '+5' '1234567890'; do   # a digit that is not 0-9 (superscript, Arabic-Indic), an underscore, a sign, ten digits: a usage refusal, never a traceback
+  for f in --wait --timeout; do
+    out=$($DA local run "$CE" "$f" "$v" 2>&1); rc=$?
+    { [ "$rc" = 1 ] && grep -qF -e "$f: a whole number of seconds" <<<"$out" && ! grep -q Traceback <<<"$out"; } || bad="$bad [$f '$v' rc=$rc $out]"
+  done
+done
+[ -z "$bad" ] && ok "--wait and --timeout take ASCII digits only (at most nine): another digit, a sign, an underscore or ten digits is a usage refusal (exit 1), not a traceback" || no "wait and timeout digits: $bad"
 : > "$T/hold-go"; wait_until '[ -s "$T/ca.rc" ] && [ -s "$T/cb.rc" ] && [ -s "$T/cc.rc" ]' 90
 { [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
   && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
