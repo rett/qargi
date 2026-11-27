@@ -406,8 +406,9 @@ wait_until 'grep -q "waiting for it to end" "$T/t2.out"' 30
 : > "$T/refresh-go"; wait_until '[ -s "$T/t1.rc" ] && [ -s "$T/t2.rc" ]' 60
 { [ "$(cat "$T/t1.rc")" = 0 ] && [ "$(cat "$T/t2.rc")" = 0 ] && [ "$(wc -l < "$T/refresh.count")" = 1 ] && [ "$(cat "$T"/t?.out | grep -c 'refreshing the sign-in')" = 1 ] \
   && grep -q '^ACCESS=same$' "$R1/out/transcript" && grep -q '^ACCESS=same$' "$R2/out/transcript" \
+  && grep -qE '^qargi: note: holder is lead .*, run rt1, holding it for [0-9]+s$' "$T/t2.out" \
   && [ "$(jq -r '.home.private[0].refreshed' "$R1/dispatch.json")" = true ] && [ "$(jq -r '.home.private[0].refreshed' "$R2/dispatch.json")" = false ]; } \
-  && ok "two runs started together refresh once and both finish: the one that waited read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
+  && ok "two runs started together refresh once and both finish: the one that waited printed the wait note and the holder line, read the source again, found it refreshed and went on" || no "two runs: $(cat "$T"/t?.rc) $(cat "$T/t1.out" "$T/t2.out") $(cat "$T/refresh.count")"
 rm -f "$T/refresh-gate" "$T/refresh-go" "$T/mode"
 
 # a runner killed with SIGKILL while its refresh command runs: the refresh got the lock descriptor, so the lane stays held until the command ends, and the lane record names it
