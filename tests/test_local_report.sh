@@ -39,6 +39,15 @@ $DA review check "$R1/out" >/dev/null 2>&1; rc=$?; $DA review check "$R1/out" --
 { [ $rc = 1 ] && [ $rc2 = 0 ] && [ "$(jq -rs 'map(.verdict) | join(",")' "$HF")" = accept,revise,revise ]; } && ok "a revise verdict is recorded each time it is checked (exit 1 without --lead, 0 with it)" || no "revise entries: rc=$rc rc2=$rc2 $(jq -c .verdict "$HF")"
 printf '# Findings\n\nsecond\n' | $DA local report "$R1" --force >/dev/null 2>&1; $DA review check "$R1/out" >/dev/null 2>&1
 [ "$(wc -l < "$HF")" = 3 ] && ok "a report with no verdict line fails the check and leaves no entry" || no "an entry for a failed check: $(wc -l < "$HF")"
+# a member that works in the lead's own session has no QARGI_MEMBER_RUN: its check from the run's clone (or from its TMP) is a member's, so no entry is left;
+# the same check from outside, the lead's, leaves one
+unset QARGI_MEMBER_RUN
+printf '# Findings\n\nnone\n\nverdict: accept\n' | $DA local report "$R1" --force >/dev/null 2>&1
+out=$(cd "$R1/clone" && $DA review check ../out --lead 2>&1); rc=$?
+out2=$(cd "$(cat "$R1/tmpdir")" && $DA review check "$R1/out" 2>&1); rc2=$?
+{ [ $rc = 0 ] && [ $rc2 = 0 ] && grep -q "report-only run" <<<"$out" && [ "$(wc -l < "$HF")" = 3 ]; } && ok "review check from inside a run's clone or TMP without the member mark is a member's: no history entry" || no "member without mark: rc=$rc rc2=$rc2 lines=$(wc -l < "$HF") $out $out2"
+out=$(cd "$T" && $DA review check "$R1/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(wc -l < "$HF")" = 4 ]; } && ok "the same check from outside, the lead's, leaves its entry" || no "lead from outside: rc=$rc lines=$(wc -l < "$HF") $out"
 printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\n# Checked\n\nread the diff\n\nverdict: accept\n' | $DA local report "$R1" --force >/dev/null 2>&1
 out=$($DA local report "$R1" < "$MSG" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "exists already" <<<"$out"; } && ok "it does not overwrite a report" || no "overwrite: rc=$rc $out"

@@ -19,6 +19,24 @@ if [ "${1:-}" = check ] && [ -n "${QARGI_MEMBER_RUN:-}" ]; then export DA_NOSETU
 . "$(dirname "$0")/lib.sh"
 git() { command git "$@" 7>&-; }
 
+# member_call -> 0 when this call is a member's, 1 when it is the lead's. A member started by `qargi local run` carries QARGI_MEMBER_RUN; one that works in the lead's
+# own session (no local run) does not, so the call also counts as a member's when its current directory is in a run `qargi local prepare` made (the clone, OUT or the
+# run directory: marshal_refs.in_member_run) or in the TMP the lead's registry names for a run. A test that cannot be made counts as a member's: the lead-only effects
+# of a check (the lease, the history, the scrub) are skipped, never done on a doubt.
+member_call() {
+  local mrc=0 here t
+  [ -z "${QARGI_MEMBER_RUN:-}" ] || return 0
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$0")" 2>/dev/null || mrc=$?
+  [ "$mrc" = 1 ] || return 0
+  here=$(pwd -P 2>/dev/null) || return 0
+  [ -f "$DA_STATE/local-runs.jsonl" ] || return 1
+  while IFS= read -r t; do
+    t=$(readlink -m -- "$t" 2>/dev/null) && [ -n "$t" ] || continue
+    case $here in "$t"|"$t"/*) return 0;; esac
+  done < <(jq -Rr 'fromjson? | select(type == "object") | .tmpdir | strings | select(startswith("/"))' "$DA_STATE/local-runs.jsonl" 2>/dev/null)
+  return 1
+}
+
 # scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
 # The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy has none.
 # SCRUB_CMD gets the command (a JSON string or list of words), SCRUB_TRAILERS the policy, SCRUB_EXTRA the trailer keys review.reject_trailers adds to the
@@ -139,7 +157,8 @@ if [ "$verb" = check ]; then
       break;;
     esac
   done
-  if [ -z "${QARGI_MEMBER_RUN:-}" ] && [ -n "$SRUN" ] && [ -f "$SRUN/refs.before" ] && [ -f "$SRUN/ability" ]; then
+  MCALL=''; ! member_call || MCALL=1
+  if [ -z "$MCALL" ] && [ -n "$SRUN" ] && [ -f "$SRUN/refs.before" ] && [ -f "$SRUN/ability" ]; then
     reg_load
     CLASS_RUN=$SRUN
     if ! reg_has "$CLASS_RUN"; then
@@ -166,7 +185,7 @@ if [ "$verb" = check ]; then
   # The lead's check of a report-only run of its registry leaves one entry in the history of the project (lib/history.py): the facts of the report come from
   # review_check.py through a file of the state, the rest from the registry's line of the run. Evidence only: the exit status below is the check's.
   HFACTS=''
-  if [ -z "${QARGI_MEMBER_RUN:-}" ] && [ -n "${CLASS_RUN:-}" ]; then HFACTS=$(mktemp "$DA_STATE/.review-facts.XXXXXX" 2>/dev/null) || HFACTS=''; fi
+  if [ -z "$MCALL" ] && [ -n "${CLASS_RUN:-}" ]; then HFACTS=$(mktemp "$DA_STATE/.review-facts.XXXXXX" 2>/dev/null) || HFACTS=''; fi
   rc=0; QARGI_REVIEW_FACTS=$HFACTS python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
   if [ -n "$HFACTS" ]; then
     if [ -s "$HFACTS" ]; then
@@ -183,7 +202,7 @@ if [ "$verb" = check ]; then
   fi
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
   # that has patches, after the check above; a failing scrub fails the check
-  if [ -n "${QARGI_MEMBER_RUN:-}" ]; then
+  if [ -n "$MCALL" ]; then
     echo "scrub: not run (a member's structural check; the lead's check runs it)"
   elif [ "$rc" != 2 ] && [ -n "$SRUN" ] && compgen -G "$SOUT/patches/*.patch" >/dev/null && scrub_declared "$SRUN"; then
     if [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"
@@ -205,7 +224,7 @@ if [ "$verb" = save ]; then
     esac
   done
   [ -n "${SRUN%/}" ] || usage_die "usage: qargi review save RUN [--force] < MESSAGE (the member's final message on standard input)"
-  [ -z "${QARGI_MEMBER_RUN:-}" ] || die "qargi review save is the lead's: a member returns its report in its final message and the lead stores it"
+  ! member_call || die "qargi review save is the lead's: a member returns its report in its final message and the lead stores it"
   SRUN=${SRUN%/}
   [ -d "$SRUN" ] && [ ! -L "$SRUN" ] || die "$SRUN is not a run directory (a link, or no such directory): nothing was written"
   RUN=$(readlink -f -- "$SRUN") || die "no such run directory: $SRUN"
@@ -468,7 +487,7 @@ case $verb in
     # The declared take-in scrub (review.scrub, review.trailer_policy) is the lead's: it runs here, before anything is made, unless a passing `review check` recorded
     # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
     if scrub_declared "$RUN"; then
-      if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
+      if member_call; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
       elif [ "$LC_SCHEMA" != true ] && scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
       else
         text=$(scrub_run "$RUN" "$AP" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
