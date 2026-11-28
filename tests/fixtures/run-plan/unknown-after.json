@@ -1,0 +1,21 @@
+{
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "project": "demo",
+  "target_feature": "release-next",
+  "nodes": [
+    {
+      "id": "alpha",
+      "task": "Do the work of alpha",
+      "role": "build",
+      "scope": [
+        "lib/a.py"
+      ],
+      "done": "python3 tests/test_alpha.py",
+      "review_kind": "none",
+      "after": [
+        "ghost"
+      ]
+    }
+  ]
+}

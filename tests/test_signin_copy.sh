@@ -610,6 +610,79 @@ PY
 )
 { grep -q '^STOP code=1 at=2.00 replaced=True True$' <<<"$got" && grep -c 'was replaced or removed' <<<"$got" | grep -qx 1; } \
   && ok "a bounded wait is counted once: a lock file replaced during it does not start the wait again (refused as lane-busy at the second second)" || no "wait deadline: $got"
+# the end of a bound tries the lock a few more times (the last poll may have met a probe of `local list --lanes`): a lock let go during those tries is taken, one that stays
+# held is refused as lane-busy after exactly RETRIES more tries (the first try of the run made RETRIES of its own before, so the pauses are counted from the start);
+# no real sleep (the clock and the pauses of both modules are the test's own), --wait 0 tries once
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+def case(release_at, wait=2):
+    """release_at: the number of the pause of try_flock after which the competing holder lets go (None: never); the first three pauses are the first try's."""
+    path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+    first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(first, fcntl.LOCK_EX)
+    clock, pauses = [0.0], [0]
+    def poll_sleep(seconds):
+        clock[0] += seconds
+    def retry_sleep(seconds):
+        pauses[0] += 1
+        if release_at is not None and pauses[0] == release_at:
+            os.close(first)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=poll_sleep, time=time.time)
+    L.SQ.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=retry_sleep, time=time.time)
+    try:
+        L.lock_one(path, {"declared": [], "runtime": "fakeplain", "wait": wait}, "fakeplain", L.Signals())
+        return "TAKEN pauses=%d" % pauses[0]
+    except L.Stop as e:
+        return "STOP code=%d pauses=%d at=%.1f" % (e.code, pauses[0], clock[0])
+print(case(5))
+print(case(None))
+print(case(1, wait=0))
+PY
+)
+got=$(grep -v '^qargi: note:' <<<"$got")                  # the notes of the waiting run are not the result
+{ [ "$(sed -n 1p <<<"$got")" = "TAKEN pauses=5" ] && [ "$(sed -n 2p <<<"$got")" = "STOP code=1 pauses=6 at=2.0" ] && [ "$(sed -n 3p <<<"$got")" = "STOP code=1 pauses=0 at=0.0" ]; } \
+  && ok "the end of a --wait bound tries the lock three more times (taken when it is let go meanwhile, lane-busy when it is not); --wait 0 tries once" || no "retry at the bound: $got"
+
+# the first try of a run that has not waited yet is repeated as the end of a bound is: a probe of `local list --lanes` that holds the lock at that moment is let go within
+# the retries, and the run takes the lock without the note that it waits for a holder, a waiter file or the waiting state (the same fake clock and pauses); a lock that stays
+# held is waited for as before, with the note; --wait 0 still tries once
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, sys, tempfile, time, types
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+def case(release_at, wait):
+    """release_at: the number of the pause of try_flock after which the competing holder lets go (None: it keeps the lock until the poll of the wait)."""
+    path = os.path.join(tempfile.mkdtemp(dir=sys.argv[2]), ".qargi-run.lock")
+    first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(first, fcntl.LOCK_EX)
+    clock, pauses, waiting = [0.0], [0], []
+    def poll_sleep(seconds):
+        clock[0] += seconds
+        if release_at is None and clock[0] >= 0.5 and first is not None:
+            os.close(first)
+    def retry_sleep(seconds):
+        pauses[0] += 1
+        if release_at is not None and pauses[0] == release_at:
+            os.close(first)
+    L.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=poll_sleep, time=time.time)
+    L.SQ.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=retry_sleep, time=time.time)
+    home = {"declared": [], "runtime": "fakeplain", "wait": wait, "on_wait": waiting.append}
+    try:
+        fd = L.lock_one(path, home, "fakeplain", L.Signals())
+        return "TAKEN pauses=%d waiting=%s waiters=%s" % (pauses[0], [w for w in waiting if w], L.LN.waiters(os.path.dirname(path)))
+    except L.Stop as e:
+        return "STOP code=%d pauses=%d" % (e.code, pauses[0])
+print("A " + case(1, None))
+print("B " + case(3, 2))
+print("C " + case(None, None))
+print("D " + case(1, 0))
+PY
+)
+{ grep -qx 'A TAKEN pauses=1 waiting=\[\] waiters=\[\]' <<<"$got" && grep -qx 'B TAKEN pauses=3 waiting=\[\] waiters=\[\]' <<<"$got" && grep -qx 'D STOP code=1 pauses=0' <<<"$got" \
+  && grep -q '^C TAKEN pauses=3 waiting=\[' <<<"$got" && [ "$(grep -c 'holds the lock' <<<"$got")" = 1 ]; } \
+  && ok "a probe that holds the lock at the first try is let go within the retries: no waiting note, no waiter, no waiting state; a lock that stays held is still waited for (with its note), and --wait 0 tries once" || no "first try: $got"
 
 # the reader of /proc/locks (synthetic text): the device is compared with stat's as well as the inode; what cannot be compared is unknown, never held
 got=$(python3 -I - "$T/tool/lib" <<'PY' 2>&1
@@ -646,6 +719,43 @@ no device for stat: unknown
 held beside an unknown: True
 two other devices: False'
 [ "$got" = "$want" ] && ok "the reader of /proc/locks compares the device with stat's as well as the inode: another device's lock is not held, and what cannot be compared is unknown, never held" || no "match_flock: $got"
+# held() where /proc/locks cannot decide (synthetic text with a device that cannot be compared): a lock file that a child process really holds is held, one nobody holds is free,
+# and the probe leaves the lock file unlocked; a lock file that cannot be opened stays unknown
+got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
+import fcntl, os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import lane as LN
+d = os.path.join(sys.argv[2], "probe-lane"); os.makedirs(d, exist_ok=True)
+lock = os.path.join(d, ".qargi-run.lock")
+open(lock, "w").close()
+ino = os.stat(lock).st_ino
+fake = os.path.join(d, "locks")
+with open(fake, "w") as f:
+    f.write("1: FLOCK  ADVISORY  WRITE 4242 00:2c:%d 0 EOF\n" % ino)
+def free():
+    fd = os.open(lock, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+print("synthetic text: %s" % LN.match_flock(open(fake).read(), os.stat(lock).st_dev, ino))
+print("nobody holds it: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+child = subprocess.Popen([sys.executable, "-I", "-c", "import fcntl,os,sys\nfd=os.open(sys.argv[1],os.O_RDONLY)\nfcntl.flock(fd,fcntl.LOCK_EX)\nprint('x',flush=True)\nsys.stdin.readline()", lock], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+child.stdout.readline()
+print("a child holds it: %s" % LN.held(lock, fake))
+child.stdin.close(); child.wait()
+print("the child has ended: %s, unlocked after: %s" % (LN.held(lock, fake), free()))
+print("a file that is not there: %s" % LN.held(os.path.join(d, "none"), fake))
+PY
+)
+want='synthetic text: unknown
+nobody holds it: False, unlocked after: True
+a child holds it: True
+the child has ended: False, unlocked after: True
+a file that is not there: False'
+[ "$got" = "$want" ] && ok "held() probes the lock file where /proc/locks cannot compare the device: held when a process holds the flock, free when nobody does, and the probe leaves it unlocked" || no "held probe: $got"
 # the order of the queue: only the first of the live waiters polls the flock, a run that has not waited yet goes ahead only when nobody waits, and a waiter of a process that is gone does not count
 got=$(python3 -I - "$T/tool/lib" "$T" <<'PY' 2>&1
 import json, os, sys, tempfile
@@ -695,6 +805,13 @@ wait_until 'grep -q "holder is" "$T/cb.out"' 30
 wait_until 'grep -q "holder is" "$T/cc.out"' 30
 { grep -qE '^qargi: note: holder is lead lead-one, run ca, holding it for [0-9]+s$' "$T/cb.out" && grep -qE '^qargi: note: holder is lead lead-one, run ca, holding it for [0-9]+s; you are number 2 of 2 waiting$' "$T/cc.out"; } \
   && ok "a waiting run prints one line naming the holder (lead, run, how long) and, when several wait, its place among them" || no "holder line: $(cat "$T/cb.out" "$T/cc.out")"
+# the record of a waiting run and the STATE column: the holder runs (its member started), the waiters wait (waiting_since, UTC, in their records), CD is only prepared
+lstate() { awk -v d="$1" 'index($0, d) {print $6}' <<<"$LISTED"; }
+LISTED=$($DA local list 2>&1)
+{ [ "$(lstate "$CA")" = running ] && [ "$(lstate "$CB")" = waiting ] && [ "$(lstate "$CC")" = waiting ] && [ "$(lstate "$CD")" = prepared ] \
+  && [[ $(jq -r '.waiting_since // ""' "$CB/dispatch.json") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && [ "$(jq -r '.lock_wait_s == 0' "$CA/dispatch.json")" = true ] \
+  && [ -z "$(jq -r '.waiting_since // empty' "$CA/dispatch.json")" ] && [ "$(jq -r '.runner_start | test("^[0-9]+$")' "$CA/dispatch.json")" = true ]; } \
+  && ok "local list: the holder is running, the runs that wait for its lane are waiting (waiting_since in their record), a run not started is prepared" || no "states: $(grep -e "$CA" -e "$CB" -e "$CC" -e "$CD" <<<"$LISTED") $(cat "$CB/dispatch.json")"
 echo x > "$MEM/.qargi-lane-wait.1.1"; true & DEADP=$!; wait "$DEADP"; echo '{"pid": 1, "start": "1", "lead": "ghost-waiter-never-listed", "run": "ghost-waiter-never-listed", "since": 1}' > "$MEM/.qargi-lane-wait.$DEADP.5"
 ino=$(stat -c %i "$LOCKF"); before=$(grep -c ":$ino " /proc/locks)
 out=$(timeout 20 $DA local list --lanes 2>&1); rc=$?
@@ -727,6 +844,14 @@ done
 : > "$T/hold-go"; wait_until '[ -s "$T/ca.rc" ] && [ -s "$T/cb.rc" ] && [ -s "$T/cc.rc" ]' 90
 { [ "$(cat "$T/ca.rc")" = 0 ] && [ "$(cat "$T/cb.rc")" = 0 ] && [ "$(cat "$T/cc.rc")" = 0 ] && [ ! -e "$LREC" ] && [ -z "$(find "$MEM" -maxdepth 1 -name '.qargi-lane-wait.*')" ] && flock -n "$LOCKF" true; } \
   && ok "the holder and both waiters end ok; the record and the waiters' files are gone and the lane is free" || no "queue end: $(cat "$T"/c?.rc) $(ls -lA "$MEM")"
+# the wait is recorded and is not the run's own time: lock_wait_s of the runs that waited, no waiting_since once they ran, seconds without the wait; the list says ended
+LISTED=$($DA local list 2>&1); $DA local list --json > "$T/ls.json" 2>&1
+{ [ "$(jq -r '.lock_wait_s > 0 and (has("waiting_since") | not) and (.seconds < .lock_wait_s) and .outcome == "ok"' "$CB/dispatch.json")" = true ] && [ "$(jq -r '.lock_wait_s > 0' "$CC/dispatch.json")" = true ] \
+  && [ "$(jq -r '.lock_wait_s == 0' "$CA/dispatch.json")" = true ] && [ "$(lstate "$CA")" = ended ] && [ "$(lstate "$CB")" = ended ] \
+  && python3 -I lib/jsonkind.py validate qargi-local-list "$T/ls.json" && [ "$(jq -r --arg d "$CB" '.runs[] | select(.run == $d) | (.lock_wait_s > 0 and .state == "ended")' "$T/ls.json")" = true ] \
+  && [ "$(jq -r --arg d "$CD" '.runs[] | select(.run == $d) | .state' "$T/ls.json")" = prepared ] && [ "$(lstate "$CD")" = prepared ]; } \
+  && ok "a run that waited for the lane records lock_wait_s (more than 0, and more than its own seconds), has no waiting_since once it runs, and the list says ended (--json too: lock_wait_s, state)" || no "wait record: $(cat "$CB/dispatch.json") $(grep -e "$CA" -e "$CB" <<<"$LISTED")"
+rm -f "$T/ls.json"
 { [ "$CA/out/transcript" -ot "$CB/out/transcript" ] && [ "$CB/out/transcript" -ot "$CC/out/transcript" ]; } \
   && ok "the waiters start in the order they began to wait: the one that waited longest takes the lane first (only the first polls it)" || no "queue order: $(stat -c '%n %y' "$CA/out/transcript" "$CB/out/transcript" "$CC/out/transcript")"
 out=$($DA local list --lanes 2>&1)

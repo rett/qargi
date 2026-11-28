@@ -1,0 +1,46 @@
+{
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "project": "demo",
+  "target_feature": "release-next",
+  "nodes": [
+    {
+      "id": "first",
+      "task": "Do the work of first",
+      "role": "build",
+      "scope": [
+        "lib/shared.py",
+        "CHANGELOG.md"
+      ],
+      "done": "python3 tests/test_first.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "middle",
+      "task": "Do the work of middle",
+      "role": "build",
+      "scope": [
+        "lib/middle.py"
+      ],
+      "done": "python3 tests/test_middle.py",
+      "review_kind": "none",
+      "after": [
+        "first"
+      ]
+    },
+    {
+      "id": "last",
+      "task": "Do the work of last",
+      "role": "build",
+      "scope": [
+        "lib/",
+        "CHANGELOG.md"
+      ],
+      "done": "python3 tests/test_last.py",
+      "review_kind": "none",
+      "after": [
+        "middle"
+      ]
+    }
+  ]
+}

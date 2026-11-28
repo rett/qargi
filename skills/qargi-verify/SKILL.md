@@ -13,7 +13,7 @@ Gates come from the repository's profile (`~/.qargi/config/profiles/<repo>.md`),
 For each run:
 
 1. `qargi local verify RUN_DIR`. An unaccepted observed ref difference fails verification: stop and report its evidence to the user. A pass arms merges.
-2. `qargi review check RUN_DIR/out` (or a cloud collect directory): one patch per commit, matching manifest and `series.md`, paths inside SCOPE. Return failures to the agent. A read-only run can return its report in its final message (`qargi review save RUN_DIR` stores it) or write it with `qargi local report`.
+2. `qargi review check RUN_DIR/out` (or a cloud collect directory): one patch per commit, matching manifest and `series.md`, paths inside SCOPE. Return failures to the agent. A `revise` verdict fails unless `--lead`. A read-only run can return its report in its final message (`qargi review save RUN_DIR` stores it) or write it with `qargi local report`.
 3. `manifest.json`: base SHA equals the current base; `done.command` is the DONE of `RUN_DIR/task.md`, with `done.exit_code`; gate verdict lines; status DONE.
 4. Read each commit diff and the agent's advice: one logical change with its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
 
@@ -21,6 +21,7 @@ For each run:
 
 - Local: `qargi review apply RUN_DIR` makes `agent/<slug>` (the slug it prints) in a temporary base worktree. Cloud: `git am --3way` the `*.patch` files in name order on a scratch base checkout.
 - Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE of `RUN_DIR/task.md` verbatim. Check each commit builds.
+- A whole-suite run (`feature verify`, `release verify`) waits in a per-user queue (`qargi suite status` shows it, `--queue-wait SECONDS` bounds it); a suite run by hand goes through `qargi suite run -- CMD`.
 - Anything the profile marks for a second-model review gets one first.
 
 ## 3. Report, then merge

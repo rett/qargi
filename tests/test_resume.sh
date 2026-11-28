@@ -59,6 +59,7 @@ DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-f $F finish search --plan "$t" --ap
   && ok "(setup) the finish died after the push: origin has the merge, develop here does not, the intent record is there" || no "setup feature: rc=$rc origin=$(rev "$O" develop) local=$(rev "$R" develop) $(ls "$INTENT" 2>&1)"
 out=$($F finish search 2>&1); rc=$?; t2=$(tok <<<"$out")
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "was cut off" <<<"$out" && [ "$(rev "$R" develop)" = "$d0" ] && ok "a re-run says the finish was cut off, prints a plan token and changes nothing" || no "feature resume plan: rc=$rc $out"
+grep -q "^  merge into: develop; push: yes, to origin/develop (origin holds the merge already)$" <<<"$out" && ok "the plan of a cut-off feature finish names the merge destination and the push" || no "feature resume plan facts: $out"
 # the feature's commit was made with git (commit_on), so no journal line moved the branch from where feature start made it: the deletion still to come takes it
 grep -qxF "$(takes feature/search "$d0" "$s1")" <<<"$out" && ok "its plan lists the commit made with git on the feature branch, which the deletion still to come takes into the journal" || no "feature resume plan, journal line: $out"
 out=$($F finish search --plan 000000000000 --approved go 2>&1); rc=$?
@@ -84,6 +85,7 @@ DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-r $REL finish 0.2.0 --plan "$t" --a
 out=$($REL finish 0.2.0 2>&1); rc=$?; t2=$(tok <<<"$out")
 grep -q "the tag 0.2.0 exists already" <<<"$out" && no "the re-run died at the tag that exists already" || ok "the re-run does not die at \"the tag exists already\""
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "was cut off" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] && ok "it says the finish was cut off, prints a plan token and changes nothing" || no "release resume plan: rc=$rc $out"
+grep -Eq "^  merge into: master \(tag 0\.2\.0\), then the tag into develop; push: yes, to origin/master, origin/develop and the tag 0\.2\.0 \(origin holds them already\)$" <<<"$out" && ok "the plan of a cut-off release finish names the merge destinations and the push" || no "release resume plan facts: $out"
 ! grep -q "journal: takes" <<<"$out" \
   && ok "its plan lists no commit made with git for the journal: release push took the fix, and journaled it, when it pushed" || no "release resume plan, journal line: $out"
 out=$($REL finish 0.2.0 --plan "$t2" --approved "go on" 2>&1); rc=$?

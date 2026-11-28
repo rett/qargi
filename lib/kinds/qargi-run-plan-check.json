@@ -1,0 +1,42 @@
+{
+  "registry": 1,
+  "kind": "qargi-run-plan-check",
+  "schema": 1,
+  "status": "draft",
+  "since": "0.3.10",
+  "stream": "stdout",
+  "verbs": ["flow plan check FILE --json"],
+  "about": "Whether a run plan file is valid and in which order its nodes can run. `valid` is true when no finding has the severity error (notes are allowed). `waves` lists the nodes in waves, a wave being the nodes whose `after` are all in earlier waves, each wave sorted by id; it is empty when the nodes cannot be ordered (a node without a usable id, an `after` that names no node, a cycle). `findings` are sorted: errors first, then by code, nodes and path. `digest` is sha256: and the 64 hex digits of the bytes read. `project` and `target_feature` are null when the plan gives no usable one; `nodes` is the number of entries of the plan's `nodes` list (0 when it is not a list). The verb exits 0 when the plan is valid and 1 when it is not, and prints the document in both cases; a file that cannot be read exits 2 with one line on standard error and no document, and a document that fails the check of this registry file exits 70 with one line on standard error and no document.",
+  "writes": "Nothing: no state, no token, no network, no file; the plan, the roles qargi knows and the files a done command names are only read.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "valid", "digest", "project", "target_feature", "nodes", "waves", "findings"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-run-plan-check"},
+      "valid": {"type": "boolean"},
+      "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+      "project": {"type": ["string", "null"]},
+      "target_feature": {"type": ["string", "null"]},
+      "nodes": {"type": "integer"},
+      "waves": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "x-ordered": true, "description": "The nodes in a valid run order, wave 1 first."},
+      "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+    },
+    "$defs": {
+      "finding": {
+        "type": "object",
+        "required": ["code", "severity", "message", "nodes", "path"],
+        "properties": {
+          "code": {"type": "string", "description": "A stable word naming the rule: invalid-json, duplicate-json-key, too-large, not-an-object, unknown-key, missing-key, wrong-kind, wrong-schema, bad-value, empty-nodes, too-many-nodes, bad-id, duplicate-id, unknown-role, bad-scope, bad-done, bad-review-kind, bad-after, unknown-after, self-after, cycle, scope-overlap-unordered, review-requested. A reader goes by `severity`, not by a code it does not know."},
+          "severity": {"enum": ["error", "note"], "description": "An error makes the plan invalid; a note does not."},
+          "message": {"type": "string", "x-text": true},
+          "nodes": {"type": "array", "items": {"type": "string"}, "description": "The ids of the nodes the finding is about, sorted; empty when it is about the plan or about a node with no usable id."},
+          "path": {"type": "string", "description": "Where in the plan, JSONPath-like ($.nodes[2].scope[0]); $ for the plan as a whole."},
+          "patterns": {"type": "array", "items": {"type": "string", "x-text": true}, "x-when": "The code is scope-overlap-unordered: the first pair of scope entries, one of each of the two nodes in the order of `nodes`, that can touch the same path."},
+          "cycle": {"type": "array", "items": {"type": "string"}, "x-when": "The code is cycle: one cycle in which every node comes after the next and the last after the first."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.10", "change": "first draft"}]
+}

@@ -47,8 +47,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        several runs wait, its place among them (the waiters' small files .qargi-lane-wait.PID.START, removed when the wait ends, a stale one ignored: the order they start in, for only the
                        first waiter polls the lock and a run that finds others waiting queues behind them), and
                        waits, with no bound unless --wait SECONDS gives one (a signal ends the wait): at the bound the run is refused as lane-busy (exit 1) before its
-                       attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait. The record and the
-                       waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (the holder only when /proc/locks says the lock is held).
+                       attempt is recorded and before anything is made, so a plain run of it starts once the lane is free; --wait 0 does not wait at all, and a bound above 0 tries the lock again a few times at its end (a probe of local list --lanes may hold it for a moment). The record and the
+                       waiters' files are advisory: the flock is the authority, and qargi local list --lanes reads it (held or free from /proc/locks, else, where that cannot compare the device, a probe flock let go at once; the holder only when the lock is held).
                        The lock descriptor goes to the member (pass_fds), so a runner killed with SIGKILL leaves the lane held until the member's process group ends (the
                        record then shows the runner gone and the member alive), and after the flock succeeds the descriptor must still be the file at the path (st_dev and
                        st_ino of fstat against lstat): a lock file removed or replaced while the run waited is closed, noted and opened again, at most six times, then the run is refused
@@ -143,7 +143,7 @@ the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run director
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
 to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is stopped (kill_group). A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
-the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
+the runner and its start token, and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
 (interrupted, with the signal: the member's process group gets TERM, is watched for 5 seconds, then KILL for what is left of it, and the run
 home's links are removed; the output says the group was stopped only when the kernel reports it absent, and otherwise that it remains busy or unknown). SIGKILL leaves the start
@@ -154,6 +154,10 @@ qargi made, which are removed where found and named where not. When the member c
 run's class has no sandbox arguments of its own), what git in the clone would run (.git/config, hooks/, info/) is read before the member starts and
 compared when it ends; a change other than what git branch sets is named (GITDIR=, git_dir in dispatch.json: key and entry names, never a value), not
 restored, so the lead knows not to run git in that clone (worktree_changes uses a bounded private metadata copy with a minimal trusted config).
+The record also says how long the runner waited for a sign-in lock, the lane or the lock of a refresh (lock_wait_s, seconds with two decimals, 0 when it did not wait;
+while it waits, waiting_since holds the UTC time the wait began and is removed when it ends): the run's own seconds do not include that wait, and `started` is when the
+runner began. A wait taken first because of --wait is in lock_wait_s too, but cannot show as waiting_since: the run is not recorded until the lane is taken.
+qargi local list reads the record and the process of the runner (its start token, else its command line) for its STATE column; it signals nothing.
 --dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be
 run this way, 4 transport, 128+N interrupted by signal N.
 """
@@ -177,6 +181,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import lane as LN
+import suite_queue as SQ  # noqa: E402  (try_flock, RETRIES: the same short retry for a probe of `local list --lanes` that the whole-suite queue makes)
 import prepared_request as PR
 import refusal
 import refusal as RF
@@ -583,13 +588,17 @@ def foreign_holder(d):
     return not (rec["runner"] and rec["runner"]["pid"] == mine["pid"] and rec["runner"]["start"] == mine["start"])
 
 
-def take_flock(fd, d):
+def take_flock(fd, d, again=0):
     """Try the exclusive flock on the open lock file fd (never waits): True when it is held now, and no other live run is recorded as the holder of the lane in
     directory d; False when another process holds it, or when the file was replaced under a run that still holds the old one (foreign_holder), in which case the flock
-    taken here is let go again so that it holds up nobody."""
+    taken here is let go again so that it holds up nobody. `again` more tries are made, SQ.PAUSE seconds apart, when the flock is refused (SQ.try_flock, the helper of the
+    whole-suite queue): the end of a --wait bound uses SQ.RETRIES of them, for a probe of `qargi local list --lanes` (lib/lane.py held(): a non-blocking flock on a
+    descriptor of its own, let go at once) can hold the lock at that very moment, and a run must not be refused as lane-busy because it came then."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        taken = SQ.try_flock(fd, again)
+    except SQ.QueueError as e:
+        fail("lane: %s" % e)   # QueueError says what could not be done ("cannot take the lock: ..."): said once
+    if not taken:
         return False
     if foreign_holder(d):
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -622,7 +631,7 @@ def lock_one(path, home, runtime, sig, kind="run"):
     shown = lock_name(path, home, runtime)
     d = os.path.dirname(path)
     wait = None if kind == "refresh" and home.get("recorded") else home.get("wait")   # once the attempt is recorded lane-busy would be untrue: a refresh then waits without a bound
-    waited, waiter = False, None
+    waited, waiter, t_wait = False, None, None
     end = None if wait is None else time.monotonic() + wait          # once, here: a file replaced under the wait does not start the wait again
     try:
         for _ in range(LOCK_RETRIES + 1):
@@ -634,13 +643,16 @@ def lock_one(path, home, runtime, sig, kind="run"):
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
                     fail("the lock file %s is not a regular file; remove it" % shown)
-                busy = (wait != 0 and not my_turn(d, waited, waiter is not None)) or not take_flock(fd, d)    # a run that finds others waiting queues behind them
+                # a run that finds others waiting queues behind them. Its first try is not the end of a wait: a probe of `local list --lanes` may hold the lock at that very
+                # moment (btrfs), and the run must not say it waits for a holder that is not there, so the first try is repeated as the end of a bound is (--wait 0 tries once)
+                busy = (wait != 0 and not my_turn(d, waited, waiter is not None)) or not take_flock(fd, d, 0 if wait == 0 else SQ.RETRIES)
                 if busy:
                     if wait == 0:
                         raise lane_busy(home, runtime, shown, d, 0)
                     if not waited:
-                        waited = True
+                        waited, t_wait = True, time.monotonic()
                         waiter = LN.add_waiter(d, runtime, run_slug(home))
+                        wait_note(home, PE.now())
                         print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
                               file=sys.stderr, flush=True)
                         ahead, total = LN.position(d)
@@ -649,6 +661,8 @@ def lock_one(path, home, runtime, sig, kind="run"):
                     try:
                         while not (my_turn(d, True, waiter is not None) and take_flock(fd, d)):
                             if end is not None and time.monotonic() >= end:
+                                if my_turn(d, True, waiter is not None) and take_flock(fd, d, SQ.RETRIES):     # the last poll may have met a probe of `local list --lanes`
+                                    break
                                 raise lane_busy(home, runtime, shown, d, wait)
                             time.sleep(LOCK_POLL)
                     finally:
@@ -668,6 +682,20 @@ def lock_one(path, home, runtime, sig, kind="run"):
              "look at the directory, then start the run again" % (shown, LOCK_RETRIES + 1))
     finally:
         LN.remove_waiter(waiter)
+        if t_wait is not None:                                       # the seconds this run spent waiting for a lock: not the run's own (run_started)
+            home["lock_wait_s"] = home.get("lock_wait_s", 0.0) + (time.monotonic() - t_wait)
+            wait_note(home, None)
+
+
+def wait_note(home, since):
+    """Tell the start record of the run (home["on_wait"], set by run_started once the record exists) that the run begins to wait for a lock (since: its UTC time stamp)
+    or has stopped waiting (None). Advisory: the flock is the authority, and a record that cannot be written is no reason to stop the run."""
+    hook = home.get("on_wait")
+    if hook is not None:
+        try:
+            hook(since)
+        except (OSError, Stop):
+            pass
 
 
 def take_lock(home, runtime, sig):
@@ -2811,8 +2839,26 @@ def run_started(plan, run, store, dispatch_state, sig, pre=None):
     started = time.time()
     # the start record: an earlier run's outcome never stays, and a runner killed with SIGKILL leaves "running" with its process and the member's, and
     # the links the run home will hold (qargi local list and verify name the ones left)
-    begun = dict(head, started=PE.now(started), outcome="running", runner=os.getpid(), member=None)
+    # lock_wait_s: the seconds the runner waited for the lane or for the lock of a refresh (home["lock_wait_s"], added up by lock_one; what a wait taken before the record,
+    # --wait, already cost is in it), waiting_since: the UTC time the runner began to wait while it still waits (removed when it stops). runner_start is the start token
+    # of the runner's process, as the lane record names it (lib/lane.py token), so that qargi local list can tell a runner that lives from a pid that was reused.
+    waited0 = home.get("lock_wait_s", 0.0) if home else 0.0
+    begun = dict(head, started=PE.now(started), outcome="running", runner=os.getpid(), runner_start=LN.token(os.getpid()) or "", member=None, lock_wait_s=round(waited0, 2))
+
+    def own_seconds():
+        """The seconds of the run itself: since the runner began, less what it waited for a lock after that (a wait before the record, --wait, is not in them)."""
+        return round(max(time.time() - started - ((home.get("lock_wait_s", 0.0) - waited0) if home else 0.0), 0.0), 1)
+
+    def on_wait(since):
+        if since is None:
+            begun.pop("waiting_since", None)
+        else:
+            begun["waiting_since"] = since
+        begun["lock_wait_s"] = round(home.get("lock_wait_s", 0.0), 2)
+        write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
+
     if home:
+        home["on_wait"] = on_wait
         begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
         if home.get("copies"):                               # the copies a killed runner leaves are found by these names (local list, verify, clean): paths of the copy only, no value
             begun["home"]["private"] = private_record(home)
@@ -2941,7 +2987,7 @@ def run_started(plan, run, store, dispatch_state, sig, pre=None):
         release_lock(locks)                              # after the links are gone: the next run finds the sign-in as this one left it
     if unexpected is not None:
         try:
-            rec = dict(begun, outcome="refused", exit=code, seconds=round(time.time() - started, 1), timed_out=timed_out,
+            rec = dict(begun, outcome="refused", exit=code, seconds=own_seconds(), timed_out=timed_out,
                        error="unexpected runner error", transcript=os.path.join(out, "transcript"))
             if proc is not None:
                 rec["group_left"] = left
@@ -2957,7 +3003,7 @@ def run_started(plan, run, store, dispatch_state, sig, pre=None):
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
         if left and outcome == "ok":
             outcome = "failed"
-    seconds = round(time.time() - started, 1)
+    seconds = own_seconds()
     gitdir = None
     if plan["git_watch"] and proc is not None:
         gitdir = {"watched": plan["git_watch"], "changed": git_changes(git0, git_state(os.path.join(run, "clone")))}
@@ -2980,6 +3026,8 @@ def run_started(plan, run, store, dispatch_state, sig, pre=None):
         report, text = None, None
     manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
     rec = dict(begun, seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
+    if home:
+        rec["lock_wait_s"] = round(home.get("lock_wait_s", 0.0), 2)
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
     if left is not None:                                 # observed count, or a nonzero sentinel for unknown membership

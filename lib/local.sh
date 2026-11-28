@@ -7,12 +7,16 @@
 #                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)
 #                                        (the submodules the role declares in roles.R.tools are checked out in the clone from the lead's
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
-#   local.sh verify RUN_DIR
+#   local.sh verify RUN_DIR [--timings]
 #   local.sh verify RUN_DIR | --saved ID     (--saved: the lead's copy of a passed run whose directory is gone, $QARGI_STATE/runs/ID)
-#   local.sh verify --mine               a coordinator's own runs: every open run the registry records under this session's QARGI_ACTOR, each as verify RUN does; one line
-#                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN)
+#   local.sh verify --mine [--timings]   a coordinator's own runs: every open run the registry records under this session's QARGI_ACTOR, each as verify RUN does; one line
+#                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN); the refs of the repository and of its
+#                                        origin are asked once for all the runs (the first run that needs them asks; kept for this call only)
+#                                        --timings: one `timings:` line when it ends, the seconds of each phase (checks, registry, snapshot, compare, save; for --mine added up over the
+#                                        runs, runs=N); the phases of each run are recorded in its registry line (verify_timings) whether it is given or not
 #   local.sh close RUN_DIR --applied-by-am   mark a verified run whose patches the lead applied by hand (git am) closed: not open any more, files kept
-#   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
+#   local.sh clean RUN_DIR [--discard] [--timings]   remove a collected, verified run and its temporary directory (--discard: whatever verify says); --timings: one `timings:` line,
+#                                        the seconds of each phase (checks, removal, prune; --applied and --stale: added up, runs=N), recorded in the run's registry line (clean_timings)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others, one line each (the registry is read once, the refs
 #                                        of the repository asked once for all the runs, and a legacy run whose refs changed is decided here and named with the one command to run)
 #   local.sh clean --applied --legacy --scratch DIR [--plan TOKEN --approved WORDS]   the legacy runs (no lifecycle marker) that are applied and merged: a plan and a token; with the
@@ -21,12 +25,15 @@
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh report RUN [--findings] [--from FILE] [--force] < REPORT   a read-only member writes its own report: OUT/report.md (or findings.md) and a minimal manifest.json, inside OUT only
-#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
+#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME] [--json]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied, merged and STATE
+#                                        (prepared, waiting, running, ended or unknown: from dispatch.json and the runner's process, lib/local_list.py; display only); a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
+#                                        --json: one document of the draft kind qargi-local-list (lib/kinds/qargi-local-list.json) in place of the text
 #                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
 #                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
 #                                        every row when a filter is given, ends with actor=LABEL feature=NAME
-#   local.sh list --lanes                read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py)
+#   local.sh list --lanes [--json]       read-only, instead of the runs: each lane (the lock file beside a shared sign-in), its holder and the runs waiting for it (lib/lane.py);
+#                                        --json: the lanes, under the key lanes of the same kind
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--wait SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused; --wait SECONDS bounds the wait for
@@ -143,6 +150,52 @@ snap_cached() {
 }
 snapshot_url() { snap_cached url "$1 ${2:-}" snapshot_url_raw "$@"; }   # the credential file is part of the key: another credential may read other refs
 snapshot() { snap_cached repo "$1" snapshot_raw "$@"; }
+
+# Timings of verify and clean: the seconds of each phase of one run (verify: checks, registry, snapshot, compare, save; clean: checks, removal, prune), added up in TM (microseconds)
+# in the order the phases first ran (TM_ORDER). tm_lap NAME ends the phase that began at the last lap. The verb records them in the run's line of the lead's registry (verify_timings,
+# clean_timings: "phase=0.123s ..."; the line outlives the run directory) and, under --timings, prints one `timings:` line when it ends (on_exit). A bulk verb (verify --mine, clean
+# --applied, clean --stale) prints one line for all its runs: each child run adds its phases to BULK_DIR/timings (bulk_dir) and the parent adds them up (tm_collect).
+declare -A TM=(); TM_ORDER=(); TIMINGS=''
+tm_now() { if [ -n "${EPOCHREALTIME:-}" ]; then local t=${EPOCHREALTIME/[.,]/}; echo "$t"; else echo $(( $(date +%s%N) / 1000 )); fi; }
+TM_T=$(tm_now)
+tm_lap() { local n; n=$(tm_now); [ -n "${TM[$1]+x}" ] || { TM[$1]=0; TM_ORDER+=("$1"); }; TM[$1]=$(( TM[$1] + n - TM_T )); TM_T=$n; }
+tm_sec() { printf '%d.%03d' $(( $1 / 1000000 )) $(( $1 % 1000000 / 1000 )); }   # microseconds -> seconds with three decimals
+tm_text() { local k out=''; for k in ${TM_ORDER[@]+"${TM_ORDER[@]}"}; do out+="${out:+ }$k=$(tm_sec "${TM[$k]}")s"; done; printf '%s' "$out"; }
+# bulk_dir -> the private directory of the bulk verb this process runs under (the one snap_cached trusts), or nothing
+bulk_dir() {
+  case ${QARGI_SNAP_CACHE:-} in "$DA_STATE"/verify.*) [ -d "$QARGI_SNAP_CACHE" ] && [ ! -L "$QARGI_SNAP_CACHE" ] && [ -O "$QARGI_SNAP_CACHE" ] && echo "$QARGI_SNAP_CACHE";; esac
+  return 0
+}
+# tm_done KEY RUN -> the phases of this run recorded in its registry line as KEY, and added to the bulk verb's file when this process is one of its children
+tm_done() {
+  local k b
+  [ "${#TM_ORDER[@]}" -gt 0 ] || return 0
+  reg_mark "$2" "$1" "$(tm_text)"
+  b=$(bulk_dir)
+  if [ -n "$b" ]; then for k in "${TM_ORDER[@]}"; do printf '%s %s\n' "$k" "${TM[$k]}" >> "$b/timings"; done; printf 'run 1\n' >> "$b/timings"; fi
+  return 0
+}
+# tm_collect -> adds what the children of a bulk verb wrote (the phases, and the number of runs) to TM
+tm_collect() {
+  local b=${BULK_DIR:-} k v
+  [ -n "$b" ] && [ -f "$b/timings" ] || return 0
+  while read -r k v; do
+    [[ $k =~ ^[a-z]+$ ]] && [[ $v =~ ^[0-9]{1,15}$ ]] || continue
+    [ -n "${TM[$k]+x}" ] || { TM[$k]=0; TM_ORDER+=("$k"); }
+    TM[$k]=$(( TM[$k] + v ))
+  done < "$b/timings"
+}
+# on_exit -> what every exit of verify and clean does: removes the working directories of the verb and, under --timings, prints the line of the phases
+on_exit() {
+  local r=0
+  [ -z "$TIMINGS" ] || tm_collect
+  rm -rf -- "${CHECK_DIR:-}" "${BULK_DIR:-}"
+  if [ -n "$TIMINGS" ] && [ "${#TM_ORDER[@]}" -gt 0 ]; then
+    if [ -n "${TM[run]+x}" ]; then r=${TM[run]}; fi
+    if [ "$r" -gt 0 ]; then printf 'timings: runs=%d %s\n' "$r" "$(for k in "${TM_ORDER[@]}"; do [ "$k" = run ] || printf '%s=%ss ' "$k" "$(tm_sec "${TM[$k]}")"; done | sed 's/ $//')"
+    else printf 'timings: %s\n' "$(tm_text)"; fi
+  fi
+}
 
 # merged_tip REPO TIP [BRANCH [RUN]] -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
 # other than agent/*, a worktree-bridge-* branch or a ref the run's answers declare owned, 1 when it is not, 2 when there is no tip that is a full hex object name;
@@ -578,7 +631,7 @@ check_run() {
   else reg_record "$run" || return 3; fi
   # All comparisons, including diagnostics, are built in private lead paths.
   CHECK_DIR=$(mktemp -d "$DA_STATE/verify.XXXXXX") || return 3
-  trap 'rm -rf -- "${CHECK_DIR:-}"' EXIT
+  trap on_exit EXIT
   if [ "$LC_SCHEMA" = true ]; then
     gate=$(lc compare-input "$run") || return 3
     ref=$(jq -r .baseline <<<"$gate")
@@ -591,14 +644,17 @@ check_run() {
   fi
   CHECK_PHASE=strict; [ -n "$strict" ] || CHECK_PHASE=after-verify
   CREPO=$RUN_REPO CURLK=''
+  tm_lap registry
   if [ -n "$RUN_URL" ]; then
     CURLK=$(url_key "$RUN_URL")
     snapshot_url "$RUN_URL" "$RUN_CRED" > "$CHECK_DIR/refs.after"
   else
     snapshot "$RUN_REPO" > "$CHECK_DIR/refs.after"
   fi
+  tm_lap snapshot
   : > "$CHECK_DIR/refs.accepted"
-  compare "$RUN_REPO" "$ref" "$CHECK_DIR/refs.after" "$strict" "$CHECK_DIR/refs.accepted" > "$CHECK_DIR/refs.diff" || return 2
+  compare "$RUN_REPO" "$ref" "$CHECK_DIR/refs.after" "$strict" "$CHECK_DIR/refs.accepted" > "$CHECK_DIR/refs.diff" || { tm_lap compare; return 2; }
+  tm_lap compare
   return 0
 }
 
@@ -606,7 +662,7 @@ check_run() {
 # QARGI_SNAP_CACHE, which the child clean and verify of each run read (snap_cached): the refs of a repository and of its origin are asked once, not once for each run.
 bulk_begin() {
   BULK_DIR=$(mktemp -d "$DA_STATE/verify.XXXXXX") || { echo "qargi: could not make a working directory in $DA_STATE; nothing was done" >&2; exit 3; }
-  trap 'rm -rf -- "${BULK_DIR:-}"' EXIT
+  trap on_exit EXIT
   QARGI_SNAP_CACHE=$BULK_DIR; export QARGI_SNAP_CACHE
 }
 
@@ -785,97 +841,7 @@ render_warning() {
 # nothing to look up; quoted text, backquotes and ${ } are not read; only the command words are checked, never the arguments. A SCOPE path that is
 # empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
 TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
-# TB_WORDS_PY: the command words of a DONE line, one per line. A small scanner (a quoted string, a backquoted one, ${ } and $(( )) are one word; ; & | < > ( ) end a
-# word; a redirection operator takes the next word as its target, a number before it is the file descriptor), then the rule: a word is a command word at the start of the
-# line and after a separator or an opening parenthesis, past NAME=value words and the keywords that a command follows (! { if then else elif do while until time). A name
-# the line defines (name() { ...; }) is no command word; the words of a [[ ]] test are not read. What the scanner cannot read it leaves out: at a case, function or select
-# command word, at (( and at an array assignment (NAME=( ) it reports the words found before that point and stops, so the rest of the line is accepted on `bash -n` alone
-# (a case pattern, an arithmetic for header and the elements of an array are not command words). That only lets a line through, it never refuses one.
-TB_WORDS_PY='
-import re, sys
-s = sys.argv[1]
-OPS = ";&|<>"
-KEEP = {"!", "{", "if", "then", "else", "elif", "do", "while", "until", "time"}
-toks = []
-cur, has, i, n = "", False, 0, len(s)
-def flush():
-    global cur, has
-    if has:
-        toks.append(("w", cur))
-    cur, has = "", False
-while i < n:
-    c = s[i]
-    if c in " \t":
-        flush(); i += 1
-    elif c == "#" and not has:
-        break
-    elif c == chr(92):
-        cur += s[i + 1:i + 2]; has = True; i += 2
-    elif c == chr(39):
-        j = s.find(chr(39), i + 1); j = n if j < 0 else j
-        cur += s[i + 1:j]; has = True; i = j + 1
-    elif c == chr(34):
-        j = i + 1
-        while j < n and s[j] != chr(34):
-            j += 2 if s[j] == chr(92) else 1
-        cur += s[i + 1:j]; has = True; i = j + 1
-    elif c == "`":
-        j = s.find("`", i + 1); j = n if j < 0 else j
-        cur += s[i:j + 1]; has = True; i = j + 1
-    elif s.startswith("$((", i) or s.startswith("${", i):
-        e = "))" if s[i + 1] == "(" else "}"
-        j = s.find(e, i); j = n if j < 0 else j + len(e)
-        cur += s[i:j]; has = True; i = j
-    elif c == "$" and s.startswith("(", i + 1):
-        cur += "$"; has = True; flush(); i += 1
-    elif c in OPS:
-        if has and cur.isdigit() and c in "<>":
-            cur, has = "", False
-        flush()
-        j = i
-        while j < n and s[j] in OPS:
-            j += 1
-        run = s[i:j]; i = j
-        toks.append(("redir",) if ("<" in run or ">" in run) else ("sep",))
-    elif c == "(" and (s.startswith("(", i + 1) or cur.endswith("=")):
-        flush(); toks.append(("stop",)); break
-    elif c == "(":
-        flush(); toks.append(("open",)); i += 1
-    elif c == ")":
-        flush(); toks.append(("close",)); i += 1
-    else:
-        cur += c; has = True; i += 1
-flush()
-out, cmd, pend, defined, k = [], True, False, set(), 0
-while k < len(toks):
-    t = toks[k]; k += 1
-    if t[0] == "redir":
-        pend = True
-    elif t[0] == "w":
-        w = t[1]
-        if pend:
-            pend = False
-        elif cmd and not re.match(r"[A-Za-z_][A-Za-z0-9_]*[+]?=", w) and w not in KEEP:
-            if w in ("case", "function", "select"):
-                out.append(w); break
-            if w == "[[":
-                out.append(w)
-                while k < len(toks) and toks[k] != ("w", "]]"):
-                    k += 1
-                cmd = False
-                continue
-            if k + 1 < len(toks) and toks[k][0] == "open" and toks[k + 1][0] == "close":
-                defined.add(w)
-            elif w and w not in defined:
-                out.append(w)
-            cmd = False
-    elif t[0] == "stop":
-        out.append(":"); break
-    else:
-        pend = False
-        cmd = t[0] in ("sep", "open")
-print("\n".join(out))
-'
+# The command words of a DONE line, one per line, come from lib/done_words.py (the scanner and its limits are described there; qargi flow plan check reads a DONE with it too).
 taskblock_check() {
   local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 tw first; shift 5
   [ ! -L "$f" ] || usage_die "--task-file $f is a link: give the file itself"
@@ -887,7 +853,7 @@ taskblock_check() {
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
   bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
-  tw=$(python3 -I -c "$TB_WORDS_PY" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
+  tw=$(python3 -I "$(dirname "$0")/done_words.py" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
   [ -n "$tw" ] || usage_die "--done '$done' is not a command: it has no command word"
   first=1
   while IFS= read -r w0; do
@@ -1236,6 +1202,10 @@ WRAP
     fi;;
   verify)
     MINE=''
+    # --timings: one `timings:` line at the end (on_exit); the phases are recorded in the run's registry line whether it is given or not
+    vargs=(); for _a in "$@"; do if [ "$_a" = --timings ]; then TIMINGS=1; else vargs+=("$_a"); fi; done
+    set -- ${vargs[@]+"${vargs[@]}"}
+    [ -z "$TIMINGS" ] || trap on_exit EXIT
     for _a in "$@"; do [ "$_a" != --mine ] || MINE=1; done
     if [ -n "$MINE" ]; then
       # a coordinator's own runs: every open run the lead's registry records under exactly this session's label, each verified as `verify RUN` does
@@ -1243,6 +1213,8 @@ WRAP
       actor_label || exit $?
       [ -n "$ACTOR" ] || usage_die "verify --mine needs QARGI_ACTOR, the label of a coordinator session (<lead-id>:coord:<feature>:<n>); the lead uses \"qargi local list\" and \"qargi local verify RUN\""
       reg_load; worst=0; nmine=0
+      bulk_begin   # the refs of the repository (and of its origin) are asked once for all the runs below (QARGI_SNAP_CACHE), by the first run that needs them, never kept for another call
+      tm_lap registry
       for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
         [ "$(reg_get "$d" actor)" = "$ACTOR" ] && [ -d "$d" ] && [ -z "$(reg_get "$d" cleaned)" ] && [ -z "$(reg_get "$d" closed)" ] || continue   # open: there, not cleaned, not closed
         nmine=$((nmine + 1)); vrc=0
@@ -1307,6 +1279,7 @@ WRAP
       res=$(home_residue "$RUN")
       [ -z "$res" ] || echo "qargi: note: the run home of $RUN holds what a run left there: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177'). qargi local run $RUN --again replaces a link left there; qargi local clean $RUN removes the run with it" >&2
     fi
+    tm_lap checks
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" != 3 ]; then
       for diagnostic in refs.after refs.accepted refs.diff; do
@@ -1324,6 +1297,7 @@ WRAP
         if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       fi
       echo "$EMPTY" >&2
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
       if [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
@@ -1344,6 +1318,7 @@ WRAP
         cp "$CHECK_DIR/refs.after" "$CHECK_DIR/verified"
         mv -T -- "$CHECK_DIR/verified" "$SRC/verified"
       fi   # refs-only observation never verifies or saves output
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       if [ -s "$CHECK_DIR/refs.accepted" ]; then
         if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed snapshots only; scope and unavailable remotes: qargi help local verify:"
         else echo "refs differ from the snapshot only by accepted moves; observed snapshots only; scope and unavailable remotes: qargi help local verify:"; fi
@@ -1355,6 +1330,7 @@ WRAP
       if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       [ "$CHECK_PHASE" = strict ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
         || echo "(after a passing verify the lead's fast-forwards and new branches are accepted too; nothing else that the lead's ref journal does not name)" >&2
+      tm_lap save; [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || tm_done verify_timings "$RUN"
       exit 2
     fi;;
   clean)
@@ -1366,6 +1342,7 @@ WRAP
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
+        --timings) TIMINGS=1; shift;;   # one `timings:` line at the end (on_exit); the phases are recorded in the run's registry line whether it is given or not
         --applied) ALL=1; shift;;
         --legacy) LEGACY=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
@@ -1382,6 +1359,7 @@ WRAP
     [ -n "$ORPH" ] || [ -z "$DAYS" ] || usage_die "clean: --days is for --orphans"
     [ -n "$ORPH" ] || [ -n "$LEGACY" ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "clean: --plan and --approved are for --orphans and --applied --legacy"
     [ -z "$LEGACY" ] || [ -n "$ALL" ] || usage_die "clean: --legacy is for --applied (qargi local clean --applied --legacy --scratch DIR)"
+    [ -z "$TIMINGS" ] || trap on_exit EXIT
     if [ -n "$ORPH" ]; then
       # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
       # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
@@ -1437,6 +1415,7 @@ WRAP
       [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
       REG_BULK=1 reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
       [ -z "$YES" ] || bulk_begin   # the refs of the repository are asked once for all the runs cleaned below (QARGI_SNAP_CACHE)
+      tm_lap registry
       nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
@@ -1484,12 +1463,14 @@ WRAP
       if [ -n "$LEGACY" ]; then bulk_begin; clean_legacy "$SCR"; fi
       scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; leg_n=0; REG_BULK=1 reg_load
       bulk_begin   # the refs of the repository are asked once for all the runs below (QARGI_SNAP_CACHE), and the registry read once by this process
+      tm_lap registry
       cand=(); mp=()
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         cand+=("$d"); [ ! -f "$d/applied" ] || mp+=("$d" "$d/applied")
       done
       merged_prefetch ${mp[@]+"${mp[@]}"}   # the state of the work of each applied run, for the reason of one that is kept: one process for all of them
+      tm_lap merged
       for d in ${cand[@]+"${cand[@]}"}; do
         reg_val cl "$d" closed; reg_val rp "$d" repo
         if [ ! -f "$d/applied" ] && [ -z "$cl" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
@@ -1583,12 +1564,14 @@ WRAP
         mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
         [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
+      tm_lap checks
       if [ "$LC_SCHEMA" = true ]; then
         clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
         lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
       else
         [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       fi
+      tm_lap removal
       scrub_ok_drop "$RUN"
       apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
       if [ "$LC_SCHEMA" = true ]; then
@@ -1597,6 +1580,7 @@ WRAP
       else
         reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       fi
+      tm_lap prune; [ "$LC_SCHEMA" != true ] || tm_done clean_timings "$RUN"   # a legacy run of this branch has its line dropped just above: nothing to record it in
       if [ "$LC_SCHEMA" = true ]; then echo "cleaned $RUN (directory gone)${sv:+ and its saved copy $sv}; kept cleaned registry record"
       else echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"; fi
       exit 0
@@ -1656,6 +1640,7 @@ WRAP
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
     read -r wtt wtu _ <<<"$wt"
+    tm_lap checks
     if [ "$LC_SCHEMA" = true ]; then
       clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
       lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
@@ -1665,6 +1650,7 @@ WRAP
       rt=$(legacy_run_tmp "$RUN")
       { [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"; } && rm -rf --one-file-system -- "$RUN" || die "could not remove $RUN or its temporary directory completely; not recorded as cleaned: fix the mount or permission and rerun clean"
     fi
+    tm_lap removal
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
@@ -1678,6 +1664,7 @@ WRAP
     if [ "$LC_SCHEMA" = true ]; then reg_edit "$rrun" cleaned exact
     else reg_edit "$rrun" cleaned; fi || die "could not commit cleanup in the registry; rerun local clean"
     [ "$LC_SCHEMA" != true ] || lc clean-finish "$rrun" >/dev/null || exit 3
+    tm_lap prune; tm_done clean_timings "$rrun"   # a legacy run keeps its cleaned line too, so it records its phases like a lifecycle run
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   close)
@@ -1790,21 +1777,25 @@ $vout}"
       chmod 644 "$RMAN"; mv -T -- "$RMAN" "$SOUT/manifest.json" || die "could not write $SOUT/manifest.json"
       echo "wrote $SOUT/manifest.json (status DONE, commits: [])"
     fi
-    echo "next: qargi review check $SOUT";;
+    echo "next: qargi review check $SOUT --lead";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
-    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES=''
+    SCR='' WANT_ACTOR='' WANT_FEATURE='' LANES='' JSON=''
     [ "${1:-}" != --lanes ] || LANES=1
-    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without taking any lock
-    # (the holder from /proc/locks and the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    [ "${1:-}" != --json ] || [ "${2:-}" != --lanes ] || LANES=1   # --json --lanes: the two in either order
+    # --lanes lists the lanes (the lock files beside the sign-ins the runtimes of the stored projects share) instead of the runs: lib/lane.py reads them without keeping any lock
+    # (held or free from /proc/locks, else, where that cannot compare the device, a probe flock let go at once; the holder from the lane record beside the lock), so it neither waits for a run under way nor refuses one that starts meanwhile
+    # --json prints the document of the kind qargi-local-list instead of the text (lib/local_list.py); with --lanes it is the lanes, under the key lanes of the same kind
     if [ -n "$LANES" ]; then
-      [ $# = 1 ] || usage_die "list: --lanes takes no other option or argument"
+      [ $# = 1 ] || { [ $# = 2 ] && { [ "$2" = --json ] || [ "$1" = --json ]; }; } || usage_die "list: --lanes takes no other option or argument"
+      [ $# = 1 ] || exec python3 -I "$(dirname "$0")/local_list.py" json-lanes
       exec python3 -I "$(dirname "$0")/lane.py" list
     fi
     while [ $# -gt 0 ]; do
       case $1 in
         --lanes) usage_die "list: --lanes takes no other option or argument";;
+        --json) JSON=1; shift;;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         --actor) need_val "$1" $#; WANT_ACTOR=$2; [ -n "$WANT_ACTOR" ] || usage_die "list: --actor takes a coordinator label, or a prefix of one that ends at a colon"; shift 2;;
         --feature) need_val "$1" $#; WANT_FEATURE=$2; [ -n "$WANT_FEATURE" ] || usage_die "list: --feature takes a feature name"; shift 2;;
@@ -1812,7 +1803,7 @@ $vout}"
       esac
     done
     runs=(); REG_BULK=1 reg_load; scr=''
-    rtc='' dd='' lfv='' rnv='' gs='' gtxt=''   # set by the _v functions (variables by name), read in the rows below
+    rtc='' dd='' lfv='' rnv='' gs='' gtxt='' rtj='' rpj=''   # set by the _v functions (variables by name), read in the rows below
     # the run's coordinator label and feature, from the lead's registry (never from the run directory): the feature a labeled prepare recorded, else the one the
     # base feature/NAME names; a run prepared without a label has no actor. --actor matches the whole label or a prefix that ends at a colon; both filters are an AND.
     # The _v functions set the variable they are given (no process for a field of the registry, none for a cleaned text).
@@ -1876,14 +1867,27 @@ $vout}"
       sv=$(saved_of "$d"); [ -z "$sv" ] || [ ! -f "$sv/applied" ] || mp+=("$d" "$sv/applied")
     done
     merged_prefetch ${mp[@]+"${mp[@]}"}
-    printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' ROLE SLUG AGE APPLIED MERGED "${showrt:+RUNTIME      }" RUN
+    # STATE: what each run's dispatch.json and its runner's process say (lib/local_list.py), asked once for all the runs listed; nothing is signalled. A run it says
+    # nothing of (the process cannot be asked) is unknown. RLW (the seconds waited for a lock) is in the document only.
+    declare -A RST=() RLW=()
+    sd=(); for d in ${runs[@]+"${runs[@]}"}; do [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue; sd+=("$d"); done
+    if [ "${#sd[@]}" -gt 0 ]; then
+      while IFS= read -r -d '' sa && IFS= read -r -d '' sb && IFS= read -r -d '' sc; do RST[$sa]=$sb; RLW[$sa]=$sc; done \
+        < <(printf '%s\0' "${sd[@]}" | python3 -I "$(dirname "$0")/local_list.py" states 2>/dev/null)
+    fi
+    jrows=()   # --json: one line for each row, its fields separated by a tab (lib/local_list.py row_of)
+    list_row() { # RUN ROLE SLUG AGE_SECONDS APPLIED MERGED RUNTIME STATE LOCK_WAIT REPO GONE SAVED (all plain) -> adds the line of the row to jrows
+      local IFS=$'\t'; jrows+=("$1$IFS$2$IFS$3$IFS$4$IFS$5$IFS$6$IFS$7$IFS$8$IFS$9$IFS${10}$IFS${11}$IFS${12}")
+    }
+    [ -n "$JSON" ] || printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s\n' ROLE SLUG AGE APPLIED MERGED STATE "${showrt:+RUNTIME      }" RUN
     nowe=$(date +%s)
     for d in ${runs[@]+"${runs[@]}"}; do
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       reg_val sl "$d" slug
       { st=$(<"$d/started"); } 2>/dev/null || st=''
+      ages=''
       if [[ $st =~ ^[0-9]{1,12}$ ]]; then   # the file is a member's: only digits ever reach the arithmetic
-        age=$((nowe - st))
+        age=$((nowe - st)); ages=$(( age < 0 ? 0 : age ))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       ap=no; mg=no
@@ -1895,8 +1899,14 @@ $vout}"
       fi
       { ab=$(<"$d/ability"); } 2>/dev/null || ab='?'
       plain_v ab "$ab"; plain_v sl "${sl:--}"; plain_v dd "$d"
+      stv=${RST[$d]:-unknown}
+      if [ -n "$JSON" ]; then
+        reg_val rtj "$d" runtime; plain_v rtj "$rtj"; reg_val rpj "$d" repo; plain_v rpj "$rpj"
+        list_row "$dd" "$ab" "$sl" "$ages" "$ap" "$mg" "$rtj" "$stv" "${RLW[$d]:-0}" "$rpj" 0 ''
+        continue
+      fi
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$dd" "$lfv" "$rnv"
+      printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$stv" "$rtc$dd" "$lfv" "$rnv"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
       [ -f "$d/dispatch.json" ] || continue
       while IFS= read -r rl; do
@@ -1907,8 +1917,9 @@ $vout}"
       [ -n "$d" ] || continue
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       reg_val sl "$d" slug; reg_val gs "$d" started; ste=$(date -d "$gs" +%s 2>/dev/null) || ste=''
+      ages=''
       if [[ $ste =~ ^[0-9]{1,12}$ ]]; then
-        age=$((nowe - ste))
+        age=$((nowe - ste)); ages=$(( age < 0 ? 0 : age ))
         if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       else ag='?'; fi
       sv=$(saved_of "$d"); ap=no; mg=no
@@ -1920,10 +1931,19 @@ $vout}"
       fi
       reg_val ab "$d" ability
       plain_v ab "$ab"; plain_v sl "${sl:--}"
+      if [ -n "$JSON" ]; then
+        plain_v ab "${ab:-?}"; plain_v dd "$d"; plain_v sv "$sv"
+        reg_val rtj "$d" runtime; plain_v rtj "$rtj"; reg_val rpj "$d" repo; plain_v rpj "$rpj"
+        list_row "$dd" "$ab" "$sl" "$ages" "$ap" "$mg" "$rtj" unknown 0 "$rpj" 1 "$sv"   # no directory, so no record of a runner: unknown
+        continue
+      fi
       printf -v gtxt '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}"; plain_v gtxt "$gtxt"
       rt_cell_v rtc "$d"; list_fields_v lfv "$d"; rt_note_v rnv "$d"
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" "$rtc$gtxt" "$lfv" "$rnv"
-    done;;
+      printf '%-10s %-18s %-10s %-6s %-8s %-9s %s%s%s\n' "$ab" "$sl" "$ag" "$ap" "$mg" unknown "$rtc$gtxt" "$lfv" "$rnv"
+    done
+    if [ -n "$JSON" ]; then
+      printf '%s\n' ${jrows[@]+"${jrows[@]}"} | python3 -I "$(dirname "$0")/local_list.py" json || exit $?
+    fi;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
     RUN=${1:-}; shift || true

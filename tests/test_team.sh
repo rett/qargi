@@ -85,7 +85,7 @@ donecase() { # NAME REPORT MANIFEST (a manifest of "-" is none) WANT (0 or 1): t
   rm -f "$RO"/review--report.md "$RO"/review--manifest.json
   printf "$2" > "$RO/review--report.md"; [ "$3" = "-" ] || printf '%s\n' "$3" > "$RO/review--manifest.json"
   bash -c "$rdone" >/dev/null 2>&1 || d=1
-  $DA review check "$RO" >/dev/null 2>&1 || c=1
+  $DA review check "$RO" --lead >/dev/null 2>&1 || c=1   # --lead: the DONE is the structure, and a revise verdict is a good report
   [ "$d" = "$4" ] && [ "$c" = "$4" ] && ok "the review DONE: $1" || no "the review DONE ($1): DONE=$d review check=$c, wanted $4"
 }
 [ -n "$rdone" ] && ok "(setup) the brief of a cloud runtime that names its output directory gives the review member a DONE" || no "no review DONE: $rdone"
@@ -152,6 +152,11 @@ printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/c
 $DA team check "$T/chk" >/dev/null 2>&1 && no "a team without team.json passed" || ok "a team run without the lead's team.json fails"
 echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"
+
+# a review member's revise verdict is read by the lead's team check on purpose (--lead), not taken for a failure of the report
+printf '# Findings\n\n- low x\n\n# Checked\n\nnothing\n\nverdict: revise\n' > "$T/chk/review/report.md"
+out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "OK report-only run: report.md" && echo "$out" | grep -qx "verdict: revise" && ok "team check reads a revise verdict of the review member without failing it" || no "team check revise: $out"
+printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/chk/review/report.md"
 
 # the lead's own spelling (final_verdict) and a BLOCKED status are understood
 echo '{"team":"code-docs","members":[],"final_verdict":"accept","status":"BLOCKED","status_reason":"the build series is too large to carry"}' > "$T/chk/lead/team.json"

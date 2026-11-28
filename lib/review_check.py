@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """Checks the structure of an agent's patch series and its context. Area-count warnings require substantive cohesion review.
-Source acceptance requires independent review of concrete changes and dependencies. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
+Source acceptance requires independent review of concrete changes and dependencies. Usage: review_check.py OUT [--allow-empty] [--lead]   (exit 1 on any FAIL or on a report-only run whose verdict is revise without --lead, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
 The DONE line of RUN/task.md is the check the lead set: a manifest whose done.command is another command fails (a missing done.command is a warning).
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable.
 A run with no patches whose clone (RUN/clone, beside OUT) holds uncommitted changes to tracked files fails unless its manifest says BLOCKED: a change left
 uncommitted is a refusal, never a finished task (untracked files are a warning). The clone is read with lib/local_run.py worktree_changes."""
-import fnmatch, glob, json, os, re, sys
+import fnmatch, glob, hashlib, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
-unknown = [a for a in sys.argv[1:] if a.startswith("--") and a != "--allow-empty"]
+unknown = [a for a in sys.argv[1:] if a.startswith("--") and a not in ("--allow-empty", "--lead")]
 if unknown or len(args) > 1:
-    print("qargi: %s\nusage: review_check.py OUT [--allow-empty]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
+    print("qargi: %s\nusage: review_check.py OUT [--allow-empty] [--lead]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
     sys.exit(2)
 allow_empty = "--allow-empty" in sys.argv   # a team member may return no commits (blocked, or nothing to change)
+lead_reads = "--lead" in sys.argv   # the lead reads a `verdict: revise` on purpose: without it that verdict is exit 1, so a script never takes a reviewer's request for changes as a pass
 run = args[0] if args else "."
 fails, warns, notes = [], [], []
 F = lambda m: fails.append("FAIL " + m)
@@ -33,6 +34,25 @@ def task_done(out):
         if l.startswith("DONE: ") and k + 2 < len(lines) and lines[k + 1] == "" and (lines[k + 2] == "PROFILE:" or lines[k + 2].startswith("BASE: ")):
             found = l[len("DONE: "):]
     return found
+
+def write_facts(report_path, verdict_line, rman):
+    """The facts of a report-only run that the history of the project keeps (lib/history.py), written only when the lead's `qargi review check` asks for them
+    (QARGI_REVIEW_FACTS names the file) and never in a member's check (QARGI_MEMBER_RUN, or a current directory in a run): the verdict word, the sha256 of the bytes of the report and the manifest's tests_run.
+    The report's text is not copied. A failure to write them is no failure of the check."""
+    dest = os.environ.get("QARGI_REVIEW_FACTS")
+    if not dest or os.environ.get("QARGI_MEMBER_RUN"):
+        return
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import marshal_refs
+    if marshal_refs.in_member_run():                  # a member of the lead's own session has no QARGI_MEMBER_RUN: its directory is in a run
+        return
+    try:
+        with open(report_path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(dest, "w") as f:
+            json.dump({"verdict": verdict_line.split(": ", 1)[1], "report_sha256": digest, "tests_run": rman.get("tests_run") if isinstance(rman, dict) else None}, f)
+    except (OSError, ValueError, TypeError, IndexError):
+        pass
 
 def done_problem(man, out):
     """None, or ("FAIL"|"WARN", text): the manifest's done.command against the DONE line of the task block (nothing to compare when the run has no task block)."""
@@ -115,8 +135,14 @@ if not patches:
             uncommitted(run, rman.get("status") if isinstance(rman, dict) else None)
             if fails:
                 print("\n".join(fails + warns + notes)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+            write_facts(rep, last, rman)
             print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
             if warns or notes: print("\n".join(warns + notes))
+            if last == "verdict: revise":
+                if not lead_reads:
+                    print("qargi: %s ends with `verdict: revise`: the reviewer asks for changes, so this is exit 1 (the lead reads such a verdict on purpose with --lead)" % base, file=sys.stderr)
+                    sys.exit(1)
+                print(last)
             sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))

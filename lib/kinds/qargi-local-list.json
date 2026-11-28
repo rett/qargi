@@ -1,0 +1,64 @@
+{
+  "registry": 1,
+  "kind": "qargi-local-list",
+  "schema": 1,
+  "status": "draft",
+  "since": "0.3.10",
+  "stream": "stdout",
+  "verbs": ["local list --json", "local list --lanes --json"],
+  "about": "The local runs as `local list` shows them, or (with --lanes) the lanes of the sign-ins that member runs share. `mode` says which: `runs` (the key `runs` holds one row for each run, in the order the text lists them: the runs that exist, then the runs whose directory is gone) or `lanes` (the key `lanes` holds one row for each lock file). `state` of a run is display only, derived from the run's dispatch.json and a check of its runner process (the pid and its start token; nothing is signalled): prepared (no dispatch.json: an in-session run, or one `local run` has not started), waiting (the runner is alive and waits for a lock), running (the runner is alive), ended (the run finished, or its runner is gone) or unknown (the record cannot be read, the runner cannot be compared with a process, or the run directory is gone); it decides nothing that verify, clean or apply do. `lock_wait_s` is the whole seconds the runner waited for a sign-in lock, rounded up (0 when it did not wait or no record says). `repo_path_lead_stated` is the repository path as the lead's registry recorded it when the run was prepared, never read from the run directory and not checked now; null for a run of a repository URL. The verb exits 0 with a document and prints nothing else on standard output; a document that fails the check of this registry file is exit 70 with one line on standard error and no document, and a wrong call is exit 2.",
+  "writes": "Nothing: no state, no lock, no token, no network and no file; the registry, the run directories, the lane records and /proc are only read, and no process is signalled.",
+  "document": {
+    "type": "object",
+    "required": ["schema", "kind", "mode"],
+    "properties": {
+      "schema": {"const": 1},
+      "kind": {"const": "qargi-local-list"},
+      "mode": {"enum": ["runs", "lanes"], "description": "What the document lists: the runs, or (list --lanes) the lanes."},
+      "runs": {"type": "array", "items": {"$ref": "#/$defs/run"}, "x-ordered": true, "x-when": "`mode` is runs.", "description": "One row for each run, in the order of the text list."},
+      "lanes": {"type": "array", "items": {"$ref": "#/$defs/lane"}, "x-ordered": true, "x-when": "`mode` is lanes.", "description": "One row for each lock file the runtimes of the stored projects declare; empty when no runtime shares one."}
+    },
+    "$defs": {
+      "run": {
+        "type": "object",
+        "required": ["run", "role", "slug", "age_seconds", "applied", "merged", "runtime", "state", "lock_wait_s", "repo_path_lead_stated", "directory_gone", "saved_copy"],
+        "properties": {
+          "run": {"type": "string", "description": "The run directory."},
+          "role": {"type": "string", "x-text": true, "description": "The ability the run was prepared for (build, review ...), as the text list shows it; ? when it cannot be read."},
+          "slug": {"type": "string", "x-text": true, "description": "The slug of the run; - when the registry names none."},
+          "age_seconds": {"type": ["integer", "null"], "description": "Seconds since the run was prepared; null when the start time is not a number."},
+          "applied": {"enum": ["yes", "no", "closed"], "description": "yes when `review apply` recorded the work, closed when `local close` took it as applied by hand."},
+          "merged": {"enum": ["yes", "no", "unknown", "none"], "x-open": true, "description": "Whether the applied tip is on a branch other than agent/*: unknown for a run of a repository URL or a record that names no tip, none for a run that was closed by hand."},
+          "runtime": {"type": ["string", "null"], "description": "The runtime the registry names for the run; null for a run prepared before the project had extra runtimes."},
+          "state": {"enum": ["prepared", "waiting", "running", "ended", "unknown"], "x-open": true, "description": "Display only; see `about`."},
+          "lock_wait_s": {"type": "integer", "description": "Whole seconds the runner waited for a sign-in lock, rounded up; 0 when none."},
+          "repo_path_lead_stated": {"type": ["string", "null"], "description": "The repository path the lead's registry recorded for the run: lead-stated, never read from the run directory; null for a repository URL."},
+          "directory_gone": {"type": "boolean", "description": "The run directory no longer exists (a reboot, or removed by hand); `state` is unknown."},
+          "saved_copy": {"type": ["string", "null"], "description": "The lead's saved copy of a run whose directory is gone, when there is one."}
+        }
+      },
+      "lane": {
+        "type": "object",
+        "required": ["runtime", "lock", "state", "detail", "holder", "waiting"],
+        "properties": {
+          "runtime": {"type": "string"},
+          "lock": {"type": "string", "description": "The lock file as the runtime's definition declares it (~/DIR/.qargi-run.lock)."},
+          "state": {"enum": ["free", "held", "unknown"], "x-open": true, "description": "The word the text list starts the state with."},
+          "detail": {"type": "string", "x-text": true, "description": "The state as the text list prints it, for example `held, member alive, runner gone`."},
+          "holder": {"type": ["string", "null"], "x-text": true, "description": "The holder as the text list names it (lead, run, kind and age); null for none."},
+          "waiting": {"type": "array", "items": {"$ref": "#/$defs/waiter"}, "x-ordered": true, "description": "The runs waiting for the lane, in the order they began to wait."}
+        }
+      },
+      "waiter": {
+        "type": "object",
+        "required": ["lead", "run", "waiting_seconds"],
+        "properties": {
+          "lead": {"type": "string"},
+          "run": {"type": "string", "description": "The slug of the waiting run, as the lane record gives it."},
+          "waiting_seconds": {"type": "integer", "description": "Whole seconds since it began to wait."}
+        }
+      }
+    }
+  },
+  "history": [{"schema": 1, "since": "0.3.10", "change": "first draft"}]
+}

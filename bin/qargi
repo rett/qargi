@@ -29,13 +29,30 @@ esac
 if [ -n "${QARGI_ACTOR:-}" ]; then
   python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import help; sys.exit(help.main(["actor-gate"] + sys.argv[2:]))' "$lib" "$area" "$@" || exit $?
 fi
-# Campaign documents have native reports and a pure supplied-file check. Route
+# Campaign documents have native reports and a pure supplied-file check, and so has a run plan (flow). Route
 # before even the JSON wrapper imports metadata, and before project/cloud setup.
 case $area in
   campaign) # Native reports bypass project/cloud setup and the JSON wrapper.
     case ${1:-} in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show campaign;; esac
     case ${2:-} in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show campaign "${1:-}";; esac
     exec python3 -B -I "$lib/campaign.py" "$@";;
+  flow) # A pure check of a plan file (qargi flow plan check): no project, cloud or state setup, and its own --json, so before the JSON wrapper too.
+    for _a in "$@"; do
+      case $_a in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show flow "${1:-}";; esac
+    done
+    exec python3 -B -I "$lib/run_plan.py" "$@";;
+  history) # The history of the whole-suite runs and the review reports (qargi history): it names the project itself and prints its own --json documents, so before the JSON wrapper too.
+    for _a in "$@"; do
+      case $_a in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show history;; esac
+    done
+    exec python3 -B -I "$lib/history.py" "$@";;
+  suite) # The queue of the whole-suite runs (qargi suite run -- COMMAND, qargi suite status): it names the project itself and prints its own --json document. What follows -- is the command's own
+         # (its --json or --help included), so this is before the JSON wrapper and the help forms below; only a -h or --help before the -- is the help of the verb.
+    _v=${1:-}; case $_v in -h|--help) _v='';; esac
+    for _a in "$@"; do
+      case $_a in --) break;; -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show suite "$_v";; esac
+    done
+    exec "$lib/suite.sh" "$@";;
 esac
 # --json on any verb: the plan (or the output) as one JSON object (lib/jsonplan.py runs the call again without it). The marker says this
 # call is that run; it is taken out here so that nothing the verb starts sees it. help, the guard, completion and the run-event hooks never wrap.

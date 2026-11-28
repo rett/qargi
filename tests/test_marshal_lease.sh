@@ -77,6 +77,19 @@ at $((t0 + 500)) "$DA" review check "$RUN"; rc=$?
 [ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 500)))" ] && ok "review check given the run directory (not its out) renews the lease of that run's feature" || no "SPEC review check RUN_DIR renews: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 1000)) "$DA" review check "$RUN/out"; rc=$?
 [ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 1000)))" ] && ok "review check on the run's output renews the lease" || no "SPEC review check renews: rc=$rc $(out) $(j r1 .renewed_at)"
+# a member of the lead's own session has no QARGI_MEMBER_RUN: its check from the run's clone or its TMP renews nothing and leaves no history entry (more than a third of
+# the lease has passed since the renewal above, so the lead's check would renew)
+unset QARGI_MEMBER_RUN
+HF=$S/history/app.jsonl; n0=$(wc -l < "$HF" 2>/dev/null || echo 0)
+(cd "$RUN/clone" && QARGI_MARSHAL_NOW=$((t0 + 1400)) "$DA" review check ../out --lead >"$T/o" 2>"$T/e"); rc=$?
+[ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 1000)))" ] && [ "$(wc -l < "$HF" 2>/dev/null || echo 0)" = "$n0" ] && [ "$n0" -ge 1 ] \
+  && ok "review check from inside the run's clone without the member mark renews no lease and writes no history entry" || no "member without mark: rc=$rc $(out) $(j r1 .renewed_at) $n0 $(wc -l < "$HF" 2>/dev/null)"
+(cd "$(cat "$RUN/tmpdir")" && QARGI_MARSHAL_NOW=$((t0 + 1400)) "$DA" review check "$RUN/out" >"$T/o" 2>"$T/e"); rc=$?
+[ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 1000)))" ] && [ "$(wc -l < "$HF" 2>/dev/null || echo 0)" = "$n0" ] \
+  && ok "and from the run's TMP" || no "member in TMP: rc=$rc $(out) $(j r1 .renewed_at)"
+at $((t0 + 1400)) "$DA" review check "$RUN/out"; rc=$?
+[ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 1400)))" ] && [ "$(wc -l < "$HF" 2>/dev/null || echo 0)" = $((n0 + 1)) ] \
+  && ok "the same check from outside (the lead's) renews the lease and leaves its entry" || no "lead from outside: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 2500)) "$DA" local verify "$RUN"; rc=$?
 [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 2500)))" ] && ok "local verify renews the lease (rc=$rc)" || no "SPEC local verify renews: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 4000)) "$DA" review apply "$RUN"; rc=$?

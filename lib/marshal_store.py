@@ -65,7 +65,7 @@ above: marshal-feature-unknown, marshal-feature-held, marshal-remote-unreachable
 exception's, whatever the rendering does: when it fails for any reason only the sentence is printed (report_refusal), so a refusal is never taken for a defect.
 status and check take --json: one document of the kind qargi-marshal-status or qargi-marshal-check (lib/kinds), built in memory, dumped without NaN and checked against
 its registry file before anything is printed; a record that holds a value the shape does not allow is exit 70 with one line (never a document), and a stdout that
-cannot take the document is exit 1 with one plain line. `remote` says whether the answer was checked against the remote of the shared records (none, checked,
+cannot take the document is exit 1 with one plain line. `integrity` is the integrity setting of the project (off, advisory, strict); `remote` says whether the answer was checked against the remote of the shared records (none, checked,
 unchecked, not-asked). status and check also take --no-write: the call writes nothing (a record whose branch is gone is not marked abandoned, no audit line, no cache of
 the remote records, no lock file) and fetches nothing (it implies --no-fetch), so `remote` is not-asked. A lease age is a whole number of minutes on every backend.
 Run through lib/marshal.sh; python3 -I, standard library only."""
@@ -325,6 +325,7 @@ class LocalBackend:
     """One JSON file per feature in $STATE/features, this machine only (the default). The lease is the wall clock: renewed_at."""
     refs = False
     integrity = "off"
+    doubts = {}                   # no integrity reading, so no doubt of it
     ghost_fix = True              # a record whose branch is gone is abandoned on a read
     no_age = "stale"              # the lease of a record without a readable renewed_at
     clock = "wall"                # what `lease` and `minutes_since_renewal` are measured on (the field lease_clock of the documents)
@@ -463,6 +464,7 @@ class Integrity:
         self.tags = {}
         self.pre = {}
         self.notes = []
+        self.doubts = {}      # name -> the note of a feature whose ref vanished from the remote with no done record: the record this machine accepted cannot be trusted as stated
         self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
     def classify(self, kind, name, rec, parents, message):
@@ -667,7 +669,9 @@ class Integrity:
         for name in sorted(marks):
             unsigned_done = name in done and self.tags.get(("done", name), ("unsigned",))[0] != "signed"      # advisory uses it as it is, as before
             if "refs/qargi/features/" + name not in heads and name not in cleared and not unsigned_done:
-                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)))
+                text = "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)
+                self.notes.append((name, text))
+                self.doubts[name] = text      # printed on standard error with the other notes, and a damaging warning of the feature's row in a check
         return view, base, bad
 
 
@@ -677,6 +681,7 @@ class RefsBackend:
     not reached the remote yet (state: provisional). The lease is the time an oid stayed unchanged on THIS machine's monotonic
     clock, never a wall-clock comparison. A read verb fetches (unless --no-fetch or inside a member run) and never pushes."""
     refs = True
+    doubts = {}                   # as of the last read (RefsBackend.load): see Integrity.doubts
     ghost_fix = False
     no_age = "live"
     clock = "observed-here"
@@ -729,10 +734,10 @@ class RefsBackend:
             bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
             if guard:
                 view, based, bad = guard.settle(feats, done, ignored, heads, self.persist, ctx.name)
-                notes = guard.notes
+                notes, self.doubts = guard.notes, guard.doubts
             else:
                 view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
-                notes = []
+                notes, self.doubts = [], {}
             # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
             ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=self.persist)
         finally:
@@ -1431,7 +1436,7 @@ def v_status(ctx, a):
     # the agent branches of no open feature are said once, after the features, never under each of them
     ua = [] if a.brief else [{"branch": b, "base": base} for b, base in unattributed_agents(ctx)]
     if a.json:
-        write_stdout(json_document("qargi-marshal-status", {"schema": 1, "kind": "qargi-marshal-status", "project": ctx.project, "backend": backend_of(ctx),
+        write_stdout(json_document("qargi-marshal-status", {"schema": 2, "kind": "qargi-marshal-status", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                            "remote": remote_of(ctx), "features": [d for _, d, _ in items], "agent_unattributed": ua}))
         return
     if not items:
@@ -1696,20 +1701,37 @@ def v_resign(ctx, a):
 
 
 def warnings_for(ctx, d, rec_exists):
+    """The warnings of a feature row, each {"text": the sentence, "severity": "info" or "damaging"}. A warning is damaging when it means that the evidence of
+    the record cannot be trusted as stated: the one that says the ref of the feature vanished from the remote with no done record (it was deleted or rewound) is
+    the only one (a doubt of the integrity reading, kept in the backend's `doubts`). The others (an abandoned feature, a stale lead, a restarted session, no lead,
+    files that another open feature also changes) are facts about the work, not doubts about the record, so they are info. docs/reference/json-output.md says the
+    same."""
     w = []
+
+    def warn(text, severity="info"):
+        w.append({"text": text, "severity": severity})
     if d["ghost"]:
-        w.append("feature %s was abandoned: its branch feature/%s is gone" % (d["feature"], d["feature"]))
+        warn("feature %s was abandoned: its branch feature/%s is gone" % (d["feature"], d["feature"]))
     elif d["lead"] and d["lease"] == "stale" and d["lead"]["id"] != ctx.id:
-        w.append("the lead of %s (%s) is stale (renewed %s min ago, ttl %d): qargi marshal takeover %s --approved WORDS" % (
+        warn("the lead of %s (%s) is stale (renewed %s min ago, ttl %d): qargi marshal takeover %s --approved WORDS" % (
             d["feature"], d["lead"]["id"], "?" if d["minutes_since_renewal"] is None else d["minutes_since_renewal"], ctx.ttl, d["feature"]))
         ld = d["lead"]
         if ld.get("host") == ctx.host and ld.get("user") == ctx.user and ld.get("worktree") == ctx.worktree_key:
-            w.append("you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim %s --as-successor-of %s continues as the lead without a takeover" % (d["feature"], ld["id"]))
+            warn("you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim %s --as-successor-of %s continues as the lead without a takeover" % (d["feature"], ld["id"]))
     elif not d["lead"] and (rec_exists or d["branch"]) and d["status"] not in ("finished", "abandoned"):
-        w.append("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
+        warn("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
     for o, fs in d.get("overlap", {}).items():
-        w.append("feature %s changes files that feature/%s also changes: %s" % (d["feature"], o, " ".join(clean(f) for f in fs[:10])))
+        warn("feature %s changes files that feature/%s also changes: %s" % (d["feature"], o, " ".join(clean(f) for f in fs[:10])))
+    if d["feature"] in ctx.be.doubts:
+        warn(clean(ctx.be.doubts[d["feature"]]), "damaging")
     return w
+
+
+def say_warning(ctx, w):
+    """The line of a warning on standard error. A doubt of the integrity reading was printed when the records were read: it is not said twice."""
+    if w["severity"] == "damaging" and ("", w["text"]) in getattr(ctx.be, "warned", ()):
+        return
+    print("qargi: warning: " + w["text"], file=sys.stderr)
 
 
 def renew_own(ctx, name, rec):
@@ -1758,10 +1780,10 @@ def v_check(ctx, a):
         d = describe(ctx, a.name, rec, {})
         warns = warnings_for(ctx, d, rec is not None)
         for w in warns:
-            print("qargi: warning: " + w, file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
+            say_warning(ctx, w)       # the document carries them too: a person watching standard error still sees them
         answer = "yours" if ld and ld["id"] == ctx.id else ("free-stale" if ld else "free")
         if a.json:
-            write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+            write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                               "remote": remote_of(ctx), "feature": a.name, "answer": answer,
                                                               "lead": d["lead"] if answer == "free-stale" else None, "warnings": warns}))
             return
@@ -1774,10 +1796,10 @@ def v_check(ctx, a):
         if not a.json:
             print(brief_line(d))
         for w in warns:
-            print("qargi: warning: " + w, file=sys.stderr)
+            say_warning(ctx, w)
         rows.append(dict({k: v for k, v in d.items() if k not in DERIVED}, warnings=warns))
     if a.json:
-        write_stdout(json_document("qargi-marshal-check", {"schema": 1, "kind": "qargi-marshal-check", "project": ctx.project, "backend": backend_of(ctx),
+        write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
                                                           "remote": remote_of(ctx), "feature": None, "answer": None, "lead": None, "warnings": [], "features": rows}))
     elif not items:
         print("no open features")

@@ -62,8 +62,18 @@ refusal changes nothing.
    - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
-   - `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is applied and merged;
-     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest, one line for each kept run; over hundreds
+   - `qargi local list --scratch DIR` shows each run's role, slug, age, whether it is applied and merged, and its STATE: `prepared` (no
+     `qargi local run` has started it: a run of an in-session member is always this), `waiting` (its runner waits for a sign-in lane),
+     `running`, `ended` (it finished, or its runner is gone) or `unknown`. The STATE is for your eyes only: it is read from the run's
+     `dispatch.json` and the runner's process (its pid and start token; nothing is signalled) and decides nothing that verify, clean or apply
+     do. `--json` prints the same list as one document of the draft kind `qargi-local-list` (its fields are in
+     [JSON output](../reference/json-output.md#draft-kinds): the run, its role, slug, age in seconds, applied, merged, runtime, state, the
+     whole seconds it waited for a lane and the repository path your registry recorded for it), and with `--lanes` the lanes in place of
+     the runs.
+   - `qargi local verify` and `qargi local clean` record the seconds of each phase in the run's registry line and print one `timings:` line
+     when you give `--timings` (one for all the runs of `verify --mine`, `clean --applied` and `clean --stale --yes`, which also ask the
+     origin for its refs once for all of them, never again in the next call).
+   - `qargi local clean --applied --scratch DIR` cleans the runs that are applied and merged and keeps the rest, one line for each kept run; over hundreds
      of run directories both verbs read the registry once and ask the repository's refs once for all the runs. A legacy run (made before
      the lifecycle) that is kept because its refs changed since it was prepared gets a line with the one command to run next: when its work
      is merged, `qargi local clean RUN --discard` once its `out/` is archived. `qargi local clean --applied --legacy --scratch DIR` does both
@@ -81,7 +91,10 @@ refusal changes nothing.
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
    current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
-   failed one ends with the failing tests and the path of the log.
+   failed one ends with the failing tests and the path of the log. Whole-suite runs of one user never overlap on a host: before its suite
+   starts `verify` (and `release verify`) waits its turn in a first-in, first-out queue, prints one line naming the holder and its place when
+   they change, and records the wait as `queue_wait_s` in the history (it is not in the seconds of the suite); `--queue-wait SECONDS` bounds
+   the wait and refuses at the bound with `suite-queue-busy` (see the [queue reference](../reference/suite-queue.md); `qargi suite run -- COMMAND` puts a suite run by hand in the same queue).
    The command `verify` runs is the project's `test_command` (for a release, `release.test_command` when set). A project may instead declare
    **gates**, the answer `gates`: an ordered list of `{"name": "...", "command": "...", "tier": "feature" | "release"}` (the command is a
    command line or a list of words, as `test_command`; names are unique and non-empty; `qargi project set` and `project validate` check
@@ -290,8 +303,9 @@ under `always`, or under `when-shared` when origin already has it. Setting it is
 master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
 shows the deletion and its token covers origin's tip. `branches.push_develop` is `true` (the default) or `false`: `feature finish`
-pushes develop to origin, when the repository has one, unless it is `false`. The first line of the finish plan says which ("will
-push develop to origin", or "local only, will not push" and why), and the token covers it.
+pushes develop to origin, when the repository has one, unless it is `false`. The first line of the finish plan says which
+(`push: yes, to origin/develop`, or `push: no, develop stays local` and why) and the next line names the merge destination (`merge into: develop`);
+the plans of `release finish` and `release push` carry the same two facts (`merge into: ...`, `push: yes|no, to origin/BRANCH`), and the token covers it.
 
 ## Pruning merged branches
 
@@ -374,6 +388,18 @@ graph may observe an absolute configured backlog after its checkout has gone,
 while `backlog list`, `add` and `done` require a repository marker at `repo.path`.
 Missing, null, empty-string or false section values are unset. The reference
 also specifies the bounded differences from shell path expansion.
+
+`qargi flow plan check FILE [--json]` checks a run plan before its tasks are
+dispatched: a JSON file with the feature the work merges into and one node for
+each task (its role, the paths it may change, its DONE command and the nodes it
+comes after). It says whether the plan is valid, lists the nodes in waves (a
+wave is the nodes whose `after` are all in earlier waves), and reports two nodes
+that `after` does not order and whose scopes can touch the same path, so that
+the lead orders them or narrows them before the first `local prepare`. A node
+that does not list `CHANGELOG.md`, `man/qargi.1`, `docs/reference/refusals.md`,
+`tests/suite.txt` or `tests/durations.txt` in its scope is not assumed to write
+it. The check keeps no state and plans and starts nothing; the
+[run plan reference](../reference/run-plan.md) has the format and the codes.
 
 ## The worktree root
 

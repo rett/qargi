@@ -1,0 +1,38 @@
+{
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "project": "demo",
+  "target_feature": "release-next",
+  "nodes": [
+    {
+      "id": "same",
+      "task": "Do the work of same",
+      "role": "build",
+      "scope": [
+        "lib/a.py"
+      ],
+      "done": "python3 tests/test_same.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "other",
+      "task": "Do the work of other",
+      "role": "build",
+      "scope": [
+        "lib/b.py"
+      ],
+      "done": "python3 tests/test_other.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "same",
+      "task": "Do the work of same",
+      "role": "build",
+      "scope": [
+        "lib/c.py"
+      ],
+      "done": "python3 tests/test_same.py",
+      "review_kind": "none"
+    }
+  ]
+}

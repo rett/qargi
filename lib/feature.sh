@@ -16,8 +16,11 @@
 #                                                  local only, takes --plan T --approved W. A detached branch never meets develop, master,
 #                                                  release, hotfix or feature branches: every merge between them is refused.
 #   feature.sh status NAME [--project P]
-#   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W]
-#                                                  the whole suite on the feature's head (the checkpoint before finishing). With the answer
+#   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W] [--queue-wait SECONDS]
+#                                                  the whole suite on the feature's head (the checkpoint before finishing). Before its suite starts it waits its
+#                                                  turn in the queue of the whole-suite runs (lib/suite_queue.sh: one slot for each user, first in, first out; the wait
+#                                                  is not in the seconds of the suite and is recorded in the history as queue_wait_s); --queue-wait bounds it, and at the
+#                                                  bound the run is refused as suite-queue-busy with nothing run or recorded. With the answer
 #                                                  verify.environment the suite starts through lib/suite_env.py; a part of it that cannot be
 #                                                  applied refuses the run and prints a token (also when the run is refused after a passing
 #                                                  attempt), and PARTS (signals, fds, tty, cpu) waives the refused parts for this run only
@@ -44,11 +47,12 @@
 verb=${1:-}; shift || true
 # shellcheck disable=SC2034  # QARGI_VERB is read by refuse and notice (lib/lib.sh): the verb of the contract line of a refusal
 QARGI_VERB="feature $verb"
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET='' DRY_RUN=''
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET='' DRY_RUN='' QUEUE_WAIT=''
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
     --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
+    --queue-wait) need_val "$1" $#; QUEUE_WAIT=$2; case $QUEUE_WAIT in ''|*[!0-9]*) usage_die "--queue-wait takes a whole number of seconds (0 refuses at once when the slot is not free)";; esac; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;; --dry-run) DRY_RUN=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
@@ -63,6 +67,7 @@ case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || 
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
 [ -z "$WAIVE_SET" ] || [ "$verb" = verify ] || usage_die "--waive-environment belongs to feature verify"
+[ -z "$QUEUE_WAIT" ] || [ "$verb" = verify ] || usage_die "--queue-wait belongs to feature verify"
 [ -z "$DRY_RUN" ] || [ "$verb" = finish ] || usage_die "--dry-run belongs to feature finish"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
@@ -101,7 +106,7 @@ merge_detached() {
   case $EXTRA in agent/*) ;; *) die "only an agent/* task branch is merged into the detached branch $d (not $EXTRA)";; esac
   t=$(sha_of "$EXTRA"); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
   g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
-  run_warning "$EXTRA"
+  run_verified_gate "$EXTRA" "feature merge"
   detached_mix "$EXTRA" "$d"
   tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token --basis "project:name detached:ref head:sha task:ref task-head:sha" --verb "feature merge" --target "$PROJ:$d")
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
@@ -117,19 +122,25 @@ merge_detached() {
   echo "merged $EXTRA into the detached branch $d ($(g rev-parse --short "$d"))"
 }
 
-# run_warning BRANCH -> a warning on stderr for each run of BRANCH (an agent/SLUG branch: the registry's line with that slug, of this repository, not
-# cleaned, its directory still there) that has no passing verify (neither the registry's mark nor RUN/verified): its refs were never checked. The
-# merge goes on; the lead decides.
-run_warning() {
-  local slug=${1#agent/} rp d line
+# run_verified_gate BRANCH VERB -> refuses (feature-merge-unverified, exit 1: the count and the names of the runs, and a `more:` line with the command that verifies each) when a run
+# of BRANCH (an agent/SLUG branch: the registry's line with that slug, of this repository, not cleaned, its directory still there) has no passing verify (neither the
+# registry's mark nor RUN/verified): its refs were never checked. Nothing is changed; a branch with no such run passes.
+# shellcheck disable=SC2034  # REFUSE_MORE is read by refuse (lib/gitflow.sh)
+run_verified_gate() {
+  local slug=${1#agent/} rp d line n=0 lines='' rname
+  local -a names=()
   reg_load; rp=$(readlink -f -- "$REPO" 2>/dev/null) || rp=$REPO
   for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
     line=${LRUNS[$d]}
     [ "$(jq -r --arg s "$slug" --arg p "$rp" 'select(.slug == $s and ((.repo // "") == "" or .repo == $p) and ((.cleaned // "") == "")) | "x"' <<<"$line" 2>/dev/null)" = x ] || continue
     [ -d "$d" ] || continue
     [ -z "$(jq -r '.verified // ""' <<<"$line" 2>/dev/null)" ] && [ ! -f "$d/verified" ] || continue
-    echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
+    n=$((n + 1)); lines+="  $d: qargi local verify $d"$'\n'
+    rname=${d%/}; rname=$(printf '%s' "${rname##*/}" | tr -d '[:cntrl:]' | tr ',' '_' | cut -c1-200); names+=("${rname:-run}")
   done
+  [ "$n" -gt 0 ] || return 0
+  REFUSE_MORE="the refs of the repository were never checked for ${n} run(s) of $1; verify each, then merge:"$'\n'"${lines%$'\n'}"
+  refuse feature-merge-unverified verb="$2" branch="$1" count="$n" runs="$(IFS=,; echo "${names[*]}")"
 }
 # open_run_gate NAME -> refuses (feature-runs-open: the count and the names of the runs, and a `more:` line that lists each run with the command that closes it) when a run of
 # feature/NAME is open: prepared and not verified, verified and not applied, or applied and not merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a
@@ -246,6 +257,7 @@ feature_finish_resume() {
   h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
   tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record:name" --verb "feature finish" --target "$PROJ:$NAME_ARG")
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
+  echo "  merge into: develop; $([ -n "$pushd" ] && echo "push: yes, to origin/develop (origin holds the merge already)" || echo "push: no, develop stays local ($pushwhy)")"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
@@ -325,7 +337,7 @@ case $verb in
     [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
     g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $BR"
-    run_warning "$EXTRA"
+    run_verified_gate "$EXTRA" "feature merge"
     detached_mix "$EXTRA" "$BR"
     need_free_wt "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
@@ -388,20 +400,25 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     suite_env_prepare "qargi feature verify $NAME_ARG" "$BR" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin verify "$NAME_ARG"   # from here to the end of the verb, the wait for the slot included: a second verify of this name sees it (busy_same_refuse)
     worktree "$h"
-    suite_env_claim_now   # the waiver is used here, after the worktree and before the log (a refusal above spends nothing)
+    hold_begin "$NAME_ARG"   # the lease is kept while the run waits its turn, too
+    other_runs_warning
+    squeue_acquire "feature verify" "$NAME_ARG" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
+    suite_env_claim_now   # the waiver is used here, after the worktree and the slot and before the log (a refusal above spends nothing)
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    other_runs_warning
-    hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
-    t0=$SECONDS
+    t0=$SECONDS   # after the wait: the seconds of the record are the suite's
+    history_prepare "feature verify" "$NAME_ARG" "$BR" "$h"
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
-    busy_end; hold_end
     suite_env_settle
+    history_end "$res"
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$BR")$(suite_env_note "$BR")"
     [ "$res" = pass ] || suite_failure_report
+    squeue_release   # last: the log, the gate list and the reports of the launcher are named by the feature, and the next run of this name rewrites them as soon as it has the slot
+    busy_end; hold_end
     [ "$res" = pass ];;
   finish)
     if [ -z "$DRY_RUN" ]; then marshal_gate "$NAME_ARG"
@@ -469,7 +486,8 @@ case $verb in
     elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
     else pushd=1; fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha develop:sha keep:label delete-merged:label origin-branch:sha push:label" --verb "feature finish" --target "$PROJ:$NAME_ARG")
-    if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
+    if [ -n "$pushd" ]; then echo "push: yes, to origin/develop"; else echo "push: no, develop stays local ($pushwhy)"; fi
+    echo "merge into: develop"
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     # the commits the lead made with git on the branch, which the deletion takes into the journal (journal_reach): how many, and from where to where

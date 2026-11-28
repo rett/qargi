@@ -1,0 +1,75 @@
+{
+ "schema": 2,
+ "kind": "qargi-marshal-check",
+ "project": "app",
+ "integrity": "advisory",
+ "backend": "refs",
+ "remote": "checked",
+ "feature": null,
+ "answer": null,
+ "lead": null,
+ "warnings": [],
+ "features": [
+  {
+   "feature": "r1",
+   "project": "app",
+   "status": "active",
+   "lead": {
+    "id": "alice",
+    "user": "user",
+    "host": "host",
+    "since": "1970-01-12T15:33:40Z",
+    "worktree": "0123456789abcdef"
+   },
+   "lease": "live",
+   "lease_clock": "observed-here",
+   "minutes_since_renewal": 10,
+   "ttl_minutes": 15,
+   "renewed_at": "1970-01-12T15:33:40Z",
+   "rev": 1,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "alice",
+   "purpose": "",
+   "goal": "shared",
+   "plan": "",
+   "note": "",
+   "finished_at": null,
+   "provisional": false,
+   "integrity": "unsigned",
+   "integrity_note": "",
+   "signer": "",
+   "warnings": []
+  },
+  {
+   "feature": "r2",
+   "project": "app",
+   "status": "unled",
+   "lead": null,
+   "lease": "none",
+   "lease_clock": "observed-here",
+   "minutes_since_renewal": null,
+   "ttl_minutes": 15,
+   "renewed_at": null,
+   "rev": 0,
+   "branch": true,
+   "ghost": false,
+   "updated_by": "",
+   "purpose": "",
+   "goal": "",
+   "plan": "",
+   "note": "",
+   "finished_at": null,
+   "provisional": false,
+   "integrity": "unsigned",
+   "integrity_note": "",
+   "signer": "",
+   "warnings": [
+    {
+     "text": "feature r2 has no lead (unled): claim or take it",
+     "severity": "info"
+    }
+   ]
+  }
+ ]
+}

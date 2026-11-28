@@ -113,10 +113,12 @@ grep -q "vertask (build) .*, verified$" "$T/o" && ok "status: RUN/verified reads
 grep -q "regvertask (build) .*, verified, directory gone$" "$T/o" && ok "status: the registry's verified mark reads verified when the directory is gone" || no "SPEC verified mark: $(out)"
 ! grep -q "donetask (build)" "$T/o" && grep -q "^  cleaned: donetask$" "$T/o" && ok "status: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC cleaned: $(out)"
 M $t0 status f5 --json; jq -e '.features[0] | [.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
-# feature merge warns of a run that exists and has no passing verify, and only of that
+# feature merge refuses a branch whose run exists and has no passing verify, and only that one
 agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from donetask feature/f5
+h5=$(git -C "$R" rev-parse feature/f5)
 "$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?
-[ $rc = 0 ] && grep -q "warning: the run $T/run-open of agent/opentask has no passing verify" "$T/e" && ok "feature merge: warns when the branch's run exists and was never verified (the merge goes on)" || no "SPEC merge warning: rc=$rc $(out)"
+[ $rc = 1 ] && grep -q '"code":"feature-merge-unverified","exit":1,"verb":"feature merge"' "$T/e" && grep -q "^qargi: refused \[feature-merge-unverified\] 1 run(s) of agent/opentask have no passing verify: run-open$" "$T/e" \
+  && grep -q "qargi local verify $T/run-open" "$T/e" && grep -q "qargi local clean RUN --discard" "$T/e" && [ "$(git -C "$R" rev-parse feature/f5)" = "$h5" ] && ok "feature merge: refuses (feature-merge-unverified) when the branch's run exists and was never verified, and changes nothing" || no "SPEC merge refusal: rc=$rc $(out)"
 "$DA" feature merge f5 agent/vertask >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a verified run" || no "SPEC merge verified: rc=$rc $(out)"
 "$DA" feature merge f5 agent/donetask >"$T/o" 2>"$T/e"; rc=$?
