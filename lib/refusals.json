@@ -434,7 +434,7 @@
       "status": "live",
       "fields": {"verb": "verb", "branch": "ref", "count": "count", "runs": "name-list"},
       "message": "{count} run(s) of {branch} have no passing verify: {runs}",
-      "next": {"lead": "run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed", "host": "run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed"}
+      "next": {"lead": "run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed", "host": "run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed"}
     },
     "suite-queue-busy": {
       "rule": "A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out",

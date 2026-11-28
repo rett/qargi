@@ -37,10 +37,14 @@ def task_done(out):
 
 def write_facts(report_path, verdict_line, rman):
     """The facts of a report-only run that the history of the project keeps (lib/history.py), written only when the lead's `qargi review check` asks for them
-    (QARGI_REVIEW_FACTS names the file) and never in a member's check: the verdict word, the sha256 of the bytes of the report and the manifest's tests_run.
+    (QARGI_REVIEW_FACTS names the file) and never in a member's check (QARGI_MEMBER_RUN, or a current directory in a run): the verdict word, the sha256 of the bytes of the report and the manifest's tests_run.
     The report's text is not copied. A failure to write them is no failure of the check."""
     dest = os.environ.get("QARGI_REVIEW_FACTS")
     if not dest or os.environ.get("QARGI_MEMBER_RUN"):
+        return
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import marshal_refs
+    if marshal_refs.in_member_run():                  # a member of the lead's own session has no QARGI_MEMBER_RUN: its directory is in a run
         return
     try:
         with open(report_path, "rb") as f:

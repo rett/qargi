@@ -690,6 +690,11 @@ out=$($DA review apply "$R54" 2>&1); rc=$?
 out=$(QARGI_MEMBER_RUN=$R55 $DA review apply "$R55" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(runs)" = 0 ] && grep -qx "scrub: not run (a member's apply; the lead's apply runs it)" <<<"$out"; } \
   && ok "a member's apply does not run the scrub and says so" || no "member apply: rc=$rc runs=$(runs) $out"
+# the lead's apply made from a directory in the run (a cd kept from running a DONE) still runs the declared scrub: only the variable skips it
+: > "$CNT"; R55B=$(newrun applyinrun)
+out=$(cd "$R55B/clone" && $DA review apply "$R55B" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -qx 'scrub: ok' <<<"$out" && ! grep -q 'scrub: not run' <<<"$out" && git -C "$A" rev-parse -q --verify agent/applyinrun >/dev/null; } \
+  && ok "the lead's apply from a directory in the run runs the scrub" || no "apply in run: rc=$rc runs=$(runs) $out"
 # The patches are copied once: a member process that changes a patch while the scrub runs (here the scrub command does it, as it runs after the copy) changes what the
 # run directory holds, not what was scrubbed and applied; no copy is left behind.
 SWAP=$T/swap-target

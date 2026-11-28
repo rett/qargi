@@ -58,6 +58,11 @@ bad=$(grep -rlE 'CONFIRMED|PLAUSIBLE|not ready|ready with changes|High, Medium|\
 FL=skills/qargi-flow/SKILL.md
 has $FL 'qargi local prepare --role review --profile advisor' && has $FL 'full task block' && has $FL "--done 'qargi review check ../out --lead'" && has $FL 'qargi review check OUT' && has $FL 'qargi local clean' && ok "the advisor sign-off prepares a review run, gives it a full task block, checks and closes it" || no "the advisor sign-off step of qargi-flow"
 ! has $FL 'spawn it on that file' && ok "the advisor is not spawned on a bare file" || no "qargi-flow still spawns the advisor on a file with no run"
+# a reviewer's DONE is the check with --lead (a revise verdict is a good report, exit 1 without it), and a verdict is never changed to pass a check
+for f in contract/contract.md roles/review/ROLE.md skills/qargi-task/SKILL.md; do
+  has $f 'qargi review check \.\./out --lead' && has $f 'revise' && ok "$f gives a reviewer's DONE as qargi review check ../out --lead and a revise verdict as a good report" || no "$f does not give the reviewer's DONE with --lead"
+done
+has contract/contract.md 'never changed to make a check pass' && has roles/review/ROLE.md 'never change a verdict to make the check pass' && ok "the contract and the review role say a verdict is never changed to make a check pass" || no "no rule against changing a verdict to pass the check"
 
 # P7: a local member has no reference store: the roles name it only under a MEMORY section; the five steps are the contract's
 for r in build write; do

@@ -643,7 +643,9 @@ def lock_one(path, home, runtime, sig, kind="run"):
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
                     fail("the lock file %s is not a regular file; remove it" % shown)
-                busy = (wait != 0 and not my_turn(d, waited, waiter is not None)) or not take_flock(fd, d)    # a run that finds others waiting queues behind them
+                # a run that finds others waiting queues behind them. Its first try is not the end of a wait: a probe of `local list --lanes` may hold the lock at that very
+                # moment (btrfs), and the run must not say it waits for a holder that is not there, so the first try is repeated as the end of a bound is (--wait 0 tries once)
+                busy = (wait != 0 and not my_turn(d, waited, waiter is not None)) or not take_flock(fd, d, 0 if wait == 0 else SQ.RETRIES)
                 if busy:
                     if wait == 0:
                         raise lane_busy(home, runtime, shown, d, 0)

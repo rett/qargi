@@ -217,7 +217,7 @@ compares them with that page.
 - Exit 1, live.
 - Fields: `verb` (verb), `branch` (ref), `count` (count), `runs` (name-list).
 - Message: `{count} run(s) of {branch} have no passing verify: {runs}`
-- Next, for a lead: run qargi local verify RUN for each run named, then run {verb} again; nothing was merged or changed
+- Next, for a lead: run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed
 
 ## Class guard
 
