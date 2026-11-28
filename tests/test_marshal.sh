@@ -118,7 +118,7 @@ agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from doneta
 h5=$(git -C "$R" rev-parse feature/f5)
 "$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 1 ] && grep -q '"code":"feature-merge-unverified","exit":1,"verb":"feature merge"' "$T/e" && grep -q "^qargi: refused \[feature-merge-unverified\] 1 run(s) of agent/opentask have no passing verify: run-open$" "$T/e" \
-  && grep -q "qargi local verify $T/run-open" "$T/e" && [ "$(git -C "$R" rev-parse feature/f5)" = "$h5" ] && ok "feature merge: refuses (feature-merge-unverified) when the branch's run exists and was never verified, and changes nothing" || no "SPEC merge refusal: rc=$rc $(out)"
+  && grep -q "qargi local verify $T/run-open" "$T/e" && grep -q "qargi local clean RUN --discard" "$T/e" && [ "$(git -C "$R" rev-parse feature/f5)" = "$h5" ] && ok "feature merge: refuses (feature-merge-unverified) when the branch's run exists and was never verified, and changes nothing" || no "SPEC merge refusal: rc=$rc $(out)"
 "$DA" feature merge f5 agent/vertask >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a verified run" || no "SPEC merge verified: rc=$rc $(out)"
 "$DA" feature merge f5 agent/donetask >"$T/o" 2>"$T/e"; rc=$?
