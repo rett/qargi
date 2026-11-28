@@ -4,19 +4,13 @@
  "goal": "0.3.10: advisor findings F1",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-27T12:25:56Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-28T08:24:33Z",
- "finished_at": null,
+ "finished_at": "2026-11-28T08:36:55Z",
  "updated_by": "rett@arc",
- "rev": 35,
- "updated_at": "2026-11-28T08:24:33Z",
+ "rev": 36,
+ "updated_at": "2026-11-28T08:36:55Z",
  "feature": "release-0310",
  "project": "qargi"
 }
