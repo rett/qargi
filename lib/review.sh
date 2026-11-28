@@ -485,9 +485,10 @@ case $verb in
     [ ${#patches[@]} -gt 0 ] || die "$SRC/out/patches holds no patches: nothing to apply"
     [ ${#patches[@]} = "$n" ] || die "a patch of $SRC/out/patches changed while it was copied (not a regular file): nothing was applied"
     # The declared take-in scrub (review.scrub, review.trailer_policy) is the lead's: it runs here, before anything is made, unless a passing `review check` recorded
-    # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
+    # the same series (the record is over the patches and the declared scrub; a change to either runs it again). Only the member's variable skips it: the scrub is a check
+    # the lead runs, so the lead's apply made from a directory in a run (member_call) still runs it; the guard refuses a member `review apply`.
     if scrub_declared "$RUN"; then
-      if member_call; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
+      if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
       elif [ "$LC_SCHEMA" != true ] && scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
       else
         text=$(scrub_run "$RUN" "$AP" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
