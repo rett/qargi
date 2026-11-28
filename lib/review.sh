@@ -263,7 +263,7 @@ if [ "$verb" = save ]; then
     chmod 644 "$MAN"; mv -T -- "$MAN" "$SOUT/manifest.json" || die "could not write $SOUT/manifest.json"
     echo "wrote $SOUT/manifest.json (status DONE, commits: [])"
   fi
-  echo "next: qargi review check $SOUT"
+  echo "next: qargi review check $SOUT --lead"
   exit 0
 fi
 # pick_author: AUTH_MODE (reset | keep), AUTH ("Name <email>") and AUTH_SRC (where it comes from, or why the member's author stays) from the run's answers.

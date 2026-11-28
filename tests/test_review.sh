@@ -733,7 +733,7 @@ rorun() { $DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T
 MSG=$T/message.md; printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\nverdict: accept\n' > "$MSG"
 RV1=$(rorun savea)
 out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
-{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -q "review check $RV1/out" <<<"$out"; } \
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -qx "next: qargi review check $RV1/out --lead" <<<"$out"; } \
   && ok "review save stores the message as OUT/report.md, writes a manifest and says what it wrote" || no "save: rc=$rc $out"
 { [ "$(jq -r '.status' "$RV1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$RV1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.branch' "$RV1/out/manifest.json")" = develop ] \
   && [ "$(jq -r '.base.sha' "$RV1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] && jq -e '.done and .gates == [] and .touched_paths == [] and .artifacts[0].kind == "report"' "$RV1/out/manifest.json" >/dev/null; } \
