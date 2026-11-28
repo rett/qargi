@@ -733,7 +733,7 @@ rorun() { $DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T
 MSG=$T/message.md; printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\nverdict: accept\n' > "$MSG"
 RV1=$(rorun savea)
 out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
-{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -q "review check $RV1/out" <<<"$out"; } \
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -qx "next: qargi review check $RV1/out --lead" <<<"$out"; } \
   && ok "review save stores the message as OUT/report.md, writes a manifest and says what it wrote" || no "save: rc=$rc $out"
 { [ "$(jq -r '.status' "$RV1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$RV1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.branch' "$RV1/out/manifest.json")" = develop ] \
   && [ "$(jq -r '.base.sha' "$RV1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] && jq -e '.done and .gates == [] and .touched_paths == [] and .artifacts[0].kind == "report"' "$RV1/out/manifest.json" >/dev/null; } \
@@ -761,4 +761,9 @@ cp -r "$RV2" "$T/qargi.copy12"; out=$($DA review save "$T/qargi.copy12" < "$MSG"
 out=$(QARGI_MEMBER_RUN=$RV2 $DA review save "$RV2" < "$MSG" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "lead's" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save with the member mark set is refused" || no "save as member: rc=$rc $out"
 $DA review save >/dev/null 2>&1; [ $? = 2 ] && ok "review save with no RUN is a usage error" || no "save usage"
+# the lead's save made from a directory in the run (a cd kept from running a DONE) stores the report: only the variable refuses it, as for apply
+RV3=$(rorun saveinrun)
+out=$(cd "$RV3/clone" && $DA review save "$RV3" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV3/out/report.md" && grep -q "wrote $RV3/out/report.md" <<<"$out"; } \
+  && ok "the lead's save from a directory in the run stores the report" || no "save in run: rc=$rc $out"
 exit $fail

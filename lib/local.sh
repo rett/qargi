@@ -1777,7 +1777,7 @@ $vout}"
       chmod 644 "$RMAN"; mv -T -- "$RMAN" "$SOUT/manifest.json" || die "could not write $SOUT/manifest.json"
       echo "wrote $SOUT/manifest.json (status DONE, commits: [])"
     fi
-    echo "next: qargi review check $SOUT";;
+    echo "next: qargi review check $SOUT --lead";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy

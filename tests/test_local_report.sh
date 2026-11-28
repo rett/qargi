@@ -22,6 +22,7 @@ R1=$(prep rep1)
 out=$($DA local report "$R1" < "$MSG" 2>&1); rc=$?
 { [ $rc = 0 ] && cmp -s "$MSG" "$R1/out/report.md" && grep -q "wrote $R1/out/report.md" <<<"$out" && grep -q "wrote $R1/out/manifest.json" <<<"$out"; } \
   && ok "local report writes standard input as OUT/report.md and says what it wrote" || no "report: rc=$rc $out"
+grep -qx "next: qargi review check $R1/out --lead" <<<"$out" && ok "and its hint is the check with --lead: a verdict of revise is a good report" || no "report hint: $out"
 { [ "$(jq -r '.status' "$R1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$R1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.sha' "$R1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] \
   && jq -e '.artifacts == [{"path":"report.md","kind":"report"}]' "$R1/out/manifest.json" >/dev/null; } && ok "and a minimal manifest.json that names the report" || no "manifest: $(cat "$R1/out/manifest.json" 2>&1)"
 out=$($DA review check "$R1/out" 2>&1); rc=$?
