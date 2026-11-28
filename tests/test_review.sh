@@ -761,4 +761,9 @@ cp -r "$RV2" "$T/qargi.copy12"; out=$($DA review save "$T/qargi.copy12" < "$MSG"
 out=$(QARGI_MEMBER_RUN=$RV2 $DA review save "$RV2" < "$MSG" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "lead's" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save with the member mark set is refused" || no "save as member: rc=$rc $out"
 $DA review save >/dev/null 2>&1; [ $? = 2 ] && ok "review save with no RUN is a usage error" || no "save usage"
+# the lead's save made from a directory in the run (a cd kept from running a DONE) stores the report: only the variable refuses it, as for apply
+RV3=$(rorun saveinrun)
+out=$(cd "$RV3/clone" && $DA review save "$RV3" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV3/out/report.md" && grep -q "wrote $RV3/out/report.md" <<<"$out"; } \
+  && ok "the lead's save from a directory in the run stores the report" || no "save in run: rc=$rc $out"
 exit $fail

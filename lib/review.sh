@@ -224,7 +224,8 @@ if [ "$verb" = save ]; then
     esac
   done
   [ -n "${SRUN%/}" ] || usage_die "usage: qargi review save RUN [--force] < MESSAGE (the member's final message on standard input)"
-  ! member_call || die "qargi review save is the lead's: a member returns its report in its final message and the lead stores it"
+  # the lead's, as `review apply` is: the guard refuses it from a member. Only the variable refuses it here; the lead's save made from a directory in a run (member_call) stores the report
+  [ -z "${QARGI_MEMBER_RUN:-}" ] || die "qargi review save is the lead's: a member returns its report in its final message and the lead stores it"
   SRUN=${SRUN%/}
   [ -d "$SRUN" ] && [ ! -L "$SRUN" ] || die "$SRUN is not a run directory (a link, or no such directory): nothing was written"
   RUN=$(readlink -f -- "$SRUN") || die "no such run directory: $SRUN"
