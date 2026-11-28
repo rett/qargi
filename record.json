@@ -1,7 +1,7 @@
 {
  "purpose": "qargi 0.3.11: marshal federation (marshal enable --remote NAME, opaque per-machine instance ids, instance-scoped lead records)",
  "started": "2026-11-28T12:06:02Z",
- "goal": "qargi 0.3.11: marshal federation (marshal enable --remote NAME, opaque per-machine instance ids, instance-scoped lead records)",
+ "goal": "0.3.11 federation: design note to the Ataniq lead, then build",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-28T12:06:02Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-28T12:06:02Z",
+ "renewed_at": "2026-11-28T12:06:06Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 1,
- "updated_at": "2026-11-28T12:06:02Z",
+ "rev": 2,
+ "updated_at": "2026-11-28T12:06:06Z",
  "feature": "release-0311",
  "project": "qargi"
 }
