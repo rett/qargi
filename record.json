@@ -3,20 +3,14 @@
  "started": "2026-11-26T15:53:50Z",
  "goal": "0.3.9: versioned JSON output (J1), static run-plan checker, exit-0 hardening, 0.3.8 carry-over items",
  "plan": "",
- "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-26T15:53:50Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "note": "0.3.9 released and finished 2026-11-27; stale record closed on the owner's words",
+ "status": "released",
+ "lead": null,
  "renewed_at": "2026-11-26T15:53:50Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 1,
- "updated_at": "2026-11-26T15:53:50Z",
+ "rev": 2,
+ "updated_at": "2026-11-28T12:05:35Z",
  "feature": "release-039",
  "project": "qargi"
 }
