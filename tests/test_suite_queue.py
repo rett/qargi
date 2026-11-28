@@ -436,6 +436,139 @@ class Line(Base):
         self.assertTrue(lines[1].startswith("qargi: suite queue: position 1, holder is app release verify two (running "), lines[1])
         self.assertGreaterEqual(len(calls), 10)
 
+    def test_a_hand_over_is_not_a_line_but_a_holder_that_stays_unrecorded_is(self):
+        """The slot passes from one holder to the next through moments with the lock held and no record: seen for less than GRACE they say nothing, seen for longer
+        they are a line. A fake clock (the test's own sleep moves it) and a fake lock state; no real wait."""
+        d = Q.prepare(self.state)
+        away = os.open(os.path.join(d, "lock"), os.O_RDONLY)             # the descriptor of whoever holds the slot, on a description of its own
+        fcntl.flock(away, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        state = {"away": True}
+        self.addCleanup(lambda: state["away"] and os.close(away))
+        record = os.path.join(d, Q.RECORD)
+        other = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        poll = 0.4
+        self.assertLess(2 * poll, Q.GRACE, "the test needs two polls that are shorter than the grace")
+
+        def put(pid, name):
+            Q._write(record, dict(Q.info("app", "feature verify", name, "b" * 40), schema=1, pid=pid, start=Q.L.token(pid), started=int(time.time())))
+
+        def run(script, bound=None):
+            """script: {number of the sleep: what happens when it has passed}; returns (result, [(time, line)])."""
+            now, calls, lines = [0.0], [], []
+
+            class Err:
+                def write(self, text):
+                    lines.extend((now[0], l) for l in text.splitlines() if l)
+
+                def flush(self):
+                    pass
+
+            def sleep(seconds):
+                calls.append(seconds)
+                now[0] = round(now[0] + seconds, 6)
+                if len(calls) in script:
+                    script[len(calls)]()
+            fd = os.open(os.path.join(d, "lock"), os.O_RDONLY)           # the waiter's own descriptor: it holds the slot once taken, so it is closed at the end
+            try:
+                with mock.patch.object(Q.time, "sleep", sleep), mock.patch.object(Q, "lock_held", lambda _d: state["away"]):
+                    result = Q.acquire(d, fd, os.getpid(), Q.info("app", "release verify", "waits", ""), bound=bound, err=Err(), poll=poll, clock=lambda: now[0], parents=[])
+            finally:
+                os.close(fd)
+            return result, lines
+
+        def let_go():
+            state["away"] = False
+            os.close(away)
+        put(os.getpid(), "one")                                         # A holds the slot ...
+        gone = lambda: os.unlink(record)                                # ... lets go of its record (the lock is still held) ...
+        # ... and B has the lock and writes its record two polls later; then B lets go and the waiter takes the slot
+        (status, waited, holder), lines = run({2: gone, 4: lambda: put(other.pid, "two"), 6: let_go})
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn("holder is app feature verify one (running ", lines[0][1])
+        self.assertIn("holder is app feature verify two (running ", lines[1][1])
+        self.assertFalse([t for t, l in lines if "not recorded" in l], "a hand-over was reported as a state")
+        # the same hand-over, in which the record never comes back before the waiter takes the slot: still no line for it
+        state["away"] = True
+        away = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        fcntl.flock(away, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        put(os.getpid(), "three")
+        (status, waited, holder), lines = run({2: gone, 4: let_go})
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("holder is app feature verify three", lines[0][1])
+        # no record that lasts: the line comes once the same answer has been seen for the grace, and only once
+        os.unlink(record)                                               # (the waiter that took the slot above left its own)
+        state["away"] = True
+        away = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        fcntl.flock(away, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        (status, waited, holder), lines = run({8: let_go})
+        self.assertEqual(status, "ok")
+        self.assertEqual([l for t, l in lines], ["qargi: suite queue: position 1, holder is not recorded"])
+        when = lines[0][0]
+        self.assertGreaterEqual(when, Q.GRACE)
+        self.assertLess(when, Q.GRACE + poll + 1e-6, "the line waited longer than the grace and one poll")
+        # a holder that was killed (a record that names nobody alive, the lock still held) is a state that lasts: its line has no grace
+        state["away"] = True
+        away = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        fcntl.flock(away, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        Q._write(record, dict(Q.info("app", "feature verify", "killed", ""), schema=1, pid=dead.pid, start="1", started=int(time.time())))
+        (status, waited, holder), lines = run({2: let_go})
+        self.assertEqual(status, "ok")
+        self.assertEqual([t for t, l in lines], [0.0])
+        self.assertIn("whose verb is gone", lines[0][1])
+
+    def test_a_poll_reads_the_record_of_the_holder_once(self):
+        """The grace, the key and the line of a poll all go by one read of the record: a record written between what used to be separate reads neither skips the
+        grace nor prints the new holder twice. read_holder is faked with a sequence of answers, one per call; a fake clock; no real wait."""
+        d = Q.prepare(self.state)
+        away = os.open(os.path.join(d, "lock"), os.O_RDONLY)             # whoever holds the slot, on a description of its own
+        fcntl.flock(away, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        state = {"away": True}
+        self.addCleanup(lambda: state["away"] and os.close(away))
+        other = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+
+        def rec(pid, name):
+            return Q._clean(dict(Q.info("app", "feature verify", name, "b" * 40), schema=1, pid=pid, start=Q.L.token(pid), started=int(time.time())), {"started": int(time.time())})
+        answers = [None, rec(other.pid, "two")]                          # the first look finds no record, every look after it finds the new holder's
+        reads, now, lines = [], [0.0], []
+
+        def read_holder(_d):
+            reads.append(now[0])
+            return answers[min(len(reads), len(answers)) - 1]
+
+        class Err:
+            def write(self, text):
+                lines.extend(l for l in text.splitlines() if l)
+
+            def flush(self):
+                pass
+        polls = []
+
+        def sleep(seconds):
+            polls.append(seconds)
+            now[0] = round(now[0] + seconds, 6)
+            if len(polls) == 3:
+                state["away"] = False
+                os.close(away)
+        fd = os.open(os.path.join(d, "lock"), os.O_RDONLY)
+        try:
+            with mock.patch.object(Q.time, "sleep", sleep), mock.patch.object(Q, "lock_held", lambda _d: state["away"]), mock.patch.object(Q, "read_holder", read_holder):
+                status, waited, holder = Q.acquire(d, fd, os.getpid(), Q.info("app", "release verify", "waits", ""), err=Err(), poll=0.4, clock=lambda: now[0], parents=[])
+        finally:
+            os.close(fd)
+        self.assertEqual(status, "ok")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("holder is app feature verify two (running ", lines[0])
+        self.assertNotIn("not recorded", lines[0])
+        self.assertEqual(len(reads), len(polls), "the record was read more than once in a poll: %s" % reads)
+
     def test_a_wait_that_never_waited_prints_nothing_and_counts_zero(self):
         d = Q.prepare(self.state)
         fd = os.open(os.path.join(d, "lock"), os.O_RDONLY)

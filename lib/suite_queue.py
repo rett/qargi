@@ -16,6 +16,14 @@ a moment longer. The slot is a kernel lock (flock) on a file of the state direct
                             the waiters is the order of `enqueued`; a file of a process that is gone is ignored and removed by the next waiter. Only the first of the live
                             waiters tries the flock, which is what makes the order first in, first out and not whoever polls first.
 
+The line of the wait never reports a hand-over as a state. When a holder lets go, release() removes its record and only then does its shell close the descriptor, so for a
+moment the lock is held and no record names anybody; the same moment comes when a new holder has the flock and has not yet written its record. Both last a few milliseconds.
+A waiter that finds no record (and no record of a holder that was killed, which is a state that lasts) therefore says nothing of it until it has seen the same answer for
+GRACE seconds by its own clock (the clock acquire() is given, so a test sets it); a record that appears before then ends the doubt, and the line that names the new holder
+is the one that is printed. The order of release() stays (record, then descriptor): closing first would let a successor write its record between the check of the pid and
+the start token and the unlink, and the unlink would remove the successor's record for as long as it runs. `qargi suite status` is a snapshot and says "holder not recorded"
+when that is what it sees.
+
 The shape is that of lib/lane.py (a record of the holder, waiter files, a start token to tell a reused pid), which this module uses for those parts. The files sit in a
 directory only their user can write, but every field read from them is cut to plain characters before it is printed or compared.
 
@@ -25,7 +33,8 @@ directory only their user can write, but every field read from them is cut to pl
                                                         belongs to the open file description, so it stays held by the process that owns the descriptor after this
                                                         one exits), then write the record of the holder. OWNER is the pid of that process: the waiter file and the record
                                                         carry it, and this command stops when it is gone. While it waits it prints one line on standard error naming
-                                                        the holder and the position, again only when one of them changes. Exit 0 (taken), 4 (the bound ran out;
+                                                        the holder and the position, again only when one of them changes (a holder with no record at all, as in a hand-over, only after
+                                                        GRACE seconds). Exit 0 (taken), 4 (the bound ran out;
                                                         nothing was taken or left behind), 3 (the owner is gone), 5 (the holder is a parent of the owner: the run was
                                                         started from inside the suite that holds the slot, and would wait for itself for ever; nothing was taken or left behind),
                                                         1 (an error), 2 (a wrong call). RESULT gets `status=ok|busy|reentry`, `waited=SECONDS` (whole seconds, rounded up, 0 when
@@ -70,6 +79,8 @@ EX_GONE = 3
 EX_REENTRY = 5
 RETRIES = 3         # more tries of the flock, PAUSE apart, before a run whose bound has run out is refused: a probe of `suite status` holds the lock for a moment only
 PAUSE = 0.02
+GRACE = 1.0         # seconds a waiter sees "held, no record of the holder" (or "free, no record") before it prints a line for it: a hand-over passes in milliseconds
+NOTHING = object()   # describe() was given no record to go by: it reads one
 TEXT = re.compile(r"[^A-Za-z0-9._:@+/ -]")
 HEAD = re.compile(r"^[0-9a-f]{7,64}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9]{0,23}$")
@@ -234,11 +245,12 @@ def lock_held(d):
     return None if h is None or h == L.UNKNOWN else bool(h)
 
 
-def describe(d, ahead, now=None):
-    """The one line of the wait: the holder and the position."""
+def describe(d, ahead, now=None, raw=NOTHING):
+    """The one line of the wait: the holder and the position. `raw` is the record of the holder as read_holder() gave it (None for none) when the caller read it
+    already: the line then says what the caller decided on, not what a second read finds."""
     now = now or time.time()
-    rec = live_holder(d)
-    gone = read_holder(d)
+    gone = read_holder(d) if raw is NOTHING else raw
+    rec = gone if gone and L.alive(gone["pid"], gone["start"]) else None
     if rec and rec["started"] is not None:
         who_ = "holder is %s (running %s)" % (holder_text(rec), age_text(now - rec["started"]))
     elif rec:
@@ -298,6 +310,7 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
 
     put()
     t0, shown, had_to_wait = clock(), None, False
+    seen, since = None, t0                              # the answer of the last look and the time it was first seen
     try:
         while True:
             if not L.alive(me["pid"], me["start"]):
@@ -310,12 +323,17 @@ def acquire(d, fd, owner, inf, bound=None, err=None, poll=POLL, clock=time.monot
             if ahead == 0 and take():
                 return "ok", int(math.ceil(clock() - t0)) if had_to_wait else 0, ""
             had_to_wait = True
-            rec = live_holder(d)
+            raw = read_holder(d)                        # the record is read once a poll: the key, the grace and the line all go by this one read
+            rec = raw if raw and L.alive(raw["pid"], raw["start"]) else None
             if rec and rec["pid"] in parents:
                 return "reentry", 0, holder_text(rec)
             key = (ahead, rec["pid"] if rec else None, rec["start"] if rec else None)
-            if key != shown:
-                print(describe(d, ahead), file=err)
+            if key != seen:
+                seen, since = key, clock()
+            # no record at all (not even one of a holder that was killed) is what a hand-over looks like for a moment: it gets a line only when it lasts
+            unsettled = raw is None
+            if key != shown and (not unsettled or clock() - since >= GRACE):
+                print(describe(d, ahead, raw=raw), file=err)
                 err.flush()
                 shown = key
             elapsed = clock() - t0
