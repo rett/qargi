@@ -30,6 +30,12 @@
   "applies": "both"
  },
  {
+  "file": "valid-vanished.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
   "file": "valid-yours.json",
   "expect": "valid",
   "rule": null,

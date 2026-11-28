@@ -101,7 +101,7 @@ for f in "$T"/raw/*; do
   k=$(kind_of "$f"); n=$((n + 1))
   msg=$(lint "$k" "$f" "$(basename "$f")") && ok "scenario $(basename "$f"): one valid $k document, no field the registry does not name" || no "scenario: $msg"
 done
-[ "$n" = 13 ] && ok "the scenario printed the 13 documents of the four kinds" || no "the scenario printed $n files, not 13"
+[ "$n" = 14 ] && ok "the scenario printed the 14 documents of the four kinds" || no "the scenario printed $n files, not 14"
 
 # ================================================================ (3) the local backend
 NOW=1000000

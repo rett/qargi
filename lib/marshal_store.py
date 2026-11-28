@@ -325,6 +325,7 @@ class LocalBackend:
     """One JSON file per feature in $STATE/features, this machine only (the default). The lease is the wall clock: renewed_at."""
     refs = False
     integrity = "off"
+    doubts = {}                   # no integrity reading, so no doubt of it
     ghost_fix = True              # a record whose branch is gone is abandoned on a read
     no_age = "stale"              # the lease of a record without a readable renewed_at
     clock = "wall"                # what `lease` and `minutes_since_renewal` are measured on (the field lease_clock of the documents)
@@ -463,6 +464,7 @@ class Integrity:
         self.tags = {}
         self.pre = {}
         self.notes = []
+        self.doubts = {}      # name -> the note of a feature whose ref vanished from the remote with no done record: the record this machine accepted cannot be trusted as stated
         self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
     def classify(self, kind, name, rec, parents, message):
@@ -667,7 +669,9 @@ class Integrity:
         for name in sorted(marks):
             unsigned_done = name in done and self.tags.get(("done", name), ("unsigned",))[0] != "signed"      # advisory uses it as it is, as before
             if "refs/qargi/features/" + name not in heads and name not in cleared and not unsigned_done:
-                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)))
+                text = "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)
+                self.notes.append((name, text))
+                self.doubts[name] = text      # printed on standard error with the other notes, and a damaging warning of the feature's row in a check
         return view, base, bad
 
 
@@ -677,6 +681,7 @@ class RefsBackend:
     not reached the remote yet (state: provisional). The lease is the time an oid stayed unchanged on THIS machine's monotonic
     clock, never a wall-clock comparison. A read verb fetches (unless --no-fetch or inside a member run) and never pushes."""
     refs = True
+    doubts = {}                   # as of the last read (RefsBackend.load): see Integrity.doubts
     ghost_fix = False
     no_age = "live"
     clock = "observed-here"
@@ -729,10 +734,10 @@ class RefsBackend:
             bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
             if guard:
                 view, based, bad = guard.settle(feats, done, ignored, heads, self.persist, ctx.name)
-                notes = guard.notes
+                notes, self.doubts = guard.notes, guard.doubts
             else:
                 view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
-                notes = []
+                notes, self.doubts = [], {}
             # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
             ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=self.persist)
         finally:
@@ -1697,9 +1702,10 @@ def v_resign(ctx, a):
 
 def warnings_for(ctx, d, rec_exists):
     """The warnings of a feature row, each {"text": the sentence, "severity": "info" or "damaging"}. A warning is damaging when it means that the evidence of
-    the record cannot be trusted as stated; none of the five below says that (an abandoned feature, a stale lead, a restarted session, no lead, files that
-    another open feature also changes are facts about the work, not doubts about the record: the record's own integrity is the row's `integrity`), so
-    every warning is info. docs/reference/json-output.md says the same."""
+    the record cannot be trusted as stated: the one that says the ref of the feature vanished from the remote with no done record (it was deleted or rewound) is
+    the only one (a doubt of the integrity reading, kept in the backend's `doubts`). The others (an abandoned feature, a stale lead, a restarted session, no lead,
+    files that another open feature also changes) are facts about the work, not doubts about the record, so they are info. docs/reference/json-output.md says the
+    same."""
     w = []
 
     def warn(text, severity="info"):
@@ -1716,7 +1722,16 @@ def warnings_for(ctx, d, rec_exists):
         warn("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
     for o, fs in d.get("overlap", {}).items():
         warn("feature %s changes files that feature/%s also changes: %s" % (d["feature"], o, " ".join(clean(f) for f in fs[:10])))
+    if d["feature"] in ctx.be.doubts:
+        warn(clean(ctx.be.doubts[d["feature"]]), "damaging")
     return w
+
+
+def say_warning(ctx, w):
+    """The line of a warning on standard error. A doubt of the integrity reading was printed when the records were read: it is not said twice."""
+    if w["severity"] == "damaging" and ("", w["text"]) in getattr(ctx.be, "warned", ()):
+        return
+    print("qargi: warning: " + w["text"], file=sys.stderr)
 
 
 def renew_own(ctx, name, rec):
@@ -1765,7 +1780,7 @@ def v_check(ctx, a):
         d = describe(ctx, a.name, rec, {})
         warns = warnings_for(ctx, d, rec is not None)
         for w in warns:
-            print("qargi: warning: " + w["text"], file=sys.stderr)       # the document carries them too: a person watching standard error still sees them
+            say_warning(ctx, w)       # the document carries them too: a person watching standard error still sees them
         answer = "yours" if ld and ld["id"] == ctx.id else ("free-stale" if ld else "free")
         if a.json:
             write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),
@@ -1781,7 +1796,7 @@ def v_check(ctx, a):
         if not a.json:
             print(brief_line(d))
         for w in warns:
-            print("qargi: warning: " + w["text"], file=sys.stderr)
+            say_warning(ctx, w)
         rows.append(dict({k: v for k, v in d.items() if k not in DERIVED}, warnings=warns))
     if a.json:
         write_stdout(json_document("qargi-marshal-check", {"schema": 2, "kind": "qargi-marshal-check", "project": ctx.project, "integrity": ctx.be.integrity, "backend": backend_of(ctx),

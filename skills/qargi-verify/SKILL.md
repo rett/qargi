@@ -21,6 +21,7 @@ For each run:
 
 - Local: `qargi review apply RUN_DIR` makes `agent/<slug>` (the slug it prints) in a temporary base worktree. Cloud: `git am --3way` the `*.patch` files in name order on a scratch base checkout.
 - Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE of `RUN_DIR/task.md` verbatim. Check each commit builds.
+- A whole-suite run (`feature verify`, `release verify`) waits in a per-user queue (`qargi suite status` shows it, `--queue-wait SECONDS` bounds it); a suite run by hand goes through `qargi suite run -- CMD`.
 - Anything the profile marks for a second-model review gets one first.
 
 ## 3. Report, then merge

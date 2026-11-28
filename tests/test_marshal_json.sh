@@ -454,5 +454,34 @@ rm -f "$T/m/a/s/audit.log"
 call XE a QARGI_REMOTE_TIMEOUT=2 marshal check r1 --as alice --no-write --assume-unreachable-ok --json
 [ "$RC" = 0 ] && jq -e '.remote == "not-asked"' "$T/o" >/dev/null && [ ! -e "$T/m/a/s/audit.log" ] && ok "check --no-write --assume-unreachable-ok (refs): no audit line" || no "check refs --no-write --assume: rc=$RC $(cat "$T/e"; cat "$T/m/a/s/audit.log" 2>&1)"
 mv "$ORIGIN.gone" "$ORIGIN"
+
+# ================================================================ (10) a ref that vanished from the remote with no done record: a warning of severity damaging in the row of its feature
+# (machine k signs its records, so a read of them accepts them; v1 then vanishes, v2 stays)
+make_machine k
+for n in v1 v2; do git -C "$T/m/k/app" branch "feature/$n" develop; done
+jq '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}' "$T/m/k/c/projects/app.json" > "$T/m/k/c/p.tmp" && mv "$T/m/k/c/p.tmp" "$T/m/k/c/projects/app.json"
+own() { local tk; XE k marshal "$@"; tk=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"); [ -n "$tk" ] || return 97; XE k marshal "$@" --plan "$tk" --approved "$WORDS"; }
+en k || no "setup: enable the shared refs on machine k: $(out)"
+own key init --principal k@test >/dev/null; line=$(grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' "$T/o" | sed 's/^[[:space:]]*//')
+own signers add --line "$line" >/dev/null
+jq '.integrity = "advisory"' "$T/m/k/s/marshal/app.enabled" > "$T/en.tmp" && mv "$T/en.tmp" "$T/m/k/s/marshal/app.enabled"
+call XE k marshal claim v1 --as alice --goal one; call XE k marshal claim v2 --as alice --goal two
+call XE k marshal status --all --json
+jq -e '[.features[] | select(.integrity == "signed")] | length == 2' "$T/o" >/dev/null && ok "refs, integrity advisory: the two records of machine k are signed and read" || no "setup: signed records of k: $(head -c 400 "$T/o"; cat "$T/e")"
+git --git-dir="$ORIGIN" update-ref -d refs/qargi/features/v1
+VAN="refs/qargi/features/v1 vanished from the remote and there is no done/v1"
+call XE k marshal check v1 --as alice --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e --arg t "$VAN" '([.warnings[] | select(.severity == "damaging")] | length == 1) and (.warnings | length == 2) and ([.warnings[] | select(.severity == "damaging")][0].text | startswith($t))' "$T/o" >/dev/null \
+  && [ "$(grep -c "$VAN" "$T/e")" = 1 ] && ok "check NAME --json (refs): the vanished ref is one warning of severity damaging, and its line on standard error is said once" || no "check vanished: rc=$RC $(cat "$T/v"; head -c 600 "$T/o"; cat "$T/e")"
+call XE k marshal check --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e --arg t "$VAN" '.warnings == [] and ([.features[] | select(.feature == "v1")][0].warnings | map(select(.severity == "damaging")) | length == 1) and ([.features[] | select(.feature == "v2")][0].warnings | map(select(.severity == "damaging")) | length == 0)' "$T/o" >/dev/null \
+  && [ "$(grep -c "$VAN" "$T/e")" = 1 ] && ok "check --json (refs): the damaging warning is in the row of v1 only; the other row and the top level have none; one line on standard error" || no "check all vanished: rc=$RC $(cat "$T/v"; head -c 600 "$T/o"; cat "$T/e")"
+call XE k marshal check v1 --as alice
+[ "$RC" = 0 ] && [ "$(grep -c "$VAN" "$T/e")" = 1 ] && ! grep -q "$VAN" "$T/o" && ok "check NAME (text): the vanished ref is said once on standard error and not on standard output" || no "check vanished (text): rc=$RC $(cat "$T/o" "$T/e")"
+call XE k marshal status --all --json
+[ "$RC" = 0 ] && valid qargi-marshal-status && jq -e '[.features[] | has("warnings")] | any | not' "$T/o" >/dev/null && ok "status --all --json (refs): a row carries no warnings, so the vanished ref is said on standard error only" || no "status vanished: rc=$RC $(cat "$T/v"; head -c 400 "$T/o")"
+call XE k marshal check v2 --as alice --json
+[ "$RC" = 0 ] && valid qargi-marshal-check && jq -e '.warnings == []' "$T/o" >/dev/null && ok "check NAME --json (refs): a feature whose ref is still there has no damaging warning" || no "check v2: rc=$RC $(head -c 400 "$T/o"; cat "$T/e")"
+
 [ "$fail" = 0 ] && echo "all ok" || echo "FAILURES"
 exit "$fail"
