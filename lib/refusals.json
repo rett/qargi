@@ -426,6 +426,26 @@
       "message": "{count} run(s) of this feature are still open: {runs}",
       "next": {"lead": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again", "host": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again"}
     },
+    "feature-merge-unverified": {
+      "rule": "A task branch is merged into a feature only when each of its runs passed local verify",
+      "why": "verify is what compares the refs of the repository with the ones the run was prepared on, so a run that never passed it may have moved a branch nobody looked at, and the merge would take its work in unchecked",
+      "class": "feature",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "branch": "ref", "count": "count", "runs": "name-list"},
+      "message": "{count} run(s) of {branch} have no passing verify: {runs}",
+      "next": {"lead": "run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed", "host": "run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed"}
+    },
+    "suite-queue-busy": {
+      "rule": "A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out",
+      "why": "two whole-suite runs of one user never overlap on a host, so a run waits for the slot of the one before it; a bound (--queue-wait SECONDS) lets a script or a supervisor stop waiting instead of holding its own verb for hours, and the refusal names the run that holds the slot so the wait is explained",
+      "class": "suite-queue",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "holder": "name", "waited": "count"},
+      "message": "the suite queue is busy: {holder} holds the slot, and the wait of {waited} s reached --queue-wait",
+      "next": {"lead": "qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt", "host": "qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt"}
+    },
     "methodology-no-flow": {
       "rule": "A verb of the git-flow shape runs only on a project whose methodology has that flow",
       "why": "the feature, release and hotfix verbs, and the others that need develop and master, cut and merge branches a plain methodology does not have, so on such a project they would act on branches that are not there; a methodology whose flow cannot be read is not run as git-flow either, because that would be a guess",

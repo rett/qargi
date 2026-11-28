@@ -60,7 +60,7 @@ fast | par | 300 | 2 | python3 tests/test_procenv.py | lib/procenv.py lib/env_ch
 # The launcher of a whole-suite run (verify.environment): 68 cases measured 19.2 to 19.5s on four runs on the reference machine; budget ceil(19.5 * 1.1) = 22s; the timeout is the 300s of its neighbours (the real-scope cases wait on systemd).
 fast | par | 300 | 22 | python3 tests/test_suite_env.py | lib/suite_env.py lib/procenv.py lib/paths.py lib/lib.sh
 # verify.environment in the flow verbs: the seam, the cpu codes, the waiver, the record and its staleness, a hand-edited answers file, the off case against what the tree before the feature printed, and the real scope where systemd makes one; about 30 verifies of a scratch project. Measured 100 and 108s on two runs beside another suite on the reference machine (78s before the rework alone): budget 110s, the timeout 3 times that.
-full | par | 330 | 110 | bash tests/test_suite_env_flow.sh | lib/gitflow.sh lib/feature.sh lib/release.sh lib/suite_env.py tests/fixtures/fake-systemd-run tests/fixtures/suite-env-off.golden
+full | par | 330 | 110 | bash tests/test_suite_env_flow.sh | lib/gitflow.sh lib/feature.sh lib/release.sh lib/history.py lib/suite_env.py tests/fixtures/fake-systemd-run tests/fixtures/suite-env-off.golden
 fast | par | 300 | 6 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 6 | python3 tests/test_upgrade.py | lib/upgrade.sh lib/install_record.py
 full | par | 300 | 36 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py lib/procenv.py
@@ -83,7 +83,8 @@ fast | par | 300 | 29 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 6 | bash tests/test_new.sh
 full | par | 300 | 62 | bash tests/test_adopt.sh
 full | par | 480 | 243 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh lib/lib.sh lib/lead_usage.py lib/merged.py lib/owned_refs.py
-full | par | 300 | 72 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh
+# NOT a measurement on the reference machine, an estimate to be re-recorded there at the next whole run: the queue checks (ten more verifies, waits of four seconds by the queue's own clock, two verifies of one name) roughly doubled this step. On the development host the step before the queue took 69s and with it 135s (alone, one after the other); the recorded 65s of the reference machine scaled by 135/69 gives 127s, recorded as 128s in tests/durations.txt, and the budget is that plus a tenth; the timeout is raised to keep the margin.
+full | par | 420 | 141 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh lib/history.py lib/suite_queue.sh lib/suite_queue.py
 fast | par | 300 | 2 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 8 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 4 | bash tests/test_verify_env.sh
@@ -109,10 +110,10 @@ full | par | 408 | 188 | bash tests/test_project.sh | lib/project.sh lib/owned_r
 full | par | 300 | 63 | bash tests/test_project_remove.sh | lib/project.sh lib/project_remove.py lib/project_link.py lib/suite_env.py lib/refusals.json lib/refusal.py lib/guard.py lib/commands.py lib/help.py tests/fixtures.sh tests/handseal.py
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 # The whole-suite verify at 77eac930 stopped it at 564 s under load: it measured 564 s while three steps ran in parallel on a slow host. The timeout is 1500 s; the budget stays at 277 s.
-full | par | 1500 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py
+full | par | 1500 | 281 | bash tests/test_local.sh | lib/local.sh lib/local_list.py lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py
 full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 # Local list and clean over many runs (the work done once for all of them, the legacy run's one line, clean --applied --legacy): 50 checks over eight synthetic runs measured 24 s in a member run (not the reference machine); recorded 24 s, budget ceil(24 * 1.10) = 27 s.
-full | par | 300 | 62 | bash tests/test_local_bulk.sh | lib/local.sh lib/lib.sh lib/merged.py lib/legacy_runs.py lib/commands.py tests/test_local_bulk.sh
+full | par | 300 | 75 | bash tests/test_local_bulk.sh | lib/local.sh lib/local_list.py lib/lib.sh lib/merged.py lib/legacy_runs.py lib/commands.py tests/test_local_bulk.sh
 fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/local_run.py lib/prepared_request.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi tests/attempt_fixture.py
 # Measured by a member on this host (not the reference machine): 590 s alone, with TMPDIR on disk. A whole run beside other steps took 790 s (as the lead saw it), too near the old timeout of 900 s, so the timeout is raised to 1200 s. The budget stays at 195 s: the time limit of the CI jobs (.github/workflows/test.yml, checked by tests/test_ci.py) has no room for a larger one until the workflow follows.
 full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attempts.py lib/local.sh lib/local_run.py lib/lib.sh lib/review.sh lib/lead_usage.py lib/marshal.sh tests/attempt_fixture.py tests/dummy_signin.py
@@ -124,8 +125,8 @@ full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attemp
 # would ask for 72 min of the 65-minute limit (tests/test_ci.py), so it follows when the limit is raised.
 full | serial | 2400 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
 # A private copy of the members' sign-in (dispatch.home.link[].private), its automatic refresh, the lane lock of a plain link (it outlives a killed runner, a replaced file is noticed), the holder line, --wait and local list --lanes: 94 cases, about 100 local prepare and run starts; 345 s alone on this host (not the reference machine) before the review rework of the lane, 410 s after it with a little load beside it, so the budget (380 s, unchanged here) is re-recorded from the next whole run; the timeout 1200 s.
-full | par | 1200 | 380 | bash tests/test_signin_copy.sh | lib/local*.sh lib/local*.py lib/lane.py lib/provider.py lib/providers/* lib/refusals.json lib/refusal.py tests/fixtures.sh tests/attempt_fixture.py
-full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
+full | par | 1200 | 382 | bash tests/test_signin_copy.sh | lib/local*.sh lib/local*.py lib/lane.py lib/provider.py lib/providers/* lib/refusals.json lib/refusal.py tests/fixtures.sh tests/attempt_fixture.py
+full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/done_words.py lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
 full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py packs/baseline.json packs/skills/*/SKILL.md
@@ -176,7 +177,7 @@ fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md a
 fast | serial | 300 | 2 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 37 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md
 fast | par | 300 | 26 | bash tests/test_gitflow_detached.sh
-fast | par | 300 | 26 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py
+fast | par | 300 | 26 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py lib/review.sh lib/review_check.py lib/history.py
 fast | par | 300 | 35 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 38 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
 fast | par | 300 | 1 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*
@@ -221,3 +222,9 @@ fast | par | 300 | 24 | bash tests/test_plan_record.sh | lib/refusal.py lib/plan
 fast | par | 300 | 61 | bash tests/test_plan_record_sites.sh | lib/refusal.py lib/plan.py lib/lib.sh lib/feature.sh lib/upstream.sh lib/release.sh lib/gitflow.sh lib/project.sh lib/provider.sh lib/registry.sh lib/cred.sh lib/packs.sh lib/marshal.sh
 # Role cards: 40 tests measured 14.5s in a member run (not the reference machine); recorded 15s, budget ceil(15 * 1.10) = 17s.
 fast | par | 300 | 17 | python3 tests/test_rolecard.py | lib/rolecard.py lib/role.py lib/commands.py lib/guard.py lib/refusals.json lib/local.sh lib/hook.sh lib/agent.sh roles/*/ROLE.md agents/member.body.md agents/member.md tests/golden/rolecard/*
+# The run plan checker (lib/run_plan.py): 58 tests measured 5.5s alone in a member run (not the reference machine), most of it the checker and bin/qargi started as processes; recorded 6s, budget ceil(5.5 * 1.10) = 7s.
+fast | par | 300 | 7 | python3 tests/test_run_plan.py | bin/qargi lib/run_plan.py lib/done_words.py lib/backlog_graph.py lib/role.py lib/paths.py lib/local.sh lib/jsonkind.py lib/commands.py lib/kinds/qargi-run-plan*.json docs/reference/run-plan.md tests/fixtures/run-plan/* tests/test_run_plan.py
+# The history of the whole-suite runs and review reports (lib/history.py and qargi history): 50 tests measured 5s alone in a member run (not the reference machine), most of it the verb started as a process; recorded 5s, budget ceil(5 * 1.10) = 6s.
+fast | par | 300 | 6 | python3 tests/test_history.py | bin/qargi lib/history.py lib/jsonkind.py lib/paths.py lib/commands.py lib/help.py lib/kinds/qargi-history*.json docs/reference/history.md tests/test_history.py
+# The queue of the whole-suite runs (lib/suite_queue.py, qargi suite): 27 tests measured 11s alone on the development host (not the reference machine) (a poll of 0.02s between helper processes; no fixed sleep); budget +10%.
+fast | par | 300 | 13 | python3 tests/test_suite_queue.py | bin/qargi lib/suite_queue.py lib/suite_queue.sh lib/suite.sh lib/lane.py lib/jsonkind.py lib/commands.py lib/help.py lib/guard.py lib/kinds/qargi-suite-queue.json docs/reference/suite-queue.md tests/test_suite_queue.py

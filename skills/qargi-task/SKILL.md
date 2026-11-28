@@ -22,7 +22,7 @@ If the first argument is not a session verb (`send`, `start`, `status`, `watch`,
 
 ## Task block
 
-`qargi local prepare` writes `RUN/task.md` with ROLE, TASK, DONE, BASE and SCOPE; never write one by hand. It prints `ROLE`, `CLASS`, `PROFILE`, `CONTRACT` and the paths. BASE defaults to the dispatching session's branch; name it on master or develop. DONE is executable and runs on final HEAD after all outcomes, and again after later changes; obtain a command for prose. Supply passing baseline evidence in TASK with exact BASE_SHA, matching check and input definitions, reference and provenance; the member records it in deviations[], never as gates[] pass. Cloud blocks (cloud.md) have the same sections.
+`qargi local prepare` writes `RUN/task.md` with ROLE, TASK, DONE, BASE and SCOPE; never write one by hand. It prints `ROLE`, `CLASS`, `PROFILE`, `CONTRACT` and the paths. BASE defaults to the dispatching session's branch; name it on master or develop. DONE is executable and runs on final HEAD after all outcomes, and again after later changes; obtain a command for prose. A review task's DONE is `qargi review check ../out --lead` (a `revise` verdict is a good report, and exits 1 without `--lead`). Supply passing baseline evidence in TASK with exact BASE_SHA, matching check and input definitions, reference and provenance; the member records it in deviations[], never as gates[] pass. Cloud blocks (cloud.md) have the same sections.
 
 ## Profiles
 

@@ -54,6 +54,7 @@ compares them with that page.
 | [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
 | [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | live | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | live | A feature is finished when none of its runs is open |
+| [`feature-merge-unverified`](#feature-merge-unverified) | feature | 1 | live | A task branch is merged into a feature only when each of its runs passed local verify |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
 | [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
 | [`ro-env-restricted`](#ro-env-restricted) | guard | 2 | live | A read-only run does not assign the variables that decide what runs |
@@ -124,6 +125,7 @@ compares them with that page.
 | [`runtime-drift`](#runtime-drift) | state | 1 | live | A run starts on the runtime it was prepared for |
 | [`runtime-signin-expiring`](#runtime-signin-expiring) | state | 1 | live | A member run starts only when its private copy of the sign-in outlasts the run |
 | [`lane-busy`](#lane-busy) | state | 1 | live | A member run that asked for a bounded wait starts only when the lane of its sign-in is free by then |
+| [`suite-queue-busy`](#suite-queue-busy) | suite-queue | 1 | live | A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out |
 | [`verify-env-invalid`](#verify-env-invalid) | verify-environment | 1 | live | The verify.environment answer is a valid declaration |
 | [`verify-env-change-unapproved`](#verify-env-change-unapproved) | verify-environment | 1 | live | A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted |
 | [`verify-env-cpu-no-systemd-run`](#verify-env-cpu-no-systemd-run) | verify-environment | 1 | live | With the cpu part on, the suite runs in a scope made by systemd-run |
@@ -207,6 +209,15 @@ compares them with that page.
 - Fields: `verb` (verb), `count` (count), `runs` (name-list).
 - Message: `{count} run(s) of this feature are still open: {runs}`
 - Next, for a lead: take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again
+
+### feature-merge-unverified
+
+- Rule: A task branch is merged into a feature only when each of its runs passed local verify.
+- Why: verify is what compares the refs of the repository with the ones the run was prepared on, so a run that never passed it may have moved a branch nobody looked at, and the merge would take its work in unchecked.
+- Exit 1, live.
+- Fields: `verb` (verb), `branch` (ref), `count` (count), `runs` (name-list).
+- Message: `{count} run(s) of {branch} have no passing verify: {runs}`
+- Next, for a lead: run qargi local verify RUN for each run named (or qargi local clean RUN --discard for a run you dropped, which cannot pass verify), then run {verb} again; nothing was merged or changed
 
 ## Class guard
 
@@ -872,6 +883,17 @@ compares them with that page.
 - Fields: `name` (label), `lock` (path), `wait` (count), `holder` (name), `age` (count).
 - Message: `the lane {lock} of {name} member runs is held by {holder} (for {age} s) and the wait of {wait} s ended: no member is started and no attempt is recorded`
 - Next, for a lead: start the run again when the lane is free: qargi local list --lanes shows the holder and the waiters; a longer --wait queues for longer, none queues without a bound (the default); the refusal used up no attempt, so no --again
+
+## Class suite-queue
+
+### suite-queue-busy
+
+- Rule: A whole-suite run that was given a bound on its wait for the suite queue is refused when the bound runs out.
+- Why: two whole-suite runs of one user never overlap on a host, so a run waits for the slot of the one before it; a bound (--queue-wait SECONDS) lets a script or a supervisor stop waiting instead of holding its own verb for hours, and the refusal names the run that holds the slot so the wait is explained.
+- Exit 1, live.
+- Fields: `verb` (verb), `holder` (name), `waited` (count).
+- Message: `the suite queue is busy: {holder} holds the slot, and the wait of {waited} s reached --queue-wait`
+- Next, for a lead: qargi suite status shows the holder and the waiters; run {verb} again when the holder has ended, or without --queue-wait to wait for the slot; nothing was run, recorded or counted as an attempt
 
 ## Class verify-environment
 

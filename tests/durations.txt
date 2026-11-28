@@ -8,7 +8,7 @@
 284 bash tests/test_packs_audit.sh
 839 python3 tests/test_pack_targets.py
 220 bash tests/test_flow.sh
-65 bash tests/test_fverify.sh
+128 bash tests/test_fverify.sh
 251 bash tests/test_local.sh
 97 bash tests/test_packs.sh
 5 bash tests/test_watch.sh
@@ -172,3 +172,6 @@
 72 bash tests/test_marshal_json.sh
 53 bash tests/test_json_live.sh
 345 bash tests/test_signin_copy.sh
+6 python3 tests/test_run_plan.py
+5 python3 tests/test_history.py
+11 python3 tests/test_suite_queue.py

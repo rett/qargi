@@ -24,8 +24,9 @@
 #                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
 #                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
 #                                           release.sign.files, and the project's release.after_steps (steps recorded by `finish`; `step` marks one done).
-#   release.sh verify VERSION [--hotfix] [--waive-environment PARTS --plan T --approved W]
-#                                           run the whole suite on the branch head (develop's head before a release starts); same warnings.
+#   release.sh verify VERSION [--hotfix] [--waive-environment PARTS --plan T --approved W] [--queue-wait SECONDS]
+#                                           run the whole suite on the branch head (develop's head before a release starts); same warnings. Before the suite starts
+#                                           it waits its turn in the queue of the whole-suite runs (as feature verify does; --queue-wait bounds the wait: suite-queue-busy).
 #                                           With the answer verify.environment the suite and each gate start through lib/suite_env.py; a part
 #                                           that cannot be applied refuses the run, and the waiver is as for feature verify (per run, audited)
 #                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
@@ -111,11 +112,12 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET='' QUEUE_WAIT=''; ASSETS=() ASSET_DIRS=()
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
     --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
+    --queue-wait) need_val "$1" $#; QUEUE_WAIT=$2; case $QUEUE_WAIT in ''|*[!0-9]*) usage_die "--queue-wait takes a whole number of seconds (0 refuses at once when the slot is not free)";; esac; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
@@ -133,6 +135,7 @@ done
 [ "$verb" = step ] || [ "$verb" = plan ] || [ -z "$AGAIN" ] || usage_die "--evidence and --again belong to release step (--again also to release plan)"
 [ "$verb" = verify ] || [ -z "$STRICT" ] || usage_die "--strict belongs to release verify"
 [ "$verb" = verify ] || [ -z "$WAIVE_SET" ] || usage_die "--waive-environment belongs to release verify"
+[ "$verb" = verify ] || [ -z "$QUEUE_WAIT" ] || usage_die "--queue-wait belongs to release verify"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || usage_die "--push belongs to release fix"
 [ "$verb" = fix ] || [ -z "$FIXREC" ] || usage_die "--record belongs to release fix"
 [ -z "$FIXREC" ] || [ -z "$FIXPUSH" ] || usage_die "--record and --push are two ways of taking a fix in: --record journals the commits and asks nothing, --push is release push"
@@ -518,6 +521,7 @@ release_finish_resume() {
   rb0=$(jq -r '.ctx.rb0' "$f"); k1=$(jq -r '.ctx.k1' "$f"); k2=$(jq -r '.ctx.k2' "$f"); PUSHED=''; [ "$(jq -r '.pushed' "$f")" != true ] || PUSHED=1
   tok=$(jq -S -c 'del(.done)' "$f" | plan_token --basis "record:name" --verb "release finish" --target "$PROJ:$VER")
   echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
+  echo "  merge into: master (tag $VER), then the tag into $second; $([ -n "$PUSHED" ] && echo "push: yes, to origin/master, origin/$second and the tag $VER (origin holds them already)" || echo "push: no, master and $second stay local (no origin)")"
   echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
@@ -1028,7 +1032,8 @@ case $verb in
       echo "$n. push: push $BR to origin and open the pull request into master, so CI runs on the commit that will be released (a branch that shares no history with master is joined first). The cut covers the branch as start leaves it, and a fix that changes only these paths goes on under this approval: $fixl (docs/ and the manual pages are outside: a manual page is generated from the code). A commit that changes any other path is pushed with the push's own plan (release fix VER --push), shown and approved on its own, and the cut goes on from there. qargi release fix $VER --record journals the commits and says which of the two applies."
     else echo "$n. push: not in this cut: the repository has no origin remote, so no CI runs; finish then needs a passing local whole-suite run at the head (qargi release verify $VER${HOTFIX:+ --hotfix})"; fi
     n=3
-    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
+    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR")$([ -n "$haspush" ] && echo ", then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE" || echo ". Nothing is pushed: the repository has no origin. THIS IS THE TAG GATE"): the approval words you give record that you released it. $([ -n "$haspush" ] && echo "Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed." || echo "Needs a passing local whole-suite run at the head of $BR (qargi release verify $VER${HOTFIX:+ --hotfix}) and the branch still at that head.")$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
+    echo "   merge into: master, then the tag into $second; push: $([ -n "$haspush" ] && echo "yes, to origin/master, origin/$second and the tag $VER" || echo "no, master and $second stay local (no origin)")"
     if [ -n "$site" ]; then echo "4. site: build the documentation site of the tag $VER and commit it on $SITE_BR (nothing is pushed)"; fi
     echo "publish is not in this cut: it creates the GitHub release of tag $VER with the changelog section as notes (and the release files, whose hashes exist only after the tag), and has its own plan after finish (qargi release publish $VER); skip it when the tag's release workflow publishes the release"
     echo "recorded in $CUTREC: the approval words, and each step as it runs; qargi release plan $VER${HOTFIX:+ --hotfix} (and release status) shows where the cut is, and a step can be run again after a refusal"
@@ -1174,25 +1179,30 @@ case $verb in
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     suite_env_prepare "qargi release verify $VER${HOTFIX:+ --hotfix}" "$on" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
+    busy_begin release-verify "$VER"   # from here to the end of the verb, the wait for the slot included: a second verify of this version sees it (busy_same_refuse)
     worktree "$h"
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
     [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
-    suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict refusal above spends nothing)
+    other_runs_warning
+    squeue_acquire "release verify" "$VER" "$h" "$QUEUE_WAIT"   # the slot of the queue, until the suite has ended and its log is read; at the --queue-wait bound the run is refused here, and nothing is spent
+    suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict or a --queue-wait refusal above spends nothing)
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
-    other_runs_warning
-    busy_begin release-verify "$VER"
-    t0=$SECONDS
+    t0=$SECONDS   # after the wait: the seconds of the record are the suite's
+    history_prepare "release verify" "$VER" "$on" "$h"
     if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
-    busy_end
     suite_env_settle
+    history_end "$res"
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")$(suite_env_note "$on")"
+    frep=''; [ "$res" = pass ] || frep=$(suite_failure_report)   # read now, printed below: the log is the next run's as soon as the slot is let go
+    squeue_release   # after the readers of the log, the gate list and the reports of the launcher (named by the version: the next run of this name rewrites them once it has the slot), before the checks that ask GitHub
+    busy_end
     if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
-    [ "$res" = pass ] || suite_failure_report
+    [ -z "$frep" ] || printf '%s\n' "$frep"
     [ "$res" = pass ];;
   fix)
     # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change
@@ -1217,6 +1227,8 @@ case $verb in
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
     tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project:name branch:ref head:sha join:label master:sha" --verb "release push" --target "$PROJ:$VER")
+    echo "push: yes, to origin/$BR (no other branch is pushed; a plain push, never forced)"
+    echo "merge into: master, by the pull request this push opens or updates (finish merges it later)"
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
@@ -1327,7 +1339,9 @@ case $verb in
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token --basis "project:name branch:ref head:sha second:ref master:sha second-head:sha keep:label ignore-checks:label" --verb "release finish" --target "$PROJ:$VER")
-    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
+    echo "merge into: master (tag $VER on the merge commit), then the tag into $second"
+    if g remote get-url origin >/dev/null 2>&1; then echo "push: yes, to origin/master, origin/$second and the tag $VER (all or none)"; else echo "push: no, master and $second stay local (the repository has no origin)"; fi
+    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR")$(! g remote get-url origin >/dev/null 2>&1 || echo ", push master, $second and the tag together (all or none)")"
     # the commits the lead made with git on the branch (a fix, the entries of a hotfix), which the deletion takes into the journal (journal_reach): how
     # many, and from where to where. For origin's branch when it is at the head that is released, as the apply requires (a push by hand is counted there)
     if [ -z "$KEEP" ]; then

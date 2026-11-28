@@ -1,29 +1,38 @@
 {
   "registry": 1,
   "kind": "qargi-marshal-check",
-  "schema": 1,
+  "schema": 2,
   "status": "pinned",
   "since": "0.3.9",
   "stream": "stdout",
   "verbs": ["marshal check --json", "marshal check NAME --json"],
-  "about": "Whether a feature is free for the caller. With NAME: `feature` is the name, `answer` is yours (the caller leads it), free (no lead) or free-stale (the lead's lease is stale: `lead` holds that lead), `warnings` are the feature's own warnings, the ones the text form prints on standard error as `qargi: warning: ...` (the lead is stale, the feature has no lead or was abandoned, another feature changes the same files), and `features` is absent. Other sentences on standard error (an anonymous lead identity, a remote that was not checked, a lease that was not renewed) are not in the document: `remote` says the second. Without NAME: `feature` and `answer` are null, `lead` is null, `warnings` is empty, and `features` holds one row for each open feature with its own `warnings`. A feature held by another live lead is not an answer: the verb exits 1 with a qargi-refusal line on standard error and no document, and a remote that cannot be asked (without --assume-unreachable-ok) exits 3 the same way. `remote` and `backend` are as in qargi-marshal-status: with --assume-unreachable-ok and a remote that cannot be reached the verb exits 0 from the cache and `remote` is unchecked; with --no-fetch or --no-write nothing is fetched and `remote` is not-asked on the shared refs backend. `lease` and `minutes_since_renewal` of a row mean what `lease_clock` says, as in qargi-marshal-status.",
+  "about": "Whether a feature is free for the caller. With NAME: `feature` is the name, `answer` is yours (the caller leads it), free (no lead) or free-stale (the lead's lease is stale: `lead` holds that lead), `warnings` are the feature's own warnings, each `{text, severity}` (severity info or damaging), the ones the text form prints on standard error as `qargi: warning: ...` (the lead is stale, the feature has no lead or was abandoned, another feature changes the same files, and, with integrity on, its shared ref vanished from the remote with no done record: severity damaging), and `features` is absent. Other sentences on standard error (an anonymous lead identity, a remote that was not checked, a lease that was not renewed) are not in the document: `remote` says the second. Without NAME: `feature` and `answer` are null, `lead` is null, `warnings` is empty, and `features` holds one row for each open feature with its own `warnings`. A feature held by another live lead is not an answer: the verb exits 1 with a qargi-refusal line on standard error and no document, and a remote that cannot be asked (without --assume-unreachable-ok) exits 3 the same way. `remote` and `backend` are as in qargi-marshal-status: with --assume-unreachable-ok and a remote that cannot be reached the verb exits 0 from the cache and `remote` is unchecked; with --no-fetch or --no-write nothing is fetched and `remote` is not-asked on the shared refs backend. `lease` and `minutes_since_renewal` of a row mean what `lease_clock` says, as in qargi-marshal-status. `integrity` is the integrity setting of the project, off, advisory or strict: with off the records are unsigned by design and no row has the fields `integrity`, `integrity_note` and `signer`; with advisory or strict every row has them.",
   "writes": "Unless --no-write is given: on the local backend a record whose branch is gone is marked abandoned; on the shared refs backend the call fetches the shared records into this machine's cache and updates this machine's own observation cache, with --no-fetch too (a lock file with it) and, with integrity on, its acceptance marks; with --assume-unreachable-ok it appends one audit line. With --no-write nothing is written and nothing is fetched. The shared records are never changed.",
   "document": {
     "type": "object",
-    "required": ["schema", "kind", "project", "backend", "remote", "feature", "answer", "lead", "warnings"],
+    "required": ["schema", "kind", "project", "integrity", "backend", "remote", "feature", "answer", "lead", "warnings"],
     "properties": {
-      "schema": {"const": 1},
+      "schema": {"const": 2},
       "kind": {"const": "qargi-marshal-check"},
       "project": {"type": "string"},
+      "integrity": {"enum": ["off", "advisory", "strict"], "description": "The integrity setting of the project (qargi marshal enable --integrity): off, so the records are unsigned by design and a row has no `integrity`, `integrity_note` or `signer`; advisory or strict, so a row says whether its record is signed and by whom (a row of an unsigned record says so). Read it before you read a signature field that is missing."},
       "backend": {"enum": ["local", "refs"], "x-since": "0.3.9", "description": "Where the records live: this host's files or the shared refs of the project's remote."},
       "remote": {"enum": ["checked", "unchecked", "not-asked", "none"], "x-since": "0.3.9", "description": "Whether the answer was checked against the remote of the shared records: none, checked, unchecked (the fetch failed, with --assume-unreachable-ok) or not-asked (--no-fetch, --no-write or a member run)."},
       "feature": {"type": ["string", "null"], "description": "The feature asked about; null when no NAME was given."},
       "answer": {"enum": ["yours", "free", "free-stale", null], "description": "null when no NAME was given."},
       "lead": {"$ref": "#/$defs/lead", "description": "The stale lead when the answer is free-stale; null otherwise."},
-      "warnings": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "The warnings of the feature asked about (only its own, not every sentence the verb prints on standard error); empty when no NAME was given (each row of `features` has its own)."},
+      "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}, "description": "The warnings of the feature asked about (only its own, not every sentence the verb prints on standard error); empty when no NAME was given (each row of `features` has its own)."},
       "features": {"type": "array", "items": {"$ref": "#/$defs/row"}, "x-when": "No NAME was given: one row for each open feature."}
     },
     "$defs": {
+      "warning": {
+        "type": "object",
+        "required": ["text", "severity"],
+        "properties": {
+          "text": {"type": "string", "x-text": true, "description": "The sentence the text form prints after `qargi: warning: ` on standard error."},
+          "severity": {"enum": ["info", "damaging"], "description": "damaging: the warning means the evidence of the record cannot be trusted as stated (the shared ref of the feature is gone from the remote with no done record: it was deleted or rewound). info: every other warning (a stale or absent lead, an abandoned feature, files that another open feature also changes). Read it, never the text."}
+        }
+      },
       "lead": {
         "type": ["object", "null"],
         "required": ["id", "user", "host", "since"],
@@ -58,7 +67,7 @@
           "plan": {"type": "string", "x-text": true},
           "note": {"type": "string", "x-text": true},
           "finished_at": {"type": ["string", "null"]},
-          "warnings": {"type": "array", "items": {"type": "string", "x-text": true}, "description": "The warnings of this feature, the ones the text form prints for it as `qargi: warning: ...` on standard error."},
+          "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}, "description": "The warnings of this feature, the ones the text form prints for it as `qargi: warning: ...` on standard error."},
           "provisional": {"type": "boolean", "x-when": "Shared refs backend: true while a claim has not reached the remote."},
           "integrity": {"enum": ["signed", "unsigned", "INVALID", "cannot verify"], "x-open": true, "x-when": "The project's integrity setting is not off."},
           "integrity_note": {"type": "string", "x-text": true, "x-when": "The project's integrity setting is not off."},
@@ -67,5 +76,5 @@
       }
     }
   },
-  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin"}]
+  "history": [{"schema": 1, "since": "0.3.9", "change": "first pin"}, {"schema": 2, "since": "0.3.10", "change": "the top-level `integrity` (off, advisory or strict) is required: it says whether an unsigned record is unsigned by design; each warning is {text, severity} (info or damaging) where it was a string"}]
 }

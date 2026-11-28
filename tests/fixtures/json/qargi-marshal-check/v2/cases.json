@@ -1,0 +1,164 @@
+[
+ {
+  "file": "valid.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-name.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-refs-name.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-refs.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-successor.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-vanished.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-yours.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-minimal.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "valid-unknown-field.json",
+  "expect": "valid",
+  "rule": null,
+  "applies": "both"
+ },
+ {
+  "file": "broken/not-an-object.json",
+  "expect": "invalid",
+  "rule": "not-an-object",
+  "applies": "both"
+ },
+ {
+  "file": "broken/truncated.json",
+  "expect": "invalid",
+  "rule": "truncated",
+  "applies": "both"
+ },
+ {
+  "file": "broken/two-documents.json",
+  "expect": "invalid",
+  "rule": "two-documents",
+  "applies": "both"
+ },
+ {
+  "file": "broken/schema-missing.json",
+  "expect": "invalid",
+  "rule": "schema-missing",
+  "applies": "both"
+ },
+ {
+  "file": "broken/schema-string.json",
+  "expect": "invalid",
+  "rule": "schema-string",
+  "applies": "both"
+ },
+ {
+  "file": "broken/schema-unknown.json",
+  "expect": "invalid",
+  "rule": "schema-unknown",
+  "applies": "both"
+ },
+ {
+  "file": "broken/kind-missing.json",
+  "expect": "invalid",
+  "rule": "kind-missing",
+  "applies": "both"
+ },
+ {
+  "file": "broken/kind-wrong.json",
+  "expect": "invalid",
+  "rule": "kind-wrong",
+  "applies": "both"
+ },
+ {
+  "file": "broken/required-missing.json",
+  "expect": "invalid",
+  "rule": "required-missing",
+  "applies": "both"
+ },
+ {
+  "file": "broken/type-wrong.json",
+  "expect": "invalid",
+  "rule": "type-wrong",
+  "applies": "both"
+ },
+ {
+  "file": "broken/integer-string.json",
+  "expect": "invalid",
+  "rule": "integer-string",
+  "applies": "both"
+ },
+ {
+  "file": "broken/enum-unknown.json",
+  "expect": "invalid",
+  "rule": "enum-unknown",
+  "applies": "both"
+ },
+ {
+  "file": "broken/null-not-allowed.json",
+  "expect": "invalid",
+  "rule": "null-not-allowed",
+  "applies": "both"
+ },
+ {
+  "file": "broken/schema-float.json",
+  "expect": "invalid",
+  "rule": "schema-float",
+  "applies": "writer"
+ },
+ {
+  "file": "broken/integer-float.json",
+  "expect": "invalid",
+  "rule": "integer-float",
+  "applies": "writer"
+ },
+ {
+  "file": "broken/integer-range.json",
+  "expect": "invalid",
+  "rule": "integer-range",
+  "applies": "writer"
+ },
+ {
+  "file": "broken/non-finite.json",
+  "expect": "invalid",
+  "rule": "non-finite",
+  "applies": "writer"
+ },
+ {
+  "file": "broken/duplicate-key.json",
+  "expect": "invalid",
+  "rule": "duplicate-key",
+  "applies": "writer"
+ }
+]

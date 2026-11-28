@@ -20,9 +20,9 @@ git init -q --bare "$T/remote.git" && git -C "$REPO" remote add origin "$T/remot
 jq -n --arg p "$REPO" '{schema:1,project:"bulkproj",repo:{url:"https://github.com/example/bulkproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/bulkproj.json"
 
 # --- the synthetic runs
-newrun() { # SLUG -> the run directory: prepared, one commit in its clone, a manifest and a report, verified (a lifecycle run, as prepare makes them today)
+newrun() { # SLUG [SCRATCH [BASE]] -> the run directory: prepared, one commit in its clone, a manifest and a report, verified (a lifecycle run, as prepare makes them today)
   local o r g c
-  o=$($DA local prepare --repo "$REPO" --base main --slug "$1" --scratch "$SCR" 2>/dev/null) || return 1
+  o=$($DA local prepare --repo "$REPO" --base "${3:-main}" --slug "$1" --scratch "${2:-$SCR}" 2>/dev/null) || return 1
   r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
   echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"
   echo '{}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
@@ -116,6 +116,9 @@ out=$(PATH="$T/shim:$PATH" $DA local clean --applied --scratch "$SCR" 2>&1); rca
 nls=$(grep -c 'ls-remote' "$T/log/git" || true)
 { [ "$nls" -le 2 ]; } && ok "clean --applied asks the repository's origin for its refs once for all the runs (ls-remote ran $nls times for eight runs)" || no "ls-remote ran $nls times"
 [ ! -e "$LN1" ] && grep -q "^cleaned $LN1" <<<"$out" && ok "a legacy run whose refs are as it recorded and whose work is merged is cleaned, as before" || no "the clean legacy run: $out"
+{ [ "$(jq -r --arg r "$LN1" 'select(.run == $r) | .cleaned // "" | length > 0' "$S/local-runs.jsonl")" = true ] \
+  && grep -qE '^checks=[0-9]+\.[0-9]{3}s removal=[0-9]+\.[0-9]{3}s prune=[0-9]+\.[0-9]{3}s$' <<<"$(jq -r --arg r "$LN1" 'select(.run == $r) | .clean_timings // ""' "$S/local-runs.jsonl")"; } \
+  && ok "a legacy run keeps its cleaned registry line, and the line records the seconds of the phases like a lifecycle run's" || no "legacy clean timings: $(jq -c --arg r "$LN1" 'select(.run == $r)' "$S/local-runs.jsonl")"
 [ ! -e "$LV1" ] && grep -q "^cleaned $LV1" <<<"$out" && ok "so is a lifecycle run, as before" || no "the lifecycle run: $out"
 one() { grep -c "^kept $1:" <<<"$out"; }
 { [ -d "$LM1" ] && [ "$(one "$LM1")" = 1 ] && grep -q "^kept $LM1: legacy run, refs changed or could not be compared since it was prepared; its work is merged: after its out/ is archived, qargi local clean $LM1 --discard\$" <<<"$out"; } \
@@ -282,5 +285,38 @@ legacy "$LC1"; stale "$LC1"
 out=$($DA local clean --applied --scratch "$SCR" 2>&1)
 { grep -q "^kept $LC1: legacy run closed by hand (local close --applied-by-am), refs changed" <<<"$out" && grep -q 'clean --applied --legacy does not plan it' <<<"$out" && [ -d "$LC1" ]; } \
   && ok "a run closed by hand and kept for its refs says so, and names the clean RUN --discard that works (the bulk form does not plan it)" || no "closed run line: $(grep "$LC1" <<<"$out")"
+
+# --- one question to the origin for all the runs of one call, never kept for another: clean --applied and verify --mine over two runs each, a git that counts ls-remote
+PH='[0-9]+\.[0-9]{3}s'
+SCR2=$T/scr2; mkdir -p "$SCR2"
+W1=$(newrun w1 "$SCR2"); W2=$(newrun w2 "$SCR2")
+{ [ -n "$W1" ] && [ -n "$W2" ]; } || { no "setup: two runs for the snapshot count"; exit 1; }
+applied "$W1"; applied "$W2"
+: > "$T/log/git"
+out=$(PATH="$T/shim:$PATH" $DA local clean --applied --scratch "$SCR2" --timings 2>&1); rcw=$?
+nls=$(grep -c 'ls-remote' "$T/log/git" || true)
+{ [ $rcw = 0 ] && [ ! -e "$W1" ] && [ ! -e "$W2" ] && [ "$nls" = 1 ]; } \
+  && ok "clean --applied over two runs asks the origin once (ls-remote ran $nls time)" || no "clean --applied, two runs (rc=$rcw, ls-remote $nls times): $out"
+{ [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: runs=2 registry=$PH merged=$PH checks=$PH removal=$PH prune=$PH\$" <<<"$out" \
+  && grep -qE "^checks=$PH removal=$PH prune=$PH\$" <<<"$(jq -r --arg r "$W1" 'select(.run == $r) | .clean_timings // ""' "$S/local-runs.jsonl")"; } \
+  && ok "--timings: one timings: line for the whole call (the phases of both runs added up, runs=2), and each run's registry line keeps its own" || no "timings of clean --applied: $out"
+git -C "$REPO" branch -f feature/alpha main >/dev/null 2>&1
+LAB=lead-x:coord:alpha:1
+M1=$(QARGI_ACTOR=$LAB newrun m1 "$SCR2" feature/alpha); M2=$(QARGI_ACTOR=$LAB newrun m2 "$SCR2" feature/alpha)
+{ [ -n "$M1" ] && [ -n "$M2" ]; } || { no "setup: two labeled runs for verify --mine"; exit 1; }
+: > "$T/log/git"
+out=$(PATH="$T/shim:$PATH" QARGI_ACTOR=$LAB $DA local verify --mine --timings 2>&1); rcw=$?
+n1=$(grep -c 'ls-remote' "$T/log/git" || true)
+{ [ $rcw = 0 ] && grep -q "^pass  m1  $M1\$" <<<"$out" && grep -q "^pass  m2  $M2\$" <<<"$out" && [ "$n1" = 1 ]; } \
+  && ok "verify --mine over two runs asks the origin once (ls-remote ran $n1 time)" || no "verify --mine, two runs (rc=$rcw, ls-remote $n1 times): $out"
+{ [ "$(grep -c '^timings:' <<<"$out")" = 1 ] && grep -qE "^timings: runs=2 registry=$PH checks=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$out" \
+  && grep -qE "^checks=$PH registry=$PH snapshot=$PH compare=$PH save=$PH\$" <<<"$(jq -r --arg r "$M1" 'select(.run == $r) | .verify_timings // ""' "$S/local-runs.jsonl")"; } \
+  && ok "and its --timings line adds up the phases of both runs (runs=2)" || no "timings of verify --mine: $out"
+out=$(PATH="$T/shim:$PATH" QARGI_ACTOR=$LAB $DA local verify --mine 2>&1); rcw=$?
+n2=$(grep -c 'ls-remote' "$T/log/git" || true)
+{ [ $rcw = 0 ] && [ "$n2" = 2 ] && ! grep -q 'timings' <<<"$out"; } \
+  && ok "a second call asks again (the snapshot is never kept for another call: $n2 in all) and prints no timings line unless asked" || no "second verify --mine (rc=$rcw, ls-remote $n2 times in all): $out"
+$DA local clean "$M1" --discard >/dev/null 2>&1; $DA local clean "$M2" --discard >/dev/null 2>&1
+[ -z "$(find "$S" -maxdepth 1 -name 'verify.*' | head -1)" ] && ok "the working directory of a bulk call is removed when it ends (no verify.* directory is left in the state)" || no "left over: $(ls "$S")"
 kill_bg
 exit $fail

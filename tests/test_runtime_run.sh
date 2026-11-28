@@ -59,8 +59,8 @@ nx_registry() { # RUN: the registry line of the run, with what changes from one 
 nx_scene() { # PROJECT: two prepares (a build with a profile, a review), their registry lines and the run list
   nx_prep "$1" --slug nxa --profile worker-fast; nx_registry "$RUN"
   nx_prep "$1" --slug nxb --role review; nx_registry "$RUN"
-  echo "--- local list --json"
-  "$DA" local list --json | jq -S . | mask | sed 's/[0-9][0-9]*[mhd] /AGE /g'
+  echo "--- local list"
+  "$DA" local list | mask | sed 's/[0-9][0-9]*[mhd] /AGE /g'
 }
 nx_project nxsession project
 nx_project nxcommand project-command
@@ -304,7 +304,7 @@ out=$(dispatch --dry-run); rc=$?
 
 # --- the views: local list has a RUNTIME column and review check a runtime= line, from the registry line, with the model as asked for (never "confirmed")
 LIST=$("$DA" local list 2>&1)
-{ grep -q '^ROLE  *SLUG  *AGE  *APPLIED  *MERGED  *RUNTIME  *RUN$' <<<"$LIST" \
+{ grep -q '^ROLE  *SLUG  *AGE  *APPLIED  *MERGED  *STATE  *RUNTIME  *RUN$' <<<"$LIST" \
   && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested at prepare, override verified\)\$" <<<"$LIST" >/dev/null \
   && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested at prepare, not confirmed\)\$" <<<"$LIST" >/dev/null \
   && grep -E "^build +o1 .* claude-code +$T/scr/qargi\.[A-Za-z0-9]{6}\$" <<<"$LIST" >/dev/null; } \

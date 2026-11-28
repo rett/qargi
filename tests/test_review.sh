@@ -152,8 +152,17 @@ printf '# Findings\n\nnone\n\nverdict: accept\n\n# Checked\n\nbuild\n' > "$T/rep
 $DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict line that is not the last line is refused" || no "verdict not last"
 printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n\nverdict: ready\n' > "$T/rep/report.md"
 $DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict other than accept or revise is refused" || no "verdict ready"
-printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+printf '# Findings\n\nnone\n\nverdict: accept\n' > "$T/rep/report.md"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "WARN.*Checked" && ok "a report without a Checked section passes with a warning" || no "no Checked: $out"
+# a revise verdict is exit 1 (a reviewer asking for changes is not a pass) unless the lead reads it on purpose with --lead
+printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); rc=$?
+{ [ $rc = 1 ] && echo "$out" | grep -q "verdict: revise" && echo "$out" | grep -q "exit 1"; } && ok "a report with verdict: revise is exit 1 and the message names the verdict" || no "revise: rc=$rc $out"
+out=$($DA review check "$T/rep" --lead 2>&1); rc=$?
+{ [ $rc = 0 ] && echo "$out" | grep -q "^OK report-only" && echo "$out" | grep -qx "verdict: revise"; } && ok "review check --lead keeps exit 0 for a revise verdict and prints the verdict line" || no "revise --lead: rc=$rc $out"
+printf '# Findings\n\nnone\n\nverdict: accept\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" --lead 2>&1); rc=$?
+{ [ $rc = 0 ] && ! echo "$out" | grep -qx "verdict: revise"; } && ok "--lead with an accept verdict changes nothing" || no "accept --lead: rc=$rc $out"
 printf "$GOOD_REP" > "$T/rep/report.md"; mv "$T/rep/manifest.json" "$T/rep/m.json"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "manifest.json missing" && ok "a report-only run without manifest.json is refused" || no "no manifest: $out"
 mv "$T/rep/m.json" "$T/rep/manifest.json"
@@ -681,6 +690,11 @@ out=$($DA review apply "$R54" 2>&1); rc=$?
 out=$(QARGI_MEMBER_RUN=$R55 $DA review apply "$R55" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(runs)" = 0 ] && grep -qx "scrub: not run (a member's apply; the lead's apply runs it)" <<<"$out"; } \
   && ok "a member's apply does not run the scrub and says so" || no "member apply: rc=$rc runs=$(runs) $out"
+# the lead's apply made from a directory in the run (a cd kept from running a DONE) still runs the declared scrub: only the variable skips it
+: > "$CNT"; R55B=$(newrun applyinrun)
+out=$(cd "$R55B/clone" && $DA review apply "$R55B" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -qx 'scrub: ok' <<<"$out" && ! grep -q 'scrub: not run' <<<"$out" && git -C "$A" rev-parse -q --verify agent/applyinrun >/dev/null; } \
+  && ok "the lead's apply from a directory in the run runs the scrub" || no "apply in run: rc=$rc runs=$(runs) $out"
 # The patches are copied once: a member process that changes a patch while the scrub runs (here the scrub command does it, as it runs after the copy) changes what the
 # run directory holds, not what was scrubbed and applied; no copy is left behind.
 SWAP=$T/swap-target
@@ -719,7 +733,7 @@ rorun() { $DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T
 MSG=$T/message.md; printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\nverdict: accept\n' > "$MSG"
 RV1=$(rorun savea)
 out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
-{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -q "review check $RV1/out" <<<"$out"; } \
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -qx "next: qargi review check $RV1/out --lead" <<<"$out"; } \
   && ok "review save stores the message as OUT/report.md, writes a manifest and says what it wrote" || no "save: rc=$rc $out"
 { [ "$(jq -r '.status' "$RV1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$RV1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.branch' "$RV1/out/manifest.json")" = develop ] \
   && [ "$(jq -r '.base.sha' "$RV1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] && jq -e '.done and .gates == [] and .touched_paths == [] and .artifacts[0].kind == "report"' "$RV1/out/manifest.json" >/dev/null; } \
@@ -747,4 +761,9 @@ cp -r "$RV2" "$T/qargi.copy12"; out=$($DA review save "$T/qargi.copy12" < "$MSG"
 out=$(QARGI_MEMBER_RUN=$RV2 $DA review save "$RV2" < "$MSG" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "lead's" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save with the member mark set is refused" || no "save as member: rc=$rc $out"
 $DA review save >/dev/null 2>&1; [ $? = 2 ] && ok "review save with no RUN is a usage error" || no "save usage"
+# the lead's save made from a directory in the run (a cd kept from running a DONE) stores the report: only the variable refuses it, as for apply
+RV3=$(rorun saveinrun)
+out=$(cd "$RV3/clone" && $DA review save "$RV3" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV3/out/report.md" && grep -q "wrote $RV3/out/report.md" <<<"$out"; } \
+  && ok "the lead's save from a directory in the run stores the report" || no "save in run: rc=$rc $out"
 exit $fail

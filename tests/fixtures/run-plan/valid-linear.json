@@ -1,0 +1,47 @@
+{
+  "kind": "qargi-run-plan",
+  "schema": 1,
+  "project": "demo",
+  "target_feature": "release-next",
+  "nodes": [
+    {
+      "id": "format",
+      "task": "Do the work of format",
+      "role": "build",
+      "scope": [
+        "lib/run_plan.py",
+        "lib/kinds/"
+      ],
+      "done": "python3 tests/test_format.py",
+      "review_kind": "none"
+    },
+    {
+      "id": "verb",
+      "task": "Do the work of verb",
+      "role": "build",
+      "scope": [
+        "lib/commands.py",
+        "bin/qargi"
+      ],
+      "done": "python3 tests/test_verb.py",
+      "review_kind": "none",
+      "after": [
+        "format"
+      ]
+    },
+    {
+      "id": "docs",
+      "task": "Do the work of docs",
+      "role": "write",
+      "scope": [
+        "docs/reference/run-plan.md",
+        "CHANGELOG.md"
+      ],
+      "done": "bash tests/test_docs.sh",
+      "review_kind": "none",
+      "after": [
+        "verb"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,359 @@
+{
+  "registry": 1,
+  "kind": "qargi-history",
+  "schema": 1,
+  "status": "draft",
+  "since": "0.3.10",
+  "stream": "stdout",
+  "verbs": [
+    "history --json"
+  ],
+  "about": "The entries of the history of one project that `qargi history --json` lists, newest first (kind qargi-history-entry for each). The list is cut at `--limit` (default 20); `matched` says how many entries matched. The verb exits 0 after it printed a complete document, also when no entry matched, and 70 when the document fails the check of this registry file (nothing is printed). A history file that cannot be read exits 1 with one line on standard error.",
+  "writes": "Nothing: the file of the history is only read.",
+  "document": {
+    "type": "object",
+    "required": [
+      "schema",
+      "kind",
+      "project",
+      "matched",
+      "skipped",
+      "entries"
+    ],
+    "properties": {
+      "schema": {
+        "const": 1
+      },
+      "kind": {
+        "const": "qargi-history"
+      },
+      "project": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]{0,23}$"
+      },
+      "matched": {
+        "type": "integer",
+        "description": "How many entries matched the filters, before the limit."
+      },
+      "skipped": {
+        "type": "integer",
+        "description": "How many lines of the history file could not be read and were skipped (a line cut off by a crash is one)."
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/entry"
+        },
+        "x-ordered": true,
+        "description": "The newest entries first, at most the limit."
+      }
+    },
+    "$defs": {
+      "entry": {
+        "type": "object",
+        "required": [
+          "schema",
+          "kind",
+          "entry_kind",
+          "id",
+          "project",
+          "time"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1
+          },
+          "kind": {
+            "const": "qargi-history-entry"
+          },
+          "entry_kind": {
+            "enum": [
+              "suite",
+              "review"
+            ],
+            "x-open": true,
+            "description": "What the entry records: `suite` a whole-suite run of feature verify or release verify, `review` the report of a report-only run that qargi review check read. A reader treats a word it does not know as `unknown` and ignores the entry."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "description": "16 random hex digits: the name by which `qargi history show ID` and a log of a run (suite-logs/runs/ID.log) cite the entry."
+          },
+          "project": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{0,23}$",
+            "description": "The stored project; the file of the entry is history/PROJECT.jsonl."
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "description": "When the entry was made, UTC. For a suite entry it is `ended`."
+          },
+          "verb": {
+            "enum": [
+              "feature verify",
+              "release verify"
+            ],
+            "x-when": "entry_kind is suite"
+          },
+          "name": {
+            "type": "string",
+            "x-text": true,
+            "x-when": "entry_kind is suite",
+            "description": "The feature name (feature verify) or the version (release verify)."
+          },
+          "branch": {
+            "type": "string",
+            "x-text": true,
+            "x-when": "entry_kind is suite",
+            "description": "The branch whose head was run (the release branch, or the base branch when the release has none)."
+          },
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40,64}$",
+            "x-when": "entry_kind is suite",
+            "description": "The commit that was run."
+          },
+          "tree": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40,64}$",
+            "x-when": "entry_kind is suite",
+            "description": "The tree of that commit: two heads with one tree are one content."
+          },
+          "command": {
+            "type": "string",
+            "x-text": true,
+            "x-when": "entry_kind is suite",
+            "description": "The command identity the run is keyed by: the project's test command, or the identity of the declared gates (what `verified` compares)."
+          },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-when": "entry_kind is suite",
+            "description": "The id of verify.environment, null when the setting is off (the second half of what `verified` compares)."
+          },
+          "gates": {
+            "type": "array",
+            "x-when": "entry_kind is suite",
+            "items": {
+              "$ref": "#/$defs/gate"
+            },
+            "x-ordered": true,
+            "description": "Each declared gate in the order declared; empty when the run had no declared gates."
+          },
+          "result": {
+            "enum": [
+              "pass",
+              "fail",
+              "interrupted"
+            ],
+            "x-open": true,
+            "x-when": "entry_kind is suite",
+            "description": "`interrupted`: the verb ended before it had a verdict (a signal, or a stop after the run such as a launcher that left no report)."
+          },
+          "started": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "x-when": "entry_kind is suite"
+          },
+          "ended": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "x-when": "entry_kind is suite"
+          },
+          "seconds": {
+            "type": "integer",
+            "x-when": "entry_kind is suite",
+            "description": "Whole seconds of the run, as the per-branch record of the run has them."
+          },
+          "queue_wait_s": {
+            "type": "integer",
+            "x-when": "entry_kind is suite",
+            "description": "Whole seconds, rounded up, that the run waited in the queue of the whole-suite runs (`qargi suite status`) before its suite started; 0 when it did not wait. Not counted in `seconds`, and an entry written before the queue has no such field."
+          },
+          "failing_tests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-text": true
+            },
+            "x-when": "entry_kind is suite",
+            "x-bound": true,
+            "description": "At most 200 names, each cut at 300 characters. The failing-test lines the summary of a failed verify prints (FAIL, FAIL: and --- FAIL: lines of the log), in the order they appear, without repeats."
+          },
+          "failing_total": {
+            "type": "integer",
+            "x-when": "entry_kind is suite",
+            "description": "How many such lines the log held, which is more than the length of failing_tests when the list was cut."
+          },
+          "load_start": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+\\.[0-9]+$",
+            "x-when": "entry_kind is suite",
+            "description": "The first field of /proc/loadavg when the run started, as the text it has (a document holds integers only); null when it cannot be read."
+          },
+          "load_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+\\.[0-9]+$",
+            "x-when": "entry_kind is suite",
+            "description": "The same when the run ended."
+          },
+          "attempt": {
+            "type": "integer",
+            "x-when": "entry_kind is suite",
+            "description": "1 plus the number of earlier suite entries of this project with the same head, tree, command and environment_id."
+          },
+          "log": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is suite",
+            "description": "The path of the kept log, suite-logs/runs/ID.log; null when it could not be kept. The newest 20 logs of a project stay, and the log of the latest pass of each branch; a path may name a log that was removed since."
+          },
+          "run": {
+            "type": "string",
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The run directory name of the reviewed run (qargi.XXXXXX)."
+          },
+          "slug": {
+            "type": "string",
+            "x-text": true,
+            "x-when": "entry_kind is review"
+          },
+          "verdict": {
+            "enum": [
+              "accept",
+              "revise"
+            ],
+            "x-when": "entry_kind is review",
+            "description": "The last line of the report."
+          },
+          "report_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "x-when": "entry_kind is review",
+            "description": "The sha256 of the bytes of the report; the text of the report is never stored."
+          },
+          "base": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The base branch of the run, as the lead's registry records it."
+          },
+          "base_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-when": "entry_kind is review",
+            "description": "The commit the run was cut from; `qargi history --head` finds a review by it."
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The role of the reviewer, as the registry records it."
+          },
+          "class": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The class of the role (read-only for a report-only run)."
+          },
+          "runtime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The runtime the run was prepared for, as the registry records it; null when it records none."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The model asked for at prepare, never one a runtime reported."
+          },
+          "vendor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-text": true,
+            "x-when": "entry_kind is review",
+            "description": "The family name that the descriptor of the runtime gives; null when the runtime has no descriptor or no family."
+          },
+          "tests_run": {
+            "type": [
+              "array",
+              "integer",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "x-text": true
+            },
+            "x-when": "entry_kind is review",
+            "description": "What the reviewer's manifest records under tests_run (a list of names or a count); null when it records none."
+          }
+        }
+      },
+      "gate": {
+        "type": "object",
+        "required": [
+          "name",
+          "result"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "x-text": true
+          },
+          "result": {
+            "type": "string",
+            "x-text": true,
+            "description": "pass, fail, not run, or `covered by NAME`."
+          },
+          "seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Whole seconds; null for a gate that did not run."
+          }
+        }
+      }
+    }
+  },
+  "history": [
+    {
+      "schema": 1,
+      "since": "0.3.10",
+      "change": "first draft"
+    }
+  ]
+}

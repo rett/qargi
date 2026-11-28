@@ -344,6 +344,9 @@ def show_json_list():
     for k in kinds:
         reg = json_load(k)
         out.append(fill("(schema %d, %s) %s" % (reg["schema"], reg["status"], json_first_sentence(reg["about"])), width(), "  " + k.ljust(w), "  " + " " * w))
+    digest = K.manifest_digest()
+    if digest:
+        out += ["", wrap("Manifest of the registry files, lib/kinds/MANIFEST.json (each kind with its status, schema and the sha256 of its file): sha256 %s" % digest, 2)]
     return "\n".join(out), 0
 
 
@@ -351,7 +354,8 @@ def show_json_kind(kind):
     reg = json_load(kind)
     out = [b(kind) + "  (schema %d, %s, since %s)" % (reg["schema"], reg["status"], reg["since"]), "",
            wrap("About: " + reg["about"], 2),
-           wrap("Printed by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " on " + reg["stream"] + ".", 2),
+           wrap(("Read by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " (qargi never prints it).") if reg["stream"] == "none"
+                else "Printed by: " + ", ".join("qargi " + v for v in reg["verbs"]) + " on " + reg["stream"] + ".", 2),
            wrap("Writes: " + reg["writes"], 2), "",
            b("Fields") + "  (path, type, required or optional within its parent; [] is an array item, .* a map value)"]
     doc = reg["document"]

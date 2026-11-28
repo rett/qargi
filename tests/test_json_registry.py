@@ -3,12 +3,17 @@
 
   1. a file of lib/kinds/ breaks the registry format, or two files name the same kind;
   2. a fixture marked valid does not validate against the live registry, one marked invalid validates or fails by another rule than the one named,
-     or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
+     a fixture breaks an `x-open` enum (a word outside it is no break), or a file the test makes (the minimal and the unknown-field fixtures, the broken files, cases.json, rules.json) differs from what it makes now;
   3. a kind has no v<schema> directory, a rule that applies to the kind has no broken file, or a file of the directory is in no cases.json;
+     points 2, 3 and 5 hold for each older v directory too, against the registry.json frozen in it (a reader of an old integer keeps qualifying); point 4 reports an older directory with no frozen registry;
   4. lib/kinds/KIND.json differs from the frozen KIND/vN/registry.json by more than R-J3 allows (a field removed or renamed, a type changed, an enum
      word lost, added to a closed enum, or a null added to any enum, a new entry in `required`, a changed pattern or constant: the fix is a new integer and a new vN directory);
   5. a field of the live registry appears in no valid fixture;
-  6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag).
+  6. a frozen registry.json differs from the same file at the last release tag (skipped, with one line, where there is no repository history or no tag);
+  7. lib/kinds/MANIFEST.json (each kind with its status, schema and the sha256 of its registry file: `python3 lib/jsonkind.py manifest`) is missing or is not
+     what the registry files make now, or a file of lib/kinds/ is marked export-ignore, so the release archive would not hold it.
+
+A kind whose `status` is draft is held to point 1 only (and to the rules text of point 2): it has no fixtures, no frozen copy and no case file until it is pinned.
 
 The fixtures are plain files: valid.json is the real output of the scenario of tests/fixtures/json/scenario.sh (the machine's own values replaced by
 fixed ones); the other files are made from the valid ones by this file. `--regen` runs the scenario and writes them, `--regen --check` runs it and says
@@ -60,7 +65,8 @@ RULE_IDS = [r[0] for r in RULES]
 GOLDEN = {
     "qargi-marshal-status": {"valid.json": "status.local.json", "valid-name.json": "status.local-name.json", "valid-refs.json": "status.refs.json"},
     "qargi-marshal-check": {"valid.json": "check.local.json", "valid-name.json": "check.local-name.json", "valid-yours.json": "check.local-yours.json",
-                            "valid-refs-name.json": "check.refs-name.json", "valid-refs.json": "check.refs.json", "valid-successor.json": "check.local-successor.json"},
+                            "valid-refs-name.json": "check.refs-name.json", "valid-refs.json": "check.refs.json", "valid-successor.json": "check.local-successor.json",
+                            "valid-vanished.json": "check.refs-vanished.json"},
     "qargi-handoff": {"valid.json": "handoff.local.json", "valid-truncated.json": "handoff.local-truncated.json", "valid-refs.json": "handoff.refs.json"},
     "qargi-refusal": {"valid.json": "refusal.held"},
 }
@@ -307,8 +313,8 @@ def broken(kind, reg, valid, kinds, rule):
     if rule == "schema-float":
         return file_text(literal(doc, ("schema",), "%d.0" % doc["schema"], stderr), stderr)
     if rule == "enum-unknown":
-        for path, node, v in sites(reg, doc):
-            if path and "enum" in node and isinstance(v, str) and "const" not in node:
+        for path, node, v in sites(reg, doc):      # a closed enum only: a reader treats a word outside an x-open enum as `unknown`, it is no break
+            if path and "enum" in node and isinstance(v, str) and "const" not in node and not node.get("x-open"):
                 set_at(doc, path, "not-a-listed-word")
                 return file_text(body_text(doc, stderr), stderr)
         return None
@@ -356,6 +362,41 @@ def rules_text():
 
 
 # ---- the verdict of the validator on a fixture ---------------------------------------------------------------------------------------
+
+PATH_STEP = re.compile(r'\.([A-Za-z_][A-Za-z0-9_-]*)|\[([0-9]+)\]|\[("(?:[^"\\]|\\.)*")\]')
+
+
+def node_at(reg, path):
+    """The shape node of the registry at the JSONPath-like path of a finding ($.gates[0].tier), references followed; None where the registry has no node."""
+    defs = reg["document"].get("$defs", {})
+    node, pos = reg["document"], 1
+    while pos < len(path):
+        m = PATH_STEP.match(path, pos)
+        if not m:
+            return None
+        node = resolve(node, defs)
+        if m.group(2) is not None:
+            node = node.get("items")
+        else:
+            key = m.group(1) if m.group(1) is not None else json.loads(m.group(3))
+            node = (node.get("properties") or {}).get(key, node.get("additionalProperties"))
+        if not isinstance(node, dict):
+            return None
+        pos = m.end()
+    return resolve(node, defs)
+
+
+def open_enum_breaks(J, reg, text, stderr):
+    """The paths where the document breaks an enum that the registry declares x-open: a fixture never does, because a word outside such an enum is not a break."""
+    if stderr:
+        text = text.split(" ", 1)[1] if text.startswith(PREFIX_BASE) else text
+    out = []
+    for f in J.validate_doc(reg, text):
+        node = node_at(reg, f.path) if f.rule == "enum-unknown" else None
+        if node and node.get("x-open"):
+            out.append(f.path)
+    return out
+
 
 def findings_of(J, reg, text, stderr):
     """The rules the fixture breaks, in order: the line of standard error is first split into prefix and object."""
@@ -471,28 +512,72 @@ class Lint:
         for f in J.check_dir(self.kinds_dir):                                                                   # point 1
             self.fail(1, f.line())
         names = J.kind_names(self.kinds_dir)
-        KINDS_SEEN[:] = names
         regs = {}
         for n in names:
             reg, fs = J.load_registry(os.path.join(self.kinds_dir, n + ".json"))
             if reg is not None:
                 regs[n] = reg
+        KINDS_SEEN[:] = sorted(n for n, r in regs.items() if r["status"] != "draft")      # the `kind-wrong` file names a pinned kind, as regen makes it (a draft has no fixtures)
         expected_rules = rules_text()
         if not os.path.isfile(os.path.join(self.fix, "rules.json")) or read(os.path.join(self.fix, "rules.json")) != expected_rules:
             self.fail(2, "%s/rules.json is not the list of rules of this test (python3 tests/test_json_registry.py --regen)" % FIX)
         for kind, reg in sorted(regs.items()):
+            if reg["status"] == "draft":      # a draft is registered and may change: its fixtures, frozen copy and release check come with the pin
+                self.notes.append("%s is a draft: points 3 to 5 wait for its pin" % kind)
+                continue
             try:
                 self.kind(kind, reg)
             except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
                 self.fail(2, "%s: the lint could not read the fixtures or the registry (%s: %s)" % (kind, type(e).__name__, e))
         self.release_tag(regs)
+        self.manifest()
         return self.problems
 
+    def manifest(self):
+        """Point 7: the manifest is what the registry files make now, and the release archive (git archive of the tag) holds it and them."""
+        J = self.J
+        text, fs = J.manifest(self.kinds_dir)
+        rel = "lib/kinds/" + J.MANIFEST_NAME
+        if text is None:
+            return                      # the registry files are not well formed: point 1 says which
+        p = os.path.join(self.kinds_dir, J.MANIFEST_NAME)
+        if not os.path.isfile(p):
+            self.fail(7, "%s is missing (python3 lib/jsonkind.py manifest > MANIFEST.new && mv MANIFEST.new %s)" % (rel, rel))
+        elif read(p) != text:
+            self.fail(7, "%s is not what the registry files make now (python3 lib/jsonkind.py manifest > MANIFEST.new && mv MANIFEST.new %s)" % (rel, rel))
+        rc, out = git(self.root, "rev-parse", "--show-toplevel")
+        if rc != 0 or os.path.realpath(out.strip()) != os.path.realpath(self.root):
+            self.notes.append("point 7: the export-ignore attribute was not read: %s is not the top of a git repository" % self.root)
+            return
+        names = ["lib/kinds/" + n for n in sorted(os.listdir(self.kinds_dir)) if n.endswith(".json")]
+        rc, out = git(self.root, "check-attr", "export-ignore", "--", *names)
+        for line in out.splitlines():
+            name, _, value = line.rpartition(": export-ignore: ")
+            if rc == 0 and value not in ("unspecified", "unset"):
+                self.fail(7, "%s is marked export-ignore (%s): the release archive would not hold it" % (name, value))
+
     def kind(self, kind, reg):
+        """The live directory of the kind (points 2 to 5), then each older v directory against the registry file frozen in it (points 2, 3 and 5)."""
+        self.fixtures(kind, reg, reg["schema"], live=True)
+        kdir = os.path.join(self.fix, kind)
+        for n in sorted(os.listdir(kdir)) if os.path.isdir(kdir) else []:
+            m = re.match(r"^v([0-9]+)$", n)
+            if not m or int(m.group(1)) == reg["schema"] or not os.path.isdir(os.path.join(kdir, n)):
+                continue
+            fp = os.path.join(kdir, n, "registry.json")
+            old, fs = self.J.load_registry(fp) if os.path.isfile(fp) else (None, [])
+            if old is None:
+                self.fail(4, "%s/%s/%s has no well-formed registry.json to hold its fixtures to%s" % (FIX, kind, n, ": " + fs[0].line() if fs else ""))
+            elif old["schema"] != int(m.group(1)) or old["kind"] != kind:
+                self.fail(4, "%s/%s/%s/registry.json is the registry of %s schema %s, not of this directory" % (FIX, kind, n, old["kind"], old["schema"]))
+            else:
+                self.fixtures(kind, old, int(m.group(1)), live=False)
+
+    def fixtures(self, kind, reg, schema, live):
         J = self.J
         stderr = reg["stream"] == "stderr"
-        vdir = os.path.join(self.fix, kind, "v%d" % reg["schema"])
-        rel = "%s/%s/v%d" % (FIX, kind, reg["schema"])
+        vdir = os.path.join(self.fix, kind, "v%d" % schema)
+        rel = "%s/%s/v%d" % (FIX, kind, schema)
         if not os.path.isdir(vdir):                                                                              # point 3
             self.fail(3, "%s has no directory %s" % (kind, rel))
             return
@@ -539,6 +624,8 @@ class Lint:
                 self.fail(3, "%s lists %s, which does not exist" % (rel + "/cases.json", c["file"]))
                 continue
             found = findings_of(J, reg, read(p), stderr)
+            for where in open_enum_breaks(J, reg, read(p), stderr):
+                self.fail(2, "%s/%s closes the x-open enum at %s: a word outside an x-open enum is not a break (a reader reads it as `unknown`)" % (rel, c["file"], where))
             if c["expect"] == "valid" and found:
                 self.fail(2, "%s/%s is marked valid and breaks %s" % (rel, c["file"], ", ".join(found)))
             elif c["expect"] == "invalid":
@@ -546,9 +633,11 @@ class Lint:
                     self.fail(2, "%s/%s is marked invalid and validates" % (rel, c["file"]))
                 elif set(found) != {c["rule"]}:
                     self.fail(2, "%s/%s is marked %s and breaks %s" % (rel, c["file"], c["rule"], ", ".join(found)))
-        # point 4: the frozen copy against the live registry
+        # point 4: the frozen copy against the live registry (an older directory holds its own registry: its fixtures were held to it above)
         fp = os.path.join(vdir, "registry.json")
-        if not os.path.isfile(fp):
+        if not live:
+            pass
+        elif not os.path.isfile(fp):
             self.fail(4, "%s/registry.json is missing (python3 tests/test_json_registry.py --freeze at the pin)" % rel)
         else:
             frozen, fs = J.load_registry(fp)
@@ -643,7 +732,9 @@ def regen(root, tool, check, keep=None):
     J = load_module(root, "jsonkind")
     regs = {}
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
-        regs[n], _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        reg, _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        if reg["status"] != "draft":      # a draft has no fixtures yet
+            regs[n] = reg
     KINDS_SEEN[:] = sorted(regs)
     base = os.path.realpath(tempfile.mkdtemp(prefix="j."))
     raw = os.path.join(base, "raw")
@@ -696,6 +787,8 @@ def freeze(root):
     J = load_module(root, "jsonkind")
     for n in J.kind_names(os.path.join(root, "lib", "kinds")):
         reg, _ = J.load_registry(os.path.join(root, "lib", "kinds", n + ".json"))
+        if reg["status"] == "draft":
+            continue
         shutil.copyfile(os.path.join(root, "lib", "kinds", n + ".json"), os.path.join(root, FIX, n, "v%d" % reg["schema"], "registry.json"))
     print("froze the registry files")
     return 0
@@ -750,14 +843,23 @@ def self_test():
         if not good:
             print("     wanted points %s%s, text %r; got:\n%s" % (points, " exactly" if exact else "", text, "\n".join("     " + l for l in out.splitlines()[-12:])))
 
-    def edit(root, kind, fn):
+    def edit(root, kind, fn, remake=True):
+        """fn changes the registry file of kind in the copy; the manifest is made again (point 7 is not what the case is about), unless remake is False."""
         p = os.path.join(root, "lib", "kinds", kind + ".json")
         reg = read_json(p)
         fn(reg)
         write(p, json.dumps(reg, indent=2) + "\n")
+        if remake:
+            K = load_module(root, "jsonkind")
+            text, _ = K.manifest(os.path.join(root, "lib", "kinds"))
+            if text is not None:
+                write(os.path.join(root, "lib", "kinds", K.MANIFEST_NAME), text)
+
+    def vdir(root, kind):
+        return os.path.join(root, FIX, kind, "v%d" % read_json(os.path.join(root, "lib", "kinds", kind + ".json"))["schema"])
 
     def fixture(root, kind, name):
-        return os.path.join(root, FIX, kind, "v1", name)
+        return os.path.join(vdir(root, kind), name)
 
     try:
         expect("the tree as it is passes", copy_tree(), [])
@@ -804,20 +906,40 @@ def self_test():
         write(fixture(r, "qargi-handoff", "broken/enum-unknown.json"), read(fixture(r, "qargi-handoff", "valid.json")))
         expect("a broken fixture that validates fails point 2", r, [2], "marked invalid and validates")
         r = copy_tree()
+        v = read(fixture(r, "qargi-handoff", "valid.json"))
+        assert '"tier": "' in v
+        write(fixture(r, "qargi-handoff", "broken/enum-unknown.json"), re.sub(r'"tier": "[a-z]+"', '"tier": "not-a-listed-word"', v, count=1))
+        expect("a broken fixture that closes an x-open enum fails point 2", r, [2], "closes the x-open enum at $.gates[0].tier")
+        r = copy_tree()
         os.remove(fixture(r, "qargi-marshal-status", "broken/schema-missing.json"))
         expect("a rule with no broken file fails point 3", r, [3], "schema-missing")
         r = copy_tree()
-        shutil.rmtree(os.path.join(r, FIX, "qargi-refusal", "v1"))
+        shutil.rmtree(vdir(r, "qargi-refusal"))
         expect("a kind with no v directory fails point 3", r, [3], "has no directory")
         r = copy_tree()
         for kind in os.listdir(os.path.join(r, FIX)):
-            v = os.path.join(r, FIX, kind, "v1")
+            v = vdir(r, kind) if os.path.isfile(os.path.join(r, "lib", "kinds", kind + ".json")) else ""
             for n in (os.listdir(v) if os.path.isdir(v) else []):
                 if n.startswith("valid") and n.endswith(".json") and '"signer"' in read(os.path.join(v, n)):
                     d = json.loads(read(os.path.join(v, n)))
                     strip_key(d, "signer")
                     write(os.path.join(v, n), json.dumps(d, indent=1) + "\n")
         expect("a field of the registry that no valid fixture holds fails point 5", r, [5], "the field $.features[].signer appears in no valid fixture")
+        # the directories of an older integer are held to the registry frozen in them
+        r = copy_tree()
+        p = os.path.join(r, FIX, "qargi-marshal-check", "v1", "valid.json")
+        write(p, read(p).replace('"remote": "none"', '"remote": "maybe"'))
+        expect("an older valid fixture that does not validate fails point 2", r, [2], "v1/valid.json is marked valid and breaks")
+        r = copy_tree()
+        os.remove(os.path.join(r, FIX, "qargi-marshal-status", "v1", "broken", "schema-missing.json"))
+        expect("an older directory with a rule and no broken file fails point 3", r, [3], "schema-missing")
+        r = copy_tree()
+        p = os.path.join(r, FIX, "qargi-marshal-status", "v1", "cases.json")
+        write(p, read(p).replace('"expect": "valid"', '"expect": "invalid"', 1))
+        expect("an older cases.json that disagrees with its fixtures fails point 2", r, [2], "v1/")
+        r = copy_tree()
+        os.remove(os.path.join(r, FIX, "qargi-marshal-status", "v1", "registry.json"))
+        expect("an older directory with no frozen registry fails point 4", r, [4], "v1 has no well-formed registry.json")
         # point 6: a frozen copy edited in a scratch repository that has a tag
         r = copy_tree()
         for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.net", "commit", "-q", "-m", "pinned"], ["tag", "0.0.1"]):
@@ -825,12 +947,26 @@ def self_test():
         expect("a frozen registry equal to the one at the tag passes point 6", r, [], "equal the ones at the release 0.0.1")
         change = lambda g: g["document"]["properties"].update(added_after_the_pin={"type": "string", "x-since": "0.3.10"})
         edit(r, "qargi-marshal-check", change)
-        fp = os.path.join(r, FIX, "qargi-marshal-check", "v1", "registry.json")
+        fp = fixture(r, "qargi-marshal-check", "registry.json")
         frozen = read_json(fp)
         change(frozen)
         write(fp, json.dumps(frozen, indent=2) + "\n")
         expect("a frozen copy edited together with the live one is seen by the tag (point 6), not by point 4", r, [6], "differs from the file at the release 0.0.1", absent=(4,))
         expect("a tree with no repository passes, with point 6 skipped", copy_tree(), [], "point 6 skipped")
+        # point 7: the manifest of the registry files
+        r = copy_tree()
+        edit(r, "qargi-refusal", lambda g: g.update(about=g["about"] + " More."), remake=False)
+        expect("a registry file changed and the manifest not made again fails point 7", r, [7], "is not what the registry files make now", exact=True)
+        r = copy_tree()
+        os.remove(os.path.join(r, "lib", "kinds", "MANIFEST.json"))
+        expect("a missing manifest fails point 7", r, [7], "MANIFEST.json is missing", exact=True)
+        r = copy_tree()
+        write(os.path.join(r, "lib", "kinds", "MANIFEST.json"), read(os.path.join(r, "lib", "kinds", "MANIFEST.json")).replace('"pinned"', '"draft"', 1))
+        expect("a manifest edited by hand fails point 7", r, [7], "is not what the registry files make now", exact=True)
+        r = copy_tree()
+        write(os.path.join(r, ".gitattributes"), "lib/kinds/MANIFEST.json export-ignore\n")
+        subprocess.run(["git", "-C", r, "init", "-q"], check=True, capture_output=True, env=env)
+        expect("a manifest marked export-ignore fails point 7", r, [7], "the release archive would not hold it", exact=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("self-test: %s" % ("every break was found by the point it belongs to" if not fails else "%d unexpected result(s)" % fails))

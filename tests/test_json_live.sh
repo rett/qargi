@@ -29,7 +29,7 @@ export QARGI_PROJECT=app
 unset GIT_TERMINAL_PROMPT
 export TMPDIR=$T/tmp; mkdir -p "$TMPDIR"
 JK="python3 -I $TOOL/lib/jsonkind.py"
-KINDS=$(ls lib/kinds | sed 's/\.json$//')
+KINDS=$(ls lib/kinds | sed -e '/^MANIFEST\.json$/d' -e 's/\.json$//')      # the manifest is no kind
 
 # the field of an output that its registry file does not name (drift), one per line; the prefix of a refusal line is taken off
 cat > "$T/drift.py" <<'PY'
@@ -84,7 +84,7 @@ lint() {
 
 # ================================================================ (1) the page says what each verb writes, in the words of the registry
 for k in $KINDS; do
-  w=$(jq -r .writes "lib/kinds/$k.json")
+  w=$(jq -r .writes "lib/kinds/$k.json" | tr -d '`')      # the page is compared without its backticks, so the sentence is too
   tr -d '`' < docs/reference/json-output.md | grep -qF -e "$w" && ok "docs/reference/json-output.md holds the writes sentence of $k" || no "docs/reference/json-output.md does not hold the writes sentence of $k: $w"
   grep -qF -e "\`$k\`" docs/reference/json-output.md && ok "the page names $k" || no "the page does not name $k"
 done
@@ -101,7 +101,7 @@ for f in "$T"/raw/*; do
   k=$(kind_of "$f"); n=$((n + 1))
   msg=$(lint "$k" "$f" "$(basename "$f")") && ok "scenario $(basename "$f"): one valid $k document, no field the registry does not name" || no "scenario: $msg"
 done
-[ "$n" = 13 ] && ok "the scenario printed the 13 documents of the four kinds" || no "the scenario printed $n files, not 13"
+[ "$n" = 14 ] && ok "the scenario printed the 14 documents of the four kinds" || no "the scenario printed $n files, not 14"
 
 # ================================================================ (3) the local backend
 NOW=1000000
@@ -133,13 +133,13 @@ doc() { [ "$RC" = 0 ] || { echo "$2: exit $RC: $(head -c 300 "$T/e")"; return 1;
 L marshal claim f1 --as alice --goal "the goal" && [ "$RC" = 0 ] || no "setup: claim f1 ($RC): $(cat "$T/e")"
 NOW=$((NOW + 600))
 L marshal status --all --json
-msg=$(doc qargi-marshal-status "status --all --json") && jq -e '.kind == "qargi-marshal-status" and .backend == "local" and .remote == "none" and (.features | length) == 3' "$T/o" >/dev/null \
-  && ok "local: status --all --json is one valid document, three rows, backend local, remote none" || no "local status --all: ${msg:-$(head -c 300 "$T/o")}"
+msg=$(doc qargi-marshal-status "status --all --json") && jq -e '.kind == "qargi-marshal-status" and .schema == 2 and .integrity == "off" and .backend == "local" and .remote == "none" and (.features | length) == 3' "$T/o" >/dev/null \
+  && ok "local: status --all --json is one valid document, three rows, integrity off, backend local, remote none" || no "local status --all: ${msg:-$(head -c 300 "$T/o")}"
 L marshal status f1 --json
 msg=$(doc qargi-marshal-status "status f1 --json") && jq -e '(.features | length) == 1 and .features[0].lease_clock == "wall" and (.features[0].minutes_since_renewal | . == 10)' "$T/o" >/dev/null \
   && ok "local: status NAME --json is the same shape with one row; minutes_since_renewal is the integer 10 on the wall clock" || no "local status f1: ${msg:-$(head -c 300 "$T/o")}"
 L marshal check f1 --as alice --json
-msg=$(doc qargi-marshal-check "check f1 --json") && jq -e '.kind == "qargi-marshal-check" and .answer == "yours" and (has("verb") | not)' "$T/o" >/dev/null \
+msg=$(doc qargi-marshal-check "check f1 --json") && jq -e '.kind == "qargi-marshal-check" and .schema == 2 and .integrity == "off" and .answer == "yours" and (has("verb") | not)' "$T/o" >/dev/null \
   && ok "local: check NAME --json is a qargi-marshal-check document (the command table leaves --json alone), answer yours" || no "local check f1: ${msg:-$(head -c 300 "$T/o")}"
 L marshal check --json
 msg=$(doc qargi-marshal-check "check --json") && jq -e '.answer == null and (.features | length) == 3' "$T/o" >/dev/null && ok "local: check --json (no NAME) has one row for each open feature" || no "local check all: ${msg:-$(head -c 300 "$T/o")}"
