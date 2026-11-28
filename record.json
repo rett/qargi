@@ -1,7 +1,7 @@
 {
  "purpose": "0.3.10: static run-plan checker, exit-0 hardening, 0.3.8 carry-overs, tag-signing support",
  "started": "2026-11-27T12:25:56Z",
- "goal": "0.3.10: feature verify (2nd), advisor sign-off",
+ "goal": "0.3.10: advisor findings F1",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-27T12:25:56Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-28T03:41:45Z",
+ "renewed_at": "2026-11-28T03:42:36Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 23,
- "updated_at": "2026-11-28T03:41:45Z",
+ "rev": 24,
+ "updated_at": "2026-11-28T03:42:36Z",
  "feature": "release-0310",
  "project": "qargi"
 }
